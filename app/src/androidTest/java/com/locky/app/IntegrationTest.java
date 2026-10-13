@@ -29,20 +29,25 @@ public class IntegrationTest {
         try {
             s.settings.edit().putBoolean("enabled",true).putInt("start",0).putInt("end",0).commit();
             ContentValues v=new ContentValues();v.put("pkg","com.locky.fixture");v.put("label","테스트 앱");v.put("mode","limited");v.put("minutes",5);s.put("rules",v);
+            device.executeShellCommand("pm grant com.locky.app android.permission.POST_NOTIFICATIONS");
             device.executeShellCommand("settings put secure enabled_accessibility_services com.locky.app/com.locky.app.GuardService");device.executeShellCommand("settings put secure accessibility_enabled 1");
             long deadline=System.currentTimeMillis()+12000;while(GuardService.live==null&&System.currentTimeMillis()<deadline)Thread.sleep(100);assertNotNull("Accessibility service did not connect; enabled="+device.executeShellCommand("settings get secure enabled_accessibility_services"),GuardService.live);
             device.executeShellCommand("am start -n com.locky.fixture/.ProbeActivity");assertTrue("App gate not displayed",device.wait(Until.hasObject(By.textContains("들어가나요")),15000));
             GuardService g=GuardService.live;InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{try{g.allowApp(new JSONObject().put("label","연락 확인"),5);g.sessionRemaining=1500;}catch(Exception e){throw new RuntimeException(e);}});
             boolean renewed=device.wait(Until.hasObject(By.textContains("머물고 싶나요")),15000);assertTrue("Extension screen not displayed; state="+g.state()+"; foreground="+g.foreground+"; systemPaused="+g.systemPaused+"; interactive="+g.interactive+"; overlay="+g.overlayVisible+"; scheduled="+g.pulseScheduled+"; live="+(GuardService.live==g)+"; ticks="+g.pulseCount+"; home="+g.homePackage,renewed);assertTrue(device.hasObject(By.textContains("연락 확인")));
             InstrumentationRegistry.getInstrumentation().runOnMainSync(()->g.extend(5));assertTrue(g.sessionRemaining>0);
+            boolean timerNotice=false;for(android.service.notification.StatusBarNotification notice:c.getSystemService(android.app.NotificationManager.class).getActiveNotifications())if(notice.getId()==11){timerNotice=true;assertTrue("Timer is not a running chronometer",notice.getNotification().extras.getBoolean(android.app.Notification.EXTRA_SHOW_CHRONOMETER));}assertTrue("Timer notification missing",timerNotice);
             long allowed=g.sessionRemaining;Thread.sleep(1300);assertTrue("Foreground timer did not decrease",g.sessionRemaining<allowed);
             long chosenSession=g.sessionEvent;device.openNotification();long shadeDeadline=System.currentTimeMillis()+4000;while(!g.systemPaused&&System.currentTimeMillis()<shadeDeadline)Thread.sleep(100);assertTrue("Shade not detected: "+g.lastWindows,g.systemPaused);long paused=g.sessionRemaining;Thread.sleep(1100);assertTrue("Shade time was charged: paused="+g.systemPaused+"; windows="+g.lastWindows,Math.abs(g.sessionRemaining-paused)<300);
             device.pressBack();Thread.sleep(1200);assertEquals("Notification drawer ended the chosen session",chosenSession,g.sessionEvent);assertFalse("Notification drawer redisplayed the app start gate",g.overlayVisible);
             device.pressHome();Thread.sleep(400);assertEquals("Home did not end the session","",g.sessionPkg);long usedAtHome=s.used("com.locky.fixture",System.currentTimeMillis());Thread.sleep(1100);assertEquals("Home time was charged",usedAtHome,s.used("com.locky.fixture",System.currentTimeMillis()));
             device.pressRecentApps();
-            UiObject2 recentCard=device.wait(Until.findObject(By.res(java.util.regex.Pattern.compile(".*:id/snapshot"))),10000);
-            if(recentCard==null){java.io.ByteArrayOutputStream xml=new java.io.ByteArrayOutputStream();device.dumpWindowHierarchy(xml);android.util.Log.e("LockyTest","RECENTS "+xml.toString("UTF-8"));}
-            assertNotNull("Recent task snapshot not found",recentCard);recentCard.click();
+            UiObject2 recentCard=device.wait(Until.findObject(By.res(java.util.regex.Pattern.compile(".*:id/(snapshot|task_thumbnail|thumbnail)"))),2000);
+            if(recentCard==null){recentCard=device.wait(Until.findObject(By.descContains("Locky test target")),5000);if(recentCard==null)recentCard=device.wait(Until.findObject(By.text("Locky test target")),3000);
+                if(recentCard!=null){android.graphics.Rect bounds=recentCard.getVisibleBounds();while(recentCard.getParent()!=null&&(bounds.width()<device.getDisplayWidth()/2||bounds.height()<device.getDisplayHeight()/4)){recentCard=recentCard.getParent();bounds=recentCard.getVisibleBounds();}}
+            }
+            if(recentCard==null){java.io.ByteArrayOutputStream xml=new java.io.ByteArrayOutputStream();device.dumpWindowHierarchy(xml);fail("Recent task card not found: "+xml.toString("UTF-8"));}
+            recentCard.click();
             assertTrue("Recent-task reentry did not show app gate",device.wait(Until.hasObject(By.textContains("들어가나요")),10000));
             InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{try{g.allowApp(new JSONObject().put("label","다시 사용"),5);}catch(Exception e){throw new RuntimeException(e);}});
             long exhaustedAt=Rules.dayStart(System.currentTimeMillis(),java.time.ZoneId.systemDefault())+1200000;s.usage(exhaustedAt-300000,exhaustedAt,"com.locky.fixture","테스트 앱",true,0);g.policyChanged();assertTrue("Daily exhaustion screen not displayed",device.wait(Until.hasObject(By.textContains("쉬어갈 시간")),10000));

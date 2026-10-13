@@ -18,7 +18,7 @@ public final class GuardService extends AccessibilityService {
     static volatile GuardService live;
     final Handler main=androidx.core.os.HandlerCompat.createAsync(Looper.getMainLooper());Store store;
     volatile String foreground="",sessionPkg="",purpose="",utility="첫 화면";long segmentWall,segmentElapsed,sessionEvent,phoneEvent;volatile long sessionRemaining;
-    boolean interactive,waitingUnlock,wasManaged,systemPaused;volatile boolean overlayVisible;volatile String gate="unlock",gatePkg="";
+    volatile boolean interactive,waitingUnlock,wasManaged,systemPaused;volatile boolean overlayVisible;volatile String gate="unlock",gatePkg="";
     WebHost overlay;WindowManager window;final Set<String> systemPackages=new HashSet<>();
     String homePackage="";
     volatile boolean pulseScheduled;volatile long pulseCount;

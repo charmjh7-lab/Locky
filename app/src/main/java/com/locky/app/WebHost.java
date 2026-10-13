@@ -65,7 +65,7 @@ final class WebHost {
             case "dictionaryChoice":store.settings.edit().putString("dictionary",a.getString("id")).apply();break;
             case "exit":if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);break;
             case "dictionary":if(g!=null)g.useUtility("사전");else store.event("utility","사전",context.getPackageName(),"",0);if(isOverlay&&g!=null)g.hideOverlay();Links.dictionary(context,a.getString("word"));break;
-            case "linkTest":Intent link=Links.intent(context,a.optString("pkg"),a.optString("uri"));if(link==null)throw new IllegalArgumentException("이 앱에서 지원하는 연결인지 확인해 주세요. 딥링크는 앱마다 달라요.");context.startActivity(link.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));break;
+            case "linkTest":Intent link=Links.intent(context,a.optString("pkg"),a.optString("uri"));if(link==null)throw new IllegalArgumentException("이 앱에서 지원하는 연결인지 확인해 주세요. 딥링크는 앱마다 달라요.");if(isOverlay&&g!=null)g.hideOverlay();context.startActivity(link.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));break;
             case "saveNote":store.note(a);break;
             case "deleteNote":store.getWritableDatabase().delete("notes","id=?",new String[]{a.getString("id")});break;
             case "settings":saveSettings(a);if(g!=null)g.policyChanged();Scheduler.schedule(context);break;
