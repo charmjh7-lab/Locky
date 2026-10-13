@@ -39,7 +39,11 @@ public class IntegrationTest {
             long chosenSession=g.sessionEvent;device.openNotification();Thread.sleep(400);long paused=g.sessionRemaining;Thread.sleep(1100);assertTrue("Shade time was charged",Math.abs(g.sessionRemaining-paused)<300);
             device.pressBack();Thread.sleep(1200);assertEquals("Notification drawer ended the chosen session",chosenSession,g.sessionEvent);assertFalse("Notification drawer redisplayed the app start gate",g.overlayVisible);
             device.pressHome();Thread.sleep(400);assertEquals("Home did not end the session","",g.sessionPkg);long usedAtHome=s.used("com.locky.fixture",System.currentTimeMillis());Thread.sleep(1100);assertEquals("Home time was charged",usedAtHome,s.used("com.locky.fixture",System.currentTimeMillis()));
-            device.executeShellCommand("am start -n com.locky.fixture/.ProbeActivity");assertTrue("Reentry did not show app gate",device.wait(Until.hasObject(By.textContains("들어가나요")),10000));
+            device.pressRecentApps();
+            UiObject2 recentCard=device.wait(Until.findObject(By.res(java.util.regex.Pattern.compile(".*:id/snapshot"))),10000);
+            if(recentCard==null){java.io.ByteArrayOutputStream xml=new java.io.ByteArrayOutputStream();device.dumpWindowHierarchy(xml);android.util.Log.e("LockyTest","RECENTS "+xml.toString("UTF-8"));}
+            assertNotNull("Recent task snapshot not found",recentCard);recentCard.click();
+            assertTrue("Recent-task reentry did not show app gate",device.wait(Until.hasObject(By.textContains("들어가나요")),10000));
             InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{try{g.allowApp(new JSONObject().put("label","다시 사용"),5);}catch(Exception e){throw new RuntimeException(e);}});
             long exhaustedAt=Rules.dayStart(System.currentTimeMillis(),java.time.ZoneId.systemDefault())+1200000;s.usage(exhaustedAt-300000,exhaustedAt,"com.locky.fixture","테스트 앱",true,0);g.policyChanged();assertTrue("Daily exhaustion screen not displayed",device.wait(Until.hasObject(By.textContains("쉬어갈 시간")),10000));
             InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{s.settings.edit().putBoolean("enabled",false).commit();g.policyChanged();});Thread.sleep(500);assertFalse(g.overlayVisible);

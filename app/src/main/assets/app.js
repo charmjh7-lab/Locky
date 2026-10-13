@@ -23,7 +23,7 @@ async function refresh(force=false){if(refreshing){if(force)refreshAgain=true;re
  if(!force&&state&&['chat','timer',...gated].includes(screen))Object.assign(state,await api('tick'));else state=await api('state');
  if(!restored){restored=true;chatId=state.savedChat||chatId;noteId=state.savedNote||noteId;}
  if(!force){if(screen==='chat'){await renderMessages(false);return;}if(screen==='timer'||gated.includes(screen)){updateTimers();return;}if(document.activeElement?.matches('input,textarea,select')||memoPending||memoSaving)return;if(screen==='chats'){const c=$('#connection');if(c){c.innerHTML=connectionHTML();bind(c);}return;}}
- render();if(screen==='brief')loadBrief();if(screen==='apps')loadApps();if(screen==='chat')renderMessages(force);
+ const oldScroll=window.scrollY;render();if(!force)window.scrollTo(0,oldScroll);if(screen==='brief')loadBrief();if(screen==='apps')loadApps();if(screen==='chat')renderMessages(force);
  }catch(e){toast(e.message);}finally{refreshing=false;if(refreshAgain){refreshAgain=false;refresh(true);}}}
 function render(){let html='';switch(screen){case 'unlock':case 'home':html=home();break;case 'setup':html=setup();break;case 'settings':html=settings();break;case 'apps':html=appsPage();break;case 'app':case 'renew':case 'blocked':html=gate();break;case 'timer':html=timer();break;case 'notes':html=notesPage();break;case 'chats':html=chats();break;case 'chat':html=chat();break;case 'brief':html=brief();break;case 'week':briefDays=7;screen='brief';html=brief();break;default:screen='home';html=home();}
  document.body.classList.toggle('start-screen',starts.includes(screen));$('#app').innerHTML=html+nav();bind();viewportChanged();}
@@ -117,7 +117,7 @@ function bind(root=$('#app')){
  root.querySelectorAll('[data-remove]').forEach(el=>el.onclick=()=>safe(async()=>{const editing=!!$('#sheet').innerHTML;await api('removePurpose',{id:el.dataset.remove});state=await api('state');render();if(editing)managePurposes();}));
  root.querySelectorAll('[data-scope]').forEach(el=>el.onclick=()=>{purposeScope=el.dataset.scope;managePurposes();});
  root.querySelectorAll('[data-rule]').forEach(el=>el.onclick=()=>safe(()=>ruleSheet(el.dataset.rule)));
- root.querySelectorAll('[data-manage]').forEach(el=>el.onchange=()=>safe(async()=>{await api('rule',{pkg:el.dataset.manage,mode:el.checked?'limited':'none'});state=await api('state');renderApps();}));
+ root.querySelectorAll('[data-manage]').forEach(el=>el.onchange=()=>safe(async()=>{await api('rule',{pkg:el.dataset.manage,mode:el.checked?'restore':'none'});state=await api('state');renderApps();}));
  root.querySelectorAll('[data-dictionary]').forEach(el=>el.onclick=()=>safe(async()=>{await api('dictionaryChoice',{id:el.dataset.dictionary});state.dictionary=el.dataset.dictionary;closeSheet();if(el.dataset.word)await api('dictionary',{word:el.dataset.word});}));
  root.querySelectorAll('[data-url]').forEach(el=>el.onclick=()=>safe(()=>api('linkTest',{uri:el.dataset.url})));
  root.querySelectorAll('[data-permission]').forEach(el=>el.onclick=()=>safe(()=>api('permission',{name:el.dataset.permission})));
