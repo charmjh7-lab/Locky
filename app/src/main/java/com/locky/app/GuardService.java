@@ -30,6 +30,7 @@ public final class GuardService extends AccessibilityService {
         else if(Intent.ACTION_TIME_CHANGED.equals(a)||Intent.ACTION_TIMEZONE_CHANGED.equals(a)){checkpoint();policyChanged();Scheduler.schedule(c);}
     }};
     int unlockChecks;
+    final Runnable settledForeground=()->observeForeground(null);
     final Runnable checkUnlock=new Runnable(){public void run(){if(!interactive)return;if(!getSystemService(KeyguardManager.class).isKeyguardLocked()){if(waitingUnlock){waitingUnlock=false;observeForeground(null);prepareUnlock();}ensurePulse();}else if(unlockChecks++<20)main.postDelayed(this,250);}};
     @Override protected void onServiceConnected(){
         live=this;store=Store.get(this);window=getSystemService(WindowManager.class);interactive=getSystemService(PowerManager.class).isInteractive();wasManaged=store.managed(System.currentTimeMillis());
@@ -53,6 +54,10 @@ public final class GuardService extends AccessibilityService {
         if(!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked())return;
         if(waitingUnlock){waitingUnlock=false;prepareUnlock();}
         observeForeground(event);
+        // Window events can precede availability of the new application's root.
+        // Recheck after the transition rather than retaining an obsolete session.
+        main.removeCallbacks(settledForeground);
+        main.postDelayed(settledForeground,500);
     }
     boolean overview;volatile String lastWindows="";
     void observeForeground(AccessibilityEvent event) {
