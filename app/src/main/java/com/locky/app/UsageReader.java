@@ -30,7 +30,7 @@ final class UsageReader {
     }
     static String home(Context c){ResolveInfo h=c.getPackageManager().resolveActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),PackageManager.MATCH_DEFAULT_ONLY);return h==null?"":h.activityInfo.packageName;}
     static boolean excluded(Context c,String pkg){
-        if(pkg.isEmpty()||pkg.equals(home(c))||pkg.equals("com.android.systemui")||pkg.contains("permissioncontroller")||pkg.equals("com.android.server.telecom"))return true;
+        if(pkg.isEmpty()||pkg.equals(home(c))||pkg.equals("com.android.systemui")||pkg.equals("com.samsung.android.sidegesturepad")||pkg.contains("permissioncontroller")||pkg.equals("com.android.server.telecom"))return true;
         if(c.getSharedPreferences("locky-settings",0).getStringSet("usage-excluded",Set.of("com.samsung.android.sidegesturepad")).contains(pkg))return true;
         if(pkg.equals(c.getPackageName()))return false;
         try {ApplicationInfo info=c.getPackageManager().getApplicationInfo(pkg,0);return (info.flags&(ApplicationInfo.FLAG_SYSTEM|ApplicationInfo.FLAG_UPDATED_SYSTEM_APP))!=0;}catch(PackageManager.NameNotFoundException ignored){return false;}
