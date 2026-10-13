@@ -11,6 +11,7 @@ const server=http.createServer((req,res)=>{const name=req.url==='/'?'index.html'
  await page.goto(`http://127.0.0.1:${server.address().port}`);await page.evaluate(()=>navigate('home'));await page.locator('.reason.direct').waitFor();assert.equal(await page.locator('.reason').first().textContent(),await page.locator('.reason.direct').textContent());
  await page.locator('#noteBody').fill('생각을 바로 메모');await page.waitForTimeout(600);assert(demo.notes.some(n=>n.body==='생각을 바로 메모'));
  await page.getByText('＋ 체크 항목').click();await page.locator('[data-checktext]').fill('책 읽기');await page.locator('[data-check]').check();await page.waitForTimeout(600);assert(JSON.parse(demo.notes[0].checks)[0].done);
+ await page.evaluate(()=>navigate('notes'));assert((await page.locator('#noteBody').boundingBox()).height>300);await page.evaluate(()=>navigate('home'));
  await page.locator('[data-act=direct]').click();await page.locator('#purposeLabel').fill('친구에게 답장');await page.locator('#savePurpose').click();await page.waitForTimeout(150);assert(calls.some(c=>c.action==='choose'&&c.a.id==='custom'));
  await page.evaluate(()=>navigate('app'));await page.locator('[data-min="10"]').click();await page.locator('[data-purpose=contact]').click();await page.locator('#startApp').click();assert(calls.some(c=>c.action==='grant'&&c.a.minutes===10&&c.a.id==='contact'));
  await page.evaluate(()=>navigate('renew'));assert(await page.locator('.gate-note').textContent().then(t=>t.includes('연락 확인')));await page.locator('[data-act=extend]').click();assert(calls.some(c=>c.action==='extend'));

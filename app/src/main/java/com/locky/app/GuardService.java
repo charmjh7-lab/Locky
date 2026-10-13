@@ -81,14 +81,14 @@ public final class GuardService extends AccessibilityService {
     void flushOnMain(){if(Looper.myLooper()==Looper.getMainLooper()){checkpoint();return;}CountDownLatch latch=new CountDownLatch(1);main.post(()->{try{checkpoint();}finally{latch.countDown();}});try{latch.await(2,java.util.concurrent.TimeUnit.SECONDS);}catch(InterruptedException e){Thread.currentThread().interrupt();}}
     boolean shouldPulse(){return interactive&&!foreground.isEmpty()&&(!sessionPkg.isEmpty()||overlayVisible);}
     void ensurePulse(){main.removeCallbacks(pulse);if(shouldPulse())main.postDelayed(pulse,1000);}
-    long dailyRemaining(String pkg){JSONObject rule=store.rule(pkg);return rule==null?0:Math.max(0,rule.optInt("minutes",60)*60000L-store.used(pkg,System.currentTimeMillis()));}
+    long dailyRemaining(String pkg){return store.remaining(pkg,System.currentTimeMillis());}
     void enforce(){
         long now=System.currentTimeMillis();boolean managed=store.managed(now);if(managed!=wasManaged){wasManaged=managed;if(!managed){sessionPkg="";sessionRemaining=0;if(overlayVisible&&!gate.equals("unlock"))hideOverlay();Notices.cancelTimer(this);}else{sessionPkg="";sessionRemaining=0;}Scheduler.schedule(this);}
         if(!interactive||systemPaused||getSystemService(KeyguardManager.class).isKeyguardLocked()||foreground.isEmpty())return;
         if(overlayVisible&&gate.equals("unlock"))return;
         if(!managed){if(overlayVisible&&!gate.equals("unlock"))hideOverlay();Notices.cancelTimer(this);return;}
         JSONObject rule=store.rule(foreground);if(rule==null){Notices.cancelTimer(this);return;}
-        if(rule.optString("mode").equals("locked")||dailyRemaining(foreground)<=0){showGate("blocked",foreground);Notices.cancelTimer(this);return;}
+        if(rule.optString("mode").equals("locked")||dailyRemaining(foreground)<=0){if(rule.optString("mode").equals("limited"))store.blockUntilFree(foreground,now);showGate("blocked",foreground);Notices.cancelTimer(this);return;}
         if(!foreground.equals(sessionPkg)){showGate("app",foreground);Notices.cancelTimer(this);return;}
         if(sessionRemaining<=0){showGate("renew",foreground);Notices.cancelTimer(this);return;}
         if(!overlayVisible&&(now/30000!=lastNotice)){lastNotice=now/30000;Notices.timer(this,rule.optString("label"),dailyRemaining(foreground),sessionRemaining);}

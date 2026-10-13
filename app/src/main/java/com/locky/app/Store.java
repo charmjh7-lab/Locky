@@ -44,6 +44,16 @@ final class Store extends SQLiteOpenHelper {
         long start=Rules.dayStart(now,ZoneId.systemDefault()),total=0;
         try(Cursor c=getReadableDatabase().rawQuery("SELECT start,end FROM usage WHERE pkg=? AND managed=1 AND end>? AND start<?",new String[]{pkg,""+start,""+now})) {while(c.moveToNext())total+=Math.max(0,Math.min(now,c.getLong(1))-Math.max(start,c.getLong(0)));}return total;
     }
+    long remaining(String pkg,long now) {
+        JSONObject rule=rule(pkg);if(rule==null)return 0;
+        if(managed(now)&&settings.getLong("blocked-until:"+pkg,0)>now)return 0;
+        return Math.max(0,rule.optInt("minutes",60)*60000L-used(pkg,now));
+    }
+    void blockUntilFree(String pkg,long now) {
+        if(settings.getLong("blocked-until:"+pkg,0)>now)return;
+        long until=Rules.nextBoundary(now,settings.getInt("start",540),settings.getInt("end",1260),ZoneId.systemDefault());
+        settings.edit().putLong("blocked-until:"+pkg,until).apply();
+    }
     JSONObject rule(String pkg) {try{JSONArray a=rows("SELECT * FROM rules WHERE pkg=?",pkg);return a.length()==0?null:a.getJSONObject(0);}catch(JSONException e){throw new IllegalStateException(e);} }
     synchronized JSONArray purposes(String scope) throws JSONException {
         JSONArray rows=rows("SELECT * FROM purposes WHERE scope='*' OR scope=? ORDER BY rowid",scope);Map<String,JSONObject> byId=new LinkedHashMap<>();for(int i=0;i<rows.length();i++)byId.put(rows.getJSONObject(i).getString("id"),rows.getJSONObject(i));

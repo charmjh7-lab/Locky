@@ -57,14 +57,7 @@ jobs:
           emulator-boot-timeout: 180
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -partition-size 2048 -memory 2048
-          script: |
-            result=0
-            gradle :app:connectedDebugAndroidTest --no-daemon || result=$?
-            if [ "$result" != 0 ]; then
-              find app/build/outputs/androidTest-results -name '*.xml' -exec cat {} +
-              adb logcat -d -t 1200 | grep -E 'AndroidRuntime|FATAL EXCEPTION|chromium|locky' || true
-            fi
-            exit "$result"
+          script: bash scripts/android-test.sh
       - name: Verify distributable
         run: |
           mkdir -p distribution
