@@ -24,7 +24,7 @@ final class Scheduler {
             LocalDate freeDate=Instant.ofEpochMilli(now).atZone(z).toLocalDate();if(start<end&&minute<start)freeDate=freeDate.minusDays(1);String key=freeDate.toString();
             if(!key.equals(s.settings.getString("brief-sent",""))) {
                 s.settings.edit().putString("brief-sent",key).apply();
-                LockyApp.app.work.execute(()->{try {JSONObject b=Briefing.build(c,1,0);Notices.send(c,21,"brief","오늘의 선택을 돌아볼까요?",b.getString("summary"),"brief");}catch(Exception e){Notices.send(c,21,"brief","자유 시간이 시작됐어요","오늘의 사용 흐름과 목적을 브리핑에서 확인하세요.","brief");}});
+                try {JSONObject b=Briefing.build(c,1,0);Notices.send(c,21,"brief","오늘의 선택을 돌아볼까요?",b.getString("summary"),"brief");}catch(Exception e){Notices.send(c,21,"brief","자유 시간이 시작됐어요","오늘의 사용 흐름과 목적을 브리핑에서 확인하세요.","brief");}
             }
             long boundary=Rules.nextBoundary(now,start,end,z),remaining=boundary-now;
             try{JSONArray reminders=new JSONArray(s.settings.getString("reminders","[30,20,10,5,1]"));for(int j=0;j<reminders.length();j++){int m=reminders.getInt(j);String keyR=date+":"+m;if(remaining<=m*60000L&&remaining>Math.max(0,m*60000L-90000)&&!keyR.equals(s.settings.getString("reminder-sent-"+m,""))){s.settings.edit().putString("reminder-sent-"+m,keyR).apply();Notices.send(c,30+m,"reminder","집중 시간이 "+m+"분 뒤 시작돼요","지금 하던 일을 마무리할 여유를 남겨 주세요.","settings");}}}catch(JSONException ignored){}

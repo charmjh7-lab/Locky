@@ -119,7 +119,7 @@ public final class GuardService extends AccessibilityService {
     void updateSystemPause(){
         if(overlayVisible||waitingUnlock)return;
         boolean pause=false,known=false;
-        for(AccessibilityWindowInfo w:getWindows())if(w.isActive()&&w.getType()!=AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY&&w.getType()!=AccessibilityWindowInfo.TYPE_INPUT_METHOD){
+        for(AccessibilityWindowInfo w:getWindows())if(w.isFocused()&&w.getType()!=AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY&&w.getType()!=AccessibilityWindowInfo.TYPE_INPUT_METHOD){
             AccessibilityNodeInfo root=w.getRoot();if(root!=null){CharSequence name=root.getPackageName();String pkg=name==null?"":name.toString();root.recycle();pause=pkg.equals("com.android.systemui");known=true;break;}
         }
         if(known&&pause!=systemPaused){checkpoint();systemPaused=pause;lastNotice=-1;if(pause)Notices.cancelTimer(this);else enforce();ensurePulse();}

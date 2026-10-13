@@ -37,7 +37,7 @@ jobs:
       - name: Policy tests, lint and signed APK
         run: |
           result=0
-          gradle :app:testDebugUnitTest :app:lintDebug :app:assembleRelease --no-daemon || result=$?
+          gradle :app:testDebugUnitTest :app:lintDebug :app:assembleRelease :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon || result=$?
           if [ "$result" != 0 ]; then
             find app/build -name 'lint-results-*.txt' -exec cat {} +
           fi
