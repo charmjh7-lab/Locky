@@ -41,7 +41,7 @@ public final class GuardService extends AccessibilityService {
         segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();
         long recoveryFrom=store.settings.getLong("checkpoint",System.currentTimeMillis());String recoveryPackage=store.settings.getString("last-package","");
         waitingUnlock=!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked();
-        if(waitingUnlock)prepareUnlock();else observeForeground(null);Scheduler.schedule(this);recover(recoveryFrom,store.settings.getBoolean("checkpoint-interactive",true)?recoveryPackage:"");
+        if(waitingUnlock)prepareUnlock();else {observeForeground(null);main.postDelayed(()->{if(foreground.isEmpty())observeForeground(null);},250);main.postDelayed(()->{if(foreground.isEmpty())observeForeground(null);},750);}Scheduler.schedule(this);recover(recoveryFrom,store.settings.getBoolean("checkpoint-interactive",true)?recoveryPackage:"");
     }
     private void recover(long from,String old){long now=System.currentTimeMillis();
         if(now-from<2000)return;
@@ -54,17 +54,18 @@ public final class GuardService extends AccessibilityService {
         if(waitingUnlock){waitingUnlock=false;prepareUnlock();}
         observeForeground(event);
     }
-    boolean overview;
+    boolean overview;volatile String lastWindows="";
     void observeForeground(AccessibilityEvent event) {
         if(store==null||!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked())return;
-        List<ForegroundPolicy.Window> candidates=new ArrayList<>();
+        List<ForegroundPolicy.Window> candidates=new ArrayList<>();StringBuilder diagnostic=new StringBuilder();
         for(AccessibilityWindowInfo w:getWindows()) {
             String pkg="";
             // Only obtain the window root's package; never traverse content or read text.
             if(w.getType()==AccessibilityWindowInfo.TYPE_APPLICATION){AccessibilityNodeInfo root=w.getRoot();if(root!=null){CharSequence name=root.getPackageName();pkg=name==null?"":name.toString();root.recycle();}}
-            candidates.add(new ForegroundPolicy.Window(pkg,w.getType(),w.isFocused(),w.isActive(),w.getLayer(),w.isInPictureInPictureMode()));
+            android.graphics.Rect bounds=new android.graphics.Rect();w.getBoundsInScreen(bounds);boolean covering=bounds.height()>getResources().getDisplayMetrics().heightPixels/2;
+            candidates.add(new ForegroundPolicy.Window(pkg,w.getType(),w.isFocused(),w.isActive(),w.getLayer(),w.isInPictureInPictureMode(),covering));diagnostic.append(pkg).append(":type=").append(w.getType()).append(",focus=").append(w.isFocused()).append(",active=").append(w.isActive()).append(",layer=").append(w.getLayer()).append(",cover=").append(covering).append(";");
         }
-        ForegroundPolicy.Result visible=ForegroundPolicy.select(candidates,systemPackages);
+        lastWindows=diagnostic.toString();ForegroundPolicy.Result visible=ForegroundPolicy.select(candidates,systemPackages);
         if(event!=null&&event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED&&event.getClassName()!=null){
             String name=event.getClassName().toString().toLowerCase(Locale.ROOT),pkg=event.getPackageName()==null?"":event.getPackageName().toString();
             if(pkg.equals(homePackage)&&(name.contains("recents")||name.contains("overview")))overview=true;
@@ -143,7 +144,7 @@ public final class GuardService extends AccessibilityService {
     void pauseForActivity(){switchForeground(getPackageName());if(!sessionPkg.isEmpty())Notices.paused(this,UsageReader.label(this,sessionPkg),dailyRemaining(sessionPkg),sessionRemaining);}
     void openMain(String screen){useUtility(screen.equals("chats")?"ChatGPT":screen.equals("notes")?"메모":"Locky");hideOverlay();startActivity(new Intent(this,MainActivity.class).putExtra("screen",screen).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}
     void launch(JSONObject p) throws Exception {String pkg=p.optString("pkg"),uri=p.optString("uri");if(pkg.isEmpty()&&uri.isEmpty())return;Intent i=Links.intent(this,pkg,uri);if(i==null)throw new IllegalStateException("연결한 앱이나 동작을 열 수 없습니다. 목적 연결을 확인해 주세요.");startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}
-    void policyChanged(){main.post(()->{checkpoint();enforce();ensurePulse();WebHost.refreshAll();});}
+    void policyChanged(){main.post(()->{observeForeground(null);checkpoint();enforce();ensurePulse();WebHost.refreshAll();});}
     JSONObject state() throws JSONException {String pkg=overlayVisible?gatePkg:sessionPkg;return new JSONObject().put("mode",gate).put("pkg",pkg).put("label",UsageReader.label(this,pkg)).put("purpose",purpose).put("daily",dailyRemaining(pkg)).put("session",sessionRemaining).put("activePkg",sessionPkg).put("free",!store.managed(System.currentTimeMillis())).put("paused",systemPaused||foreground.equals(getPackageName())).put("visible",overlayVisible);}
     void dismissStart(){
         if(gate.equals("unlock")){checkpoint();store.event("dismiss","열지 않기","","",0);waitingUnlock=false;hideOverlay();sessionPkg="";sessionRemaining=0;performGlobalAction(GLOBAL_ACTION_HOME);foreground="";Notices.cancelTimer(this);ensurePulse();
