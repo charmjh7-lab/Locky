@@ -47,6 +47,7 @@ final class WebHost {
         JSONObject a=new JSONObject(raw);Object out=new JSONObject();GuardService g=GuardService.live;
         switch(action){
             case "state":out=state();break;
+            case "tick":out=new JSONObject().put("gate",g==null?new JSONObject():g.state()).put("free",!store.managed(System.currentTimeMillis())).put("busy",LockyApp.app.chat.busy.get()).put("chatError",LockyApp.app.chat.error).put("connection",LockyApp.app.auth.connection());break;
             case "apps":out=apps();break;
             case "purpose":out=store.purpose(a,a.optString("scope","*"));break;
             case "removePurpose":if(!a.getString("id").equals("aimless"))store.getWritableDatabase().delete("purposes","id=?",new String[]{a.getString("id")});break;

@@ -33,7 +33,10 @@ public class IntegrationTest {
             GuardService g=GuardService.live;InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{try{g.allowApp(new JSONObject().put("label","연락 확인"),5);g.sessionRemaining=1500;}catch(Exception e){throw new RuntimeException(e);}});
             assertTrue(device.wait(Until.hasObject(By.textContains("머물고 싶나요")),10000));assertTrue(device.hasObject(By.textContains("연락 확인")));
             InstrumentationRegistry.getInstrumentation().runOnMainSync(()->g.extend(5));assertTrue(g.sessionRemaining>0);
+            long exhaustedAt=System.currentTimeMillis();s.usage(exhaustedAt-300000,exhaustedAt,"com.android.settings","설정 테스트",true,0);g.policyChanged();assertTrue(device.wait(Until.hasObject(By.textContains("쉬어갈 시간")),10000));
             InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{s.settings.edit().putBoolean("enabled",false).commit();g.policyChanged();});Thread.sleep(500);assertFalse(g.overlayVisible);
+            device.sleep();Thread.sleep(300);device.wakeUp();device.executeShellCommand("wm dismiss-keyguard");assertTrue(device.wait(Until.hasObject(By.textContains("무엇을")),12000));
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{try{g.choosePhone(new JSONObject().put("label","그냥 열었어요"));}catch(Exception e){throw new RuntimeException(e);}});assertFalse(g.overlayVisible);
         } finally {
             s.getWritableDatabase().delete("rules","pkg='com.android.settings'",null);s.settings.edit().putInt("start",oldStart).putInt("end",oldEnd).putBoolean("enabled",oldEnabled).commit();
             device.executeShellCommand("settings put secure enabled_accessibility_services "+(before.equals("null")?"''":before));device.pressHome();
