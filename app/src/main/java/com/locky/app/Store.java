@@ -15,7 +15,7 @@ final class Store extends SQLiteOpenHelper {
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE purposes(id TEXT PRIMARY KEY,label TEXT NOT NULL,pkg TEXT NOT NULL DEFAULT '',uri TEXT NOT NULL DEFAULT '',aimless INTEGER NOT NULL DEFAULT 0,scope TEXT NOT NULL DEFAULT '*')");
         db.execSQL("CREATE TABLE rules(pkg TEXT PRIMARY KEY,label TEXT NOT NULL,mode TEXT NOT NULL,minutes INTEGER NOT NULL)");
-        db.execSQL("CREATE TABLE events(id INTEGER PRIMARY KEY AUTOINCREMENT,time INTEGER NOT NULL,kind TEXT NOT NULL,purpose TEXT NOT NULL,pkg TEXT NOT NULL,target TEXT NOT NULL,parent INTEGER NOT NULL DEFAULT 0)");
+        db.execSQL("CREATE TABLE events(id INTEGER PRIMARY KEY AUTOINCREMENT,time INTEGER NOT NULL,kind TEXT NOT NULL,purpose TEXT NOT NULL,pkg TEXT NOT NULL,target TEXT NOT NULL,parent INTEGER NOT NULL DEFAULT 0,aimless INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE TABLE usage(id INTEGER PRIMARY KEY AUTOINCREMENT,start INTEGER NOT NULL,end INTEGER NOT NULL,pkg TEXT NOT NULL,label TEXT NOT NULL,managed INTEGER NOT NULL,parent INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE INDEX usage_time ON usage(start,end)");db.execSQL("CREATE INDEX events_time ON events(time)");
         db.execSQL("CREATE TABLE notes(id TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT NOT NULL,checks TEXT NOT NULL,updated INTEGER NOT NULL,mode TEXT NOT NULL DEFAULT 'text')");
@@ -35,6 +35,7 @@ final class Store extends SQLiteOpenHelper {
             // Only seed the new app scope: never restore deleted phone presets.
             String[][] apps={{"app-contact","메시지 확인","0"},{"app-watch","보고 싶은 콘텐츠","0"},{"app-read","필요한 정보 찾기","0"},{"app-rest","잠깐 쉬기","0"},{"app-aimless","그냥 열었어요","1"}};
             for(String[] p:apps)db.execSQL("INSERT OR IGNORE INTO purposes(id,label,aimless,scope) VALUES(?,?,?,'app')",new Object[]{p[0],p[1],Integer.parseInt(p[2])});
+            db.execSQL("ALTER TABLE events ADD COLUMN aimless INTEGER NOT NULL DEFAULT 0");
             db.execSQL("ALTER TABLE notes ADD COLUMN mode TEXT NOT NULL DEFAULT 'text'");
             db.execSQL("ALTER TABLE messages ADD COLUMN citations TEXT NOT NULL DEFAULT '[]'");
             try(Cursor c=db.rawQuery("SELECT id,body,checks FROM notes",null)) {while(c.moveToNext()) {
@@ -47,7 +48,10 @@ final class Store extends SQLiteOpenHelper {
     }
     synchronized void put(String table,ContentValues values) { getWritableDatabase().insertWithOnConflict(table,null,values,SQLiteDatabase.CONFLICT_REPLACE); }
     synchronized long event(String kind,String purpose,String pkg,String target,long parent) {
-        ContentValues v=new ContentValues();v.put("time",System.currentTimeMillis());v.put("kind",kind);v.put("purpose",purpose);v.put("pkg",pkg);v.put("target",target);v.put("parent",parent);return getWritableDatabase().insertOrThrow("events",null,v);
+        return event(kind,purpose,pkg,target,parent,false);
+    }
+    synchronized long event(String kind,String purpose,String pkg,String target,long parent,boolean aimless) {
+        ContentValues v=new ContentValues();v.put("aimless",aimless?1:0);v.put("time",System.currentTimeMillis());v.put("kind",kind);v.put("purpose",purpose);v.put("pkg",pkg);v.put("target",target);v.put("parent",parent);return getWritableDatabase().insertOrThrow("events",null,v);
     }
     synchronized void usage(long from,long to,String pkg,String label,boolean managed,long parent) {
         if(to<=from||pkg.isEmpty())return;

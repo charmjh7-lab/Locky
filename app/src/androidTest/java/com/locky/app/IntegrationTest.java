@@ -70,6 +70,7 @@ public class IntegrationTest {
             db.execSQL("INSERT INTO purposes(id,label) VALUES('custom-old','기존 목적')");
             db.execSQL("CREATE TABLE notes(id TEXT PRIMARY KEY,title TEXT,body TEXT,checks TEXT,updated INTEGER)");
             db.execSQL("INSERT INTO notes VALUES('old','제목','잊지 않을 글','[{\"text\":\"할 일\",\"done\":true}]',1)");
+            db.execSQL("CREATE TABLE events(id INTEGER PRIMARY KEY)");
             db.execSQL("CREATE TABLE messages(id INTEGER PRIMARY KEY,body TEXT)");db.execSQL("INSERT INTO messages VALUES(1,'기존 대화')");
             Store.get(ApplicationProvider.getApplicationContext()).onUpgrade(db,1,2);
             try(android.database.Cursor memo=db.rawQuery("SELECT body,checks,mode FROM notes WHERE id='old'",null)){assertTrue(memo.moveToFirst());assertEquals("check",memo.getString(2));JSONArray checks=new JSONArray(memo.getString(1));assertEquals("잊지 않을 글",checks.getJSONObject(0).getString("text"));assertTrue(checks.getJSONObject(1).getBoolean("done"));}

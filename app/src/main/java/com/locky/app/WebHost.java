@@ -53,7 +53,7 @@ final class WebHost {
             case "apps":out=apps();break;
             case "purpose":out=store.purpose(a,a.optString("scope","phone"));break;
             case "removePurpose":store.getWritableDatabase().delete("purposes","id=?",new String[]{a.getString("id")});break;
-            case "choose":if(g!=null&&isOverlay)g.choosePhone(resolvePurpose(a));else {JSONObject p=resolvePurpose(a);store.event("unlock",p.getString("label"),"",p.optString("pkg"),0);Intent i=Links.intent(context,p.optString("pkg"),p.optString("uri"));if(i!=null)context.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));else if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);}break;
+            case "choose":if(g!=null&&isOverlay)g.choosePhone(resolvePurpose(a));else {JSONObject p=resolvePurpose(a);store.event("unlock",p.getString("label"),"",p.optString("pkg"),0,p.optInt("aimless",0)==1);Intent i=Links.intent(context,p.optString("pkg"),p.optString("uri"));if(i!=null)context.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));else if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);}break;
             case "grant":if(g==null)throw new IllegalStateException("접근성 서비스를 먼저 켜 주세요.");g.allowApp(resolvePurpose(a),a.optInt("minutes",5));break;
             case "extend":if(g!=null)g.extend(a.optInt("minutes",5));break;
             case "stop":if(g!=null)g.stopApp();break;

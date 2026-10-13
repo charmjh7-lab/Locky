@@ -12,7 +12,7 @@ final class Briefing {
         GuardService guard=GuardService.live;if(guard!=null)guard.flushOnMain();
         JSONArray usage=s.rows("SELECT * FROM usage WHERE end>? AND start<? ORDER BY start",""+start,""+end),events=s.rows("SELECT * FROM events WHERE time>=? AND time<? ORDER BY time",""+start,""+end);
         Map<String,Long> totals=new HashMap<>(),drift=new HashMap<>();Map<String,String> labels=new HashMap<>();Map<Long,JSONObject> contexts=new HashMap<>();int unlocks=0,aimless=0;
-        for(int i=0;i<events.length();i++){JSONObject e=events.getJSONObject(i);contexts.put(e.getLong("id"),e);if(e.getString("kind").equals("unlock")){unlocks++;if(e.getString("purpose").equals("그냥 열었어요"))aimless++;}}
+        for(int i=0;i<events.length();i++){JSONObject e=events.getJSONObject(i);contexts.put(e.getLong("id"),e);if(e.getString("kind").equals("unlock")){unlocks++;if(e.optInt("aimless",0)==1||e.getString("purpose").equals("그냥 열었어요"))aimless++;}}
         long total=0,deviation=0,linked=0,initialDeviation=0;JSONArray timeline=new JSONArray();
         for(int i=0;i<usage.length();i++){
             JSONObject u=usage.getJSONObject(i);long duration=Math.max(0,Math.min(end,u.getLong("end"))-Math.max(start,u.getLong("start")));String pkg=u.getString("pkg"),label=u.getString("label");
