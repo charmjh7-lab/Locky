@@ -28,19 +28,19 @@ public class IntegrationTest {
         int oldStart=s.settings.getInt("start",540),oldEnd=s.settings.getInt("end",1260);boolean oldEnabled=s.settings.getBoolean("enabled",true);
         try {
             s.settings.edit().putBoolean("enabled",true).putInt("start",0).putInt("end",0).commit();
-            ContentValues v=new ContentValues();v.put("pkg","com.android.settings");v.put("label","설정 테스트");v.put("mode","limited");v.put("minutes",5);s.put("rules",v);
+            ContentValues v=new ContentValues();v.put("pkg","com.locky.fixture");v.put("label","테스트 앱");v.put("mode","limited");v.put("minutes",5);s.put("rules",v);
             device.executeShellCommand("settings put secure enabled_accessibility_services com.locky.app/com.locky.app.GuardService");device.executeShellCommand("settings put secure accessibility_enabled 1");
             long deadline=System.currentTimeMillis()+12000;while(GuardService.live==null&&System.currentTimeMillis()<deadline)Thread.sleep(100);assertNotNull("Accessibility service did not connect; enabled="+device.executeShellCommand("settings get secure enabled_accessibility_services"),GuardService.live);
-            device.executeShellCommand("am start -a android.settings.SETTINGS");assertTrue("App gate not displayed",device.wait(Until.hasObject(By.textContains("들어가나요")),15000));
+            device.executeShellCommand("am start -n com.locky.fixture/.ProbeActivity");assertTrue("App gate not displayed",device.wait(Until.hasObject(By.textContains("들어가나요")),15000));
             GuardService g=GuardService.live;InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{try{g.allowApp(new JSONObject().put("label","연락 확인"),5);g.sessionRemaining=1500;}catch(Exception e){throw new RuntimeException(e);}});
-            boolean renewed=device.wait(Until.hasObject(By.textContains("머물고 싶나요")),15000);assertTrue("Extension screen not displayed; state="+g.state()+"; foreground="+g.foreground+"; systemPaused="+g.systemPaused+"; interactive="+g.interactive+"; overlay="+g.overlayVisible+"; scheduled="+g.pulseScheduled+"; live="+(GuardService.live==g),renewed);assertTrue(device.hasObject(By.textContains("연락 확인")));
+            boolean renewed=device.wait(Until.hasObject(By.textContains("머물고 싶나요")),15000);assertTrue("Extension screen not displayed; state="+g.state()+"; foreground="+g.foreground+"; systemPaused="+g.systemPaused+"; interactive="+g.interactive+"; overlay="+g.overlayVisible+"; scheduled="+g.pulseScheduled+"; live="+(GuardService.live==g)+"; ticks="+g.pulseCount+"; home="+g.homePackage,renewed);assertTrue(device.hasObject(By.textContains("연락 확인")));
             InstrumentationRegistry.getInstrumentation().runOnMainSync(()->g.extend(5));assertTrue(g.sessionRemaining>0);
-            long exhaustedAt=System.currentTimeMillis();s.usage(exhaustedAt-300000,exhaustedAt,"com.android.settings","설정 테스트",true,0);g.policyChanged();assertTrue("Daily exhaustion screen not displayed",device.wait(Until.hasObject(By.textContains("쉬어갈 시간")),10000));
+            long exhaustedAt=System.currentTimeMillis();s.usage(exhaustedAt-300000,exhaustedAt,"com.locky.fixture","테스트 앱",true,0);g.policyChanged();assertTrue("Daily exhaustion screen not displayed",device.wait(Until.hasObject(By.textContains("쉬어갈 시간")),10000));
             InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{s.settings.edit().putBoolean("enabled",false).commit();g.policyChanged();});Thread.sleep(500);assertFalse(g.overlayVisible);
             device.sleep();Thread.sleep(300);device.wakeUp();device.executeShellCommand("wm dismiss-keyguard");assertTrue("Unlock screen not displayed",device.wait(Until.hasObject(By.textContains("무엇을")),12000));
             InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{try{g.choosePhone(new JSONObject().put("label","그냥 열었어요"));}catch(Exception e){throw new RuntimeException(e);}});assertFalse(g.overlayVisible);
         } finally {
-            s.getWritableDatabase().delete("rules","pkg='com.android.settings'",null);s.settings.edit().putInt("start",oldStart).putInt("end",oldEnd).putBoolean("enabled",oldEnabled).commit();
+            s.getWritableDatabase().delete("rules","pkg='com.locky.fixture'",null);s.settings.edit().putInt("start",oldStart).putInt("end",oldEnd).putBoolean("enabled",oldEnabled).commit();
             device.executeShellCommand("settings put secure enabled_accessibility_services "+(before.equals("null")?"''":before));device.pressHome();
         }
     }

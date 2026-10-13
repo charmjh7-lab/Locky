@@ -16,13 +16,13 @@ import java.util.concurrent.CountDownLatch;
 /** Event driven foreground observation. No node text, screen capture, polling of app contents or wake locks. */
 public final class GuardService extends AccessibilityService {
     static volatile GuardService live;
-    final Handler main=new Handler(Looper.getMainLooper());Store store;
+    final Handler main=androidx.core.os.HandlerCompat.createAsync(Looper.getMainLooper());Store store;
     volatile String foreground="",sessionPkg="",purpose="",utility="첫 화면";long segmentWall,segmentElapsed,sessionEvent,phoneEvent;volatile long sessionRemaining;
     boolean interactive,waitingUnlock,wasManaged,systemPaused;volatile boolean overlayVisible;volatile String gate="unlock",gatePkg="";
     WebHost overlay;WindowManager window;final Set<String> systemPackages=new HashSet<>();
     String homePackage="";
-    volatile boolean pulseScheduled;
-    final Runnable pulse=new Runnable(){public void run(){pulseScheduled=false;if(live!=GuardService.this)return;checkpoint();enforce();ensurePulse();}};
+    volatile boolean pulseScheduled;volatile long pulseCount;
+    final Runnable pulse=new Runnable(){public void run(){pulseScheduled=false;if(live!=GuardService.this)return;pulseCount++;checkpoint();enforce();ensurePulse();}};
     final BroadcastReceiver screen=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){
         String a=i.getAction();if(Intent.ACTION_SCREEN_OFF.equals(a)){checkpoint();interactive=false;sessionPkg="";sessionRemaining=0;waitingUnlock=true;prepareUnlock();Notices.cancelTimer(c);main.removeCallbacks(pulse);pulseScheduled=false;}
         else if(Intent.ACTION_USER_PRESENT.equals(a)){interactive=true;waitingUnlock=false;prepareUnlock();ensurePulse();}
@@ -121,7 +121,7 @@ public final class GuardService extends AccessibilityService {
         if(overlayVisible||waitingUnlock)return;
         boolean pause=false,known=false;
         for(AccessibilityWindowInfo w:getWindows())if(w.isFocused()&&w.getType()!=AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY&&w.getType()!=AccessibilityWindowInfo.TYPE_INPUT_METHOD){
-            AccessibilityNodeInfo root=w.getRoot();if(root!=null){CharSequence name=root.getPackageName();String pkg=name==null?"":name.toString();root.recycle();pause=pkg.equals("com.android.systemui");known=true;break;}
+            pause=w.getType()==AccessibilityWindowInfo.TYPE_SYSTEM;known=true;break;
         }
         if(known&&pause!=systemPaused){checkpoint();systemPaused=pause;lastNotice=-1;if(pause)Notices.cancelTimer(this);else enforce();ensurePulse();}
     }
