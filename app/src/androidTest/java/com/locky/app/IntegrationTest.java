@@ -44,6 +44,9 @@ public class IntegrationTest {
             device.pressBack();Thread.sleep(1200);assertEquals("Notification drawer ended the chosen session",chosenSession,g.sessionEvent);assertFalse("Notification drawer redisplayed the app start gate",g.overlayVisible);
             device.pressHome();long homeDeadline=System.currentTimeMillis()+5000;while(!g.sessionPkg.isEmpty()&&System.currentTimeMillis()<homeDeadline)Thread.sleep(100);assertEquals("Home did not end the session; foreground="+g.foreground+"; paused="+g.systemPaused+"; windows="+g.lastWindows+"; timer="+observedTimer+"; "+timerState,"",g.sessionPkg);long usedAtHome=s.used("com.locky.fixture",System.currentTimeMillis());Thread.sleep(1100);assertEquals("Home time was charged",usedAtHome,s.used("com.locky.fixture",System.currentTimeMillis()));
             device.pressRecentApps();
+            // Pixel's first-use overview education temporarily hides task nodes.
+            UiObject2 overviewTip=device.wait(Until.findObject(By.textContains("Select text and images")),1500);
+            if(overviewTip!=null){overviewTip.click();Thread.sleep(300);}
             UiObject2 recentCard=device.wait(Until.findObject(By.res(java.util.regex.Pattern.compile(".*:id/(snapshot|task_thumbnail|thumbnail)"))),2000);
             if(recentCard==null){recentCard=device.wait(Until.findObject(By.descContains("Locky test target")),5000);if(recentCard==null)recentCard=device.wait(Until.findObject(By.text("Locky test target")),3000);
                 if(recentCard!=null){android.graphics.Rect bounds=recentCard.getVisibleBounds();while(recentCard.getParent()!=null&&(bounds.width()<device.getDisplayWidth()/2||bounds.height()<device.getDisplayHeight()/4)){recentCard=recentCard.getParent();bounds=recentCard.getVisibleBounds();}}
