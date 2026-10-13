@@ -5,3 +5,6 @@ local.properties
 *.apk
 *.log
 node_modules/
+
+__pycache__/
+*.pyc

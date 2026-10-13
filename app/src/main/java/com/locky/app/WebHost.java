@@ -24,7 +24,11 @@ final class WebHost {
         WebViewAssetLoader loader=new WebViewAssetLoader.Builder().addPathHandler("/assets/",new WebViewAssetLoader.AssetsPathHandler(c)).build();
         view.setWebViewClient(new WebViewClient(){@Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){return loader.shouldInterceptRequest(r.getUrl());}@Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return true;}@Override public void onPageFinished(WebView v,String url){ready=true;screen(pendingScreen);}});
         view.addJavascriptInterface(new Bridge(),"Native");view.setOnKeyListener((v,key,e)->{if(key==KeyEvent.KEYCODE_BACK&&e.getAction()==KeyEvent.ACTION_UP){evaluate("back()");return true;}return false;});
-        view.setOnApplyWindowInsetsListener((v,insets)->{android.graphics.Insets bars=Build.VERSION.SDK_INT>=30?insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout()):null;int top=bars==null?insets.getSystemWindowInsetTop():bars.top;int bottom=bars==null?insets.getSystemWindowInsetBottom():bars.bottom;v.setPadding(bars==null?0:bars.left,top,bars==null?0:bars.right,bottom);return insets;});
+        view.setOnApplyWindowInsetsListener((v,insets)->{
+            if(Build.VERSION.SDK_INT>=30){android.graphics.Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());v.setPadding(bars.left,bars.top,bars.right,bars.bottom);}
+            else v.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());
+            return insets;
+        });
         view.loadUrl("https://appassets.androidplatform.net/assets/index.html");
     }
     void screen(String name){pendingScreen=name;if(ready)evaluate("navigate("+JSONObject.quote(name)+")");}
@@ -96,6 +100,6 @@ final class WebHost {
     void permission(String name){
         if(isOverlay&&GuardService.live!=null){GuardService.live.openMain("setup");return;}
         if(name.equals("notification")&&Build.VERSION.SDK_INT>=33&&context instanceof Activity){((Activity)context).requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS},4);return;}
-        Intent i=switch(name){case "accessibility"->new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);case "usage"->new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS);case "exact"->new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:"+context.getPackageName()));case "battery"->new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);case "notification"->new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,context.getPackageName());default->throw new IllegalArgumentException("권한을 찾을 수 없습니다.");};context.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        Intent i=switch(name){case "accessibility"->new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);case "usage"->new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS);case "exact"->Build.VERSION.SDK_INT>=31?new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:"+context.getPackageName())):new Intent(Settings.ACTION_SETTINGS);case "battery"->new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);case "notification"->new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,context.getPackageName());default->throw new IllegalArgumentException("권한을 찾을 수 없습니다.");};context.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     }
 }

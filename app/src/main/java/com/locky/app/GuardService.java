@@ -20,6 +20,7 @@ public final class GuardService extends AccessibilityService {
     String foreground="",sessionPkg="",purpose="",utility="첫 화면";long segmentWall,segmentElapsed,sessionRemaining,sessionEvent,phoneEvent;
     boolean interactive,overlayVisible,waitingUnlock,wasManaged;String gate="unlock",gatePkg="";
     WebHost overlay;WindowManager window;final Set<String> systemPackages=new HashSet<>();
+    String homePackage="";
     final Runnable pulse=new Runnable(){public void run(){if(live!=GuardService.this)return;checkpoint();enforce();if(shouldPulse())main.postDelayed(this,1000);}};
     final BroadcastReceiver screen=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){
         String a=i.getAction();if(Intent.ACTION_SCREEN_OFF.equals(a)){checkpoint();interactive=false;sessionPkg="";sessionRemaining=0;waitingUnlock=true;prepareUnlock();Notices.cancelTimer(c);main.removeCallbacks(pulse);}
@@ -31,16 +32,18 @@ public final class GuardService extends AccessibilityService {
     final Runnable checkUnlock=new Runnable(){public void run(){if(!interactive)return;if(!getSystemService(KeyguardManager.class).isKeyguardLocked()){if(waitingUnlock){waitingUnlock=false;prepareUnlock();}ensurePulse();}else if(unlockChecks++<20)main.postDelayed(this,250);}};
     @Override protected void onServiceConnected(){
         live=this;store=Store.get(this);window=getSystemService(WindowManager.class);interactive=getSystemService(PowerManager.class).isInteractive();wasManaged=store.managed(System.currentTimeMillis());
+        ResolveInfo home=getPackageManager().resolveActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),PackageManager.MATCH_DEFAULT_ONLY);if(home!=null)homePackage=home.activityInfo.packageName;
         systemPackages.add("com.android.systemui");systemPackages.add("com.android.permissioncontroller");systemPackages.add("com.google.android.permissioncontroller");
         android.view.inputmethod.InputMethodManager ime=getSystemService(android.view.inputmethod.InputMethodManager.class);for(android.view.inputmethod.InputMethodInfo x:ime.getEnabledInputMethodList())systemPackages.add(x.getPackageName());
         IntentFilter f=new IntentFilter();for(String a:new String[]{Intent.ACTION_SCREEN_OFF,Intent.ACTION_SCREEN_ON,Intent.ACTION_USER_PRESENT,Intent.ACTION_TIME_CHANGED,Intent.ACTION_TIMEZONE_CHANGED})f.addAction(a);
         if(Build.VERSION.SDK_INT>=33)registerReceiver(screen,f,Context.RECEIVER_NOT_EXPORTED);else registerReceiver(screen,f);
         segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();
+        long recoveryFrom=store.settings.getLong("checkpoint",System.currentTimeMillis());String recoveryPackage=store.settings.getString("last-package","");
         waitingUnlock=!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked();
-        if(waitingUnlock)prepareUnlock();Scheduler.schedule(this);recover();
+        if(waitingUnlock)prepareUnlock();Scheduler.schedule(this);recover(recoveryFrom,recoveryPackage);
     }
-    private void recover(){long from=store.settings.getLong("checkpoint",System.currentTimeMillis()),now=System.currentTimeMillis();
-        if(now-from<2000)return;String old=store.settings.getString("last-package","");if(old.isEmpty())return;
+    private void recover(long from,String old){long now=System.currentTimeMillis();
+        if(now-from<2000||old.isEmpty())return;
         LockyApp.app.work.execute(()->{try{JSONArray history=UsageReader.intervals(this,from,now);for(int i=0;i<history.length();i++){JSONObject u=history.getJSONObject(i);String pkg=u.getString("pkg");if(store.rule(pkg)==null)continue;long a=u.getLong("start"),b=u.getLong("end");while(a<b){long boundary=Math.min(b,Rules.nextBoundary(a,store.settings.getInt("start",540),store.settings.getInt("end",1260),ZoneId.systemDefault()));store.usage(a,boundary,pkg,UsageReader.label(this,pkg),store.managed(a),0);a=boundary;}}}catch(Exception ignored){}finally{main.post(this::policyChanged);}});
     }
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
@@ -62,9 +65,10 @@ public final class GuardService extends AccessibilityService {
     void checkpoint(){
         if(store==null)return;long wall=System.currentTimeMillis(),elapsed=SystemClock.elapsedRealtime();long delta=Math.max(0,elapsed-segmentElapsed);
         // Time changes cannot manufacture usage: reconstruct the wall start from monotonic elapsed time.
-        long from=wall-delta;
+        long from=Math.abs((wall-segmentWall)-delta)<2000?segmentWall:wall-delta;
         if(interactive&&!foreground.isEmpty()&&delta>0){
-            String pkg=overlayVisible?getPackageName():foreground,label=overlayVisible?utility:UsageReader.label(this,pkg);boolean charge=!overlayVisible&&pkg.equals(sessionPkg);
+            String pkg=overlayVisible?getPackageName():foreground,label=overlayVisible?utility:UsageReader.label(this,pkg);
+            if(pkg.equals(homePackage)){segmentWall=wall;segmentElapsed=elapsed;store.settings.edit().putLong("checkpoint",wall).putString("last-package",foreground).apply();return;}boolean charge=!overlayVisible&&pkg.equals(sessionPkg);
             long at=from;while(at<wall){long boundary=Math.min(wall,Math.min(Rules.nextDay(at,ZoneId.systemDefault()),Rules.nextBoundary(at,store.settings.getInt("start",540),store.settings.getInt("end",1260),ZoneId.systemDefault())));boolean managed=store.managed(at);store.usage(at,boundary,pkg,label,charge&&managed,charge?sessionEvent:phoneEvent);if(charge&&managed)sessionRemaining=Math.max(0,sessionRemaining-(boundary-at));at=boundary;}
         }
         segmentWall=wall;segmentElapsed=elapsed;store.settings.edit().putLong("checkpoint",wall).putString("last-package",foreground).apply();
