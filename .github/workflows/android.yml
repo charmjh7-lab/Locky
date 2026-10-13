@@ -68,7 +68,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.0.0 · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
+          gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.1.0 · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
       - name: Keep three successful automatic releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

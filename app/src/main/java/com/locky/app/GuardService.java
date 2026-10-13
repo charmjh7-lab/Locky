@@ -24,13 +24,13 @@ public final class GuardService extends AccessibilityService {
     volatile boolean pulseScheduled;volatile long pulseCount;
     final Runnable pulse=new Runnable(){public void run(){pulseScheduled=false;if(live!=GuardService.this)return;pulseCount++;checkpoint();enforce();ensurePulse();}};
     final BroadcastReceiver screen=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){
-        String a=i.getAction();if(Intent.ACTION_SCREEN_OFF.equals(a)){checkpoint();interactive=false;sessionPkg="";sessionRemaining=0;waitingUnlock=true;prepareUnlock();Notices.cancelTimer(c);main.removeCallbacks(pulse);pulseScheduled=false;}
-        else if(Intent.ACTION_USER_PRESENT.equals(a)){interactive=true;waitingUnlock=false;prepareUnlock();ensurePulse();}
+        String a=i.getAction();if(Intent.ACTION_SCREEN_OFF.equals(a)){checkpoint();interactive=false;sessionPkg="";sessionRemaining=0;foreground="";store.settings.edit().putBoolean("checkpoint-interactive",false).putString("last-package","").apply();waitingUnlock=true;prepareUnlock();Notices.cancelTimer(c);main.removeCallbacks(pulse);pulseScheduled=false;}
+        else if(Intent.ACTION_USER_PRESENT.equals(a)){interactive=true;waitingUnlock=false;observeForeground(null);prepareUnlock();ensurePulse();}
         else if(Intent.ACTION_SCREEN_ON.equals(a)){interactive=true;main.post(checkUnlock);}
         else if(Intent.ACTION_TIME_CHANGED.equals(a)||Intent.ACTION_TIMEZONE_CHANGED.equals(a)){checkpoint();policyChanged();Scheduler.schedule(c);}
     }};
     int unlockChecks;
-    final Runnable checkUnlock=new Runnable(){public void run(){if(!interactive)return;if(!getSystemService(KeyguardManager.class).isKeyguardLocked()){if(waitingUnlock){waitingUnlock=false;prepareUnlock();}ensurePulse();}else if(unlockChecks++<20)main.postDelayed(this,250);}};
+    final Runnable checkUnlock=new Runnable(){public void run(){if(!interactive)return;if(!getSystemService(KeyguardManager.class).isKeyguardLocked()){if(waitingUnlock){waitingUnlock=false;observeForeground(null);prepareUnlock();}ensurePulse();}else if(unlockChecks++<20)main.postDelayed(this,250);}};
     @Override protected void onServiceConnected(){
         live=this;store=Store.get(this);window=getSystemService(WindowManager.class);interactive=getSystemService(PowerManager.class).isInteractive();wasManaged=store.managed(System.currentTimeMillis());
         ResolveInfo home=getPackageManager().resolveActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),PackageManager.MATCH_DEFAULT_ONLY);if(home!=null)homePackage=home.activityInfo.packageName;
@@ -41,31 +41,59 @@ public final class GuardService extends AccessibilityService {
         segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();
         long recoveryFrom=store.settings.getLong("checkpoint",System.currentTimeMillis());String recoveryPackage=store.settings.getString("last-package","");
         waitingUnlock=!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked();
-        if(waitingUnlock)prepareUnlock();Scheduler.schedule(this);recover(recoveryFrom,recoveryPackage);
+        if(waitingUnlock)prepareUnlock();else observeForeground(null);Scheduler.schedule(this);recover(recoveryFrom,store.settings.getBoolean("checkpoint-interactive",true)?recoveryPackage:"");
     }
     private void recover(long from,String old){long now=System.currentTimeMillis();
-        if(now-from<2000||old.isEmpty())return;
-        LockyApp.app.work.execute(()->{try{JSONArray history=UsageReader.intervals(this,from,now);for(int i=0;i<history.length();i++){JSONObject u=history.getJSONObject(i);String pkg=u.getString("pkg");if(store.rule(pkg)==null)continue;long a=u.getLong("start"),b=u.getLong("end");while(a<b){long boundary=Math.min(b,Rules.nextBoundary(a,store.settings.getInt("start",540),store.settings.getInt("end",1260),ZoneId.systemDefault()));store.usage(a,boundary,pkg,UsageReader.label(this,pkg),store.managed(a),0);a=boundary;}}}catch(Exception ignored){}finally{main.post(this::policyChanged);}});
+        if(now-from<2000)return;
+        LockyApp.app.work.execute(()->{try{JSONArray history=UsageReader.intervals(this,Math.max(from,now-180L*86400000),now,old);for(int i=0;i<history.length();i++){JSONObject u=history.getJSONObject(i);String pkg=u.getString("pkg");if(!UsageReader.recordable(this,pkg)||pkg.equals(getPackageName()))continue;JSONObject rule=store.rule(pkg);long a=u.getLong("start"),b=u.getLong("end");while(a<b){long boundary=Math.min(b,Math.min(Rules.nextDay(a,ZoneId.systemDefault()),Rules.nextBoundary(a,store.settings.getInt("start",540),store.settings.getInt("end",1260),ZoneId.systemDefault())));store.usage(a,boundary,pkg,UsageReader.label(this,pkg),rule!=null&&rule.optString("mode").equals("limited")&&store.managed(a),0);a=boundary;}}}catch(Exception ignored){}finally{main.post(this::policyChanged);}});
     }
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
         if(store==null)return;
-        if(event.getPackageName()==null){updateSystemPause();return;}String pkg=event.getPackageName().toString();
-        if(pkg.contains("incallui")||pkg.equals("com.android.server.telecom")){
-            checkpoint();if(overlayVisible&&gate.equals("unlock"))phoneEvent=store.event("unlock","전화 응답",pkg,pkg,0);if(overlayVisible)hideOverlay();systemPaused=true;Notices.cancelTimer(this);return;
-        }
-        if(systemPackages.contains(pkg)){updateSystemPause();return;}
-        if(getSystemService(KeyguardManager.class).isKeyguardLocked()){if(!waitingUnlock){checkpoint();waitingUnlock=true;prepareUnlock();}return;}
-        if(!interactive){interactive=getSystemService(PowerManager.class).isInteractive();if(!interactive)return;}
+        interactive=getSystemService(PowerManager.class).isInteractive();
+        if(!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked())return;
         if(waitingUnlock){waitingUnlock=false;prepareUnlock();}
-        if(pkg.equals(getPackageName()))return; // overlay events never become the app beneath the overlay
+        observeForeground(event);
+    }
+    boolean overview;
+    void observeForeground(AccessibilityEvent event) {
+        if(store==null||!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked())return;
+        List<ForegroundPolicy.Window> candidates=new ArrayList<>();
+        for(AccessibilityWindowInfo w:getWindows()) {
+            String pkg="";
+            // Only obtain the window root's package; never traverse content or read text.
+            if(w.getType()==AccessibilityWindowInfo.TYPE_APPLICATION){AccessibilityNodeInfo root=w.getRoot();if(root!=null){CharSequence name=root.getPackageName();pkg=name==null?"":name.toString();root.recycle();}}
+            candidates.add(new ForegroundPolicy.Window(pkg,w.getType(),w.isFocused(),w.isActive(),w.getLayer(),w.isInPictureInPictureMode()));
+        }
+        ForegroundPolicy.Result visible=ForegroundPolicy.select(candidates,systemPackages);
+        if(event!=null&&event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED&&event.getClassName()!=null){
+            String name=event.getClassName().toString().toLowerCase(Locale.ROOT),pkg=event.getPackageName()==null?"":event.getPackageName().toString();
+            if(pkg.equals(homePackage)&&(name.contains("recents")||name.contains("overview")))overview=true;
+            else if(pkg.equals(homePackage)&&name.contains("launcher"))overview=false;
+        }
+        if(!visible.pkg.isEmpty()&&!visible.pkg.equals(homePackage)&&!systemPackages.contains(visible.pkg))overview=false;
+        if(visible.paused||overview){pauseSystem();return;}
+        if(visible.pkg.isEmpty())return; // transient/root unavailable: do not trust background event senders
+        String pkg=visible.pkg;
+        if(pkg.contains("incallui")||pkg.equals("com.android.server.telecom")){if(overlayVisible)hideOverlay();pauseSystem();return;}
+        switchForeground(pkg);
+    }
+    void pauseSystem(){
+        boolean changed=!systemPaused;if(changed){checkpoint();systemPaused=true;lastNotice=-1;}
+        if(overlayVisible&&overlay!=null)overlay.root.setVisibility(View.INVISIBLE);
+        if(changed&&!sessionPkg.isEmpty())Notices.paused(this,UsageReader.label(this,sessionPkg),dailyRemaining(sessionPkg),sessionRemaining);
+        ensurePulse();
+    }
+    void switchForeground(String pkg){
         if(systemPaused){checkpoint();systemPaused=false;lastNotice=-1;}
-        if(!UsageReader.launcherApp(this,pkg))return;
-        if(!pkg.equals(foreground)){
-            checkpoint();if(!sessionPkg.isEmpty()&&!pkg.equals(sessionPkg)){sessionPkg="";sessionRemaining=0;}
+        if(!pkg.equals(foreground)) {
+            checkpoint();
+            // Locky's time-detail Activity pauses a grant; real app/home transitions end it.
+            if(!sessionPkg.isEmpty()&&!pkg.equals(sessionPkg)&&!pkg.equals(getPackageName())){sessionPkg="";sessionRemaining=0;}
             foreground=pkg;segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();
-            store.settings.edit().putString("last-package",pkg).putLong("checkpoint",segmentWall).apply();
+            store.settings.edit().putString("last-package",pkg).putLong("checkpoint",segmentWall).putBoolean("checkpoint-interactive",interactive).apply();
             if(overlayVisible&&!gate.equals("unlock")&&!gatePkg.equals(pkg))hideOverlay();
         }
+        if(overlayVisible&&overlay!=null)overlay.root.setVisibility(View.VISIBLE);
         enforce();ensurePulse();
     }
     void checkpoint(){
@@ -74,10 +102,10 @@ public final class GuardService extends AccessibilityService {
         long from=Math.abs((wall-segmentWall)-delta)<2000?segmentWall:wall-delta;
         if(interactive&&!foreground.isEmpty()&&delta>0){
             String pkg=(overlayVisible||systemPaused)?getPackageName():foreground,label=systemPaused?"사용 확인":(overlayVisible||pkg.equals(getPackageName()))?utility:UsageReader.label(this,pkg);
-            if(pkg.equals(homePackage)){segmentWall=wall;segmentElapsed=elapsed;store.settings.edit().putLong("checkpoint",wall).putString("last-package",foreground).apply();return;}boolean charge=!overlayVisible&&!systemPaused&&pkg.equals(sessionPkg);
+            if(pkg.equals(homePackage)){segmentWall=wall;segmentElapsed=elapsed;store.settings.edit().putLong("checkpoint",wall).putString("last-package",foreground).putBoolean("checkpoint-interactive",interactive).apply();return;}boolean charge=!overlayVisible&&!systemPaused&&pkg.equals(sessionPkg);
             long at=from;while(at<wall){long boundary=Math.min(wall,Math.min(Rules.nextDay(at,ZoneId.systemDefault()),Rules.nextBoundary(at,store.settings.getInt("start",540),store.settings.getInt("end",1260),ZoneId.systemDefault())));boolean managed=store.managed(at);store.usage(at,boundary,pkg,label,charge&&managed,charge?sessionEvent:phoneEvent);if(charge&&managed)sessionRemaining=Math.max(0,sessionRemaining-(boundary-at));at=boundary;}
         }
-        segmentWall=wall;segmentElapsed=elapsed;store.settings.edit().putLong("checkpoint",wall).putString("last-package",foreground).apply();
+        segmentWall=wall;segmentElapsed=elapsed;store.settings.edit().putLong("checkpoint",wall).putString("last-package",foreground).putBoolean("checkpoint-interactive",interactive).apply();
     }
     void flushOnMain(){if(Looper.myLooper()==Looper.getMainLooper()){checkpoint();return;}CountDownLatch latch=new CountDownLatch(1);main.post(()->{try{checkpoint();}finally{latch.countDown();}});try{latch.await(2,java.util.concurrent.TimeUnit.SECONDS);}catch(InterruptedException e){Thread.currentThread().interrupt();}}
     boolean shouldPulse(){return interactive&&!foreground.isEmpty()&&(!sessionPkg.isEmpty()||overlayVisible);}
@@ -85,10 +113,10 @@ public final class GuardService extends AccessibilityService {
     long dailyRemaining(String pkg){return store.remaining(pkg,System.currentTimeMillis());}
     void enforce(){
         long now=System.currentTimeMillis();boolean managed=store.managed(now);if(managed!=wasManaged){wasManaged=managed;if(!managed){sessionPkg="";sessionRemaining=0;if(overlayVisible&&!gate.equals("unlock"))hideOverlay();Notices.cancelTimer(this);}else{sessionPkg="";sessionRemaining=0;}Scheduler.schedule(this);}
-        if(!interactive||systemPaused||getSystemService(KeyguardManager.class).isKeyguardLocked()||foreground.isEmpty())return;
+        if(!interactive||systemPaused||foreground.equals(getPackageName())||getSystemService(KeyguardManager.class).isKeyguardLocked()||foreground.isEmpty())return;
         if(overlayVisible&&gate.equals("unlock"))return;
         if(!managed){if(overlayVisible&&!gate.equals("unlock"))hideOverlay();Notices.cancelTimer(this);return;}
-        JSONObject rule=store.rule(foreground);if(rule==null){Notices.cancelTimer(this);return;}
+        JSONObject rule=store.rule(foreground);if(rule==null){if(overlayVisible&&!gate.equals("unlock"))hideOverlay();Notices.cancelTimer(this);return;}
         if(rule.optString("mode").equals("locked")||dailyRemaining(foreground)<=0){if(rule.optString("mode").equals("limited"))store.blockUntilFree(foreground,now);showGate("blocked",foreground);Notices.cancelTimer(this);return;}
         if(!foreground.equals(sessionPkg)){showGate("app",foreground);Notices.cancelTimer(this);return;}
         if(sessionRemaining<=0){showGate("renew",foreground);Notices.cancelTimer(this);return;}
@@ -97,11 +125,11 @@ public final class GuardService extends AccessibilityService {
     long lastNotice=-1;
     void prepareUnlock(){showGate("unlock","");utility="첫 화면";unlockChecks=0;}
     void showGate(String type,String pkg){
-        if(overlayVisible&&gate.equals(type)&&gatePkg.equals(pkg)){if(overlay!=null&&interactive&&!getSystemService(KeyguardManager.class).isKeyguardLocked())overlay.view.setVisibility(View.VISIBLE);return;}checkpoint();gate=type;gatePkg=pkg;utility=type.equals("unlock")?"첫 화면":"사용 확인";
-        if(overlay==null){overlay=new WebHost(this,true);WindowManager.LayoutParams p=new WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,PixelFormat.OPAQUE);p.gravity=Gravity.TOP|Gravity.START;p.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;p.setTitle("Locky");window.addView(overlay.view,p);}
-        overlayVisible=true;overlay.view.setVisibility(interactive&&!getSystemService(KeyguardManager.class).isKeyguardLocked()?View.VISIBLE:View.INVISIBLE);overlay.screen(type);ensurePulse();
+        if(overlayVisible&&gate.equals(type)&&gatePkg.equals(pkg)){if(overlay!=null&&interactive&&!getSystemService(KeyguardManager.class).isKeyguardLocked())overlay.root.setVisibility(View.VISIBLE);return;}checkpoint();gate=type;gatePkg=pkg;utility=type.equals("unlock")?"첫 화면":"사용 확인";
+        if(overlay==null){overlay=new WebHost(this,true);WindowManager.LayoutParams p=new WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,PixelFormat.OPAQUE);p.gravity=Gravity.TOP|Gravity.START;p.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;p.setTitle("Locky");window.addView(overlay.root,p);}
+        overlayVisible=true;overlay.root.setVisibility(interactive&&!getSystemService(KeyguardManager.class).isKeyguardLocked()?View.VISIBLE:View.INVISIBLE);overlay.screen(type);ensurePulse();
     }
-    void hideOverlay(){checkpoint();overlayVisible=false;if(overlay!=null)overlay.view.setVisibility(View.GONE);segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();utility="첫 화면";}
+    void hideOverlay(){checkpoint();overlayVisible=false;if(overlay!=null)overlay.root.setVisibility(View.GONE);segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();utility="첫 화면";}
     void choosePhone(JSONObject p) throws Exception {checkpoint();phoneEvent=store.event("unlock",p.getString("label"),"",p.optString("pkg"),0);hideOverlay();launch(p);enforce();ensurePulse();}
     void allowApp(JSONObject p,int minutes) throws Exception {
         checkpoint();long remaining=dailyRemaining(gatePkg);JSONObject rule=store.rule(gatePkg);if(!store.managed(System.currentTimeMillis())){hideOverlay();return;}
@@ -112,19 +140,16 @@ public final class GuardService extends AccessibilityService {
     void extend(int minutes) {checkpoint();if(!sessionPkg.equals(gatePkg)||dailyRemaining(gatePkg)<=0){enforce();return;}sessionRemaining=Rules.grant(dailyRemaining(gatePkg),minutes);store.event("extend",purpose,sessionPkg,"",phoneEvent);hideOverlay();lastNotice=-1;enforce();ensurePulse();}
     void stopApp(){checkpoint();sessionRemaining=0;sessionPkg="";performGlobalAction(GLOBAL_ACTION_HOME);foreground="";hideOverlay();Notices.cancelTimer(this);main.removeCallbacks(pulse);pulseScheduled=false;}
     void useUtility(String name){checkpoint();boolean changed=!name.equals(utility);utility=name;if(changed&&!name.equals("첫 화면")&&!name.equals("Locky"))store.event("utility",name,getPackageName(),"",phoneEvent);}
-    void pauseForActivity(){checkpoint();foreground=getPackageName();Notices.cancelTimer(this);}
+    void pauseForActivity(){switchForeground(getPackageName());if(!sessionPkg.isEmpty())Notices.paused(this,UsageReader.label(this,sessionPkg),dailyRemaining(sessionPkg),sessionRemaining);}
     void openMain(String screen){useUtility(screen.equals("chats")?"ChatGPT":screen.equals("notes")?"메모":"Locky");hideOverlay();startActivity(new Intent(this,MainActivity.class).putExtra("screen",screen).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}
     void launch(JSONObject p) throws Exception {String pkg=p.optString("pkg"),uri=p.optString("uri");if(pkg.isEmpty()&&uri.isEmpty())return;Intent i=Links.intent(this,pkg,uri);if(i==null)throw new IllegalStateException("연결한 앱이나 동작을 열 수 없습니다. 목적 연결을 확인해 주세요.");startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}
     void policyChanged(){main.post(()->{checkpoint();enforce();ensurePulse();WebHost.refreshAll();});}
-    JSONObject state() throws JSONException {return new JSONObject().put("mode",gate).put("pkg",gatePkg).put("label",UsageReader.label(this,gatePkg)).put("purpose",purpose).put("daily",dailyRemaining(gatePkg.isEmpty()?sessionPkg:gatePkg)).put("session",sessionRemaining).put("activePkg",sessionPkg).put("free",!store.managed(System.currentTimeMillis()));}
-    void updateSystemPause(){
-        if(overlayVisible||waitingUnlock)return;
-        boolean pause=false,known=false;
-        for(AccessibilityWindowInfo w:getWindows())if(w.isFocused()&&w.getType()!=AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY&&w.getType()!=AccessibilityWindowInfo.TYPE_INPUT_METHOD){
-            pause=w.getType()==AccessibilityWindowInfo.TYPE_SYSTEM;known=true;break;
-        }
-        if(known&&pause!=systemPaused){checkpoint();systemPaused=pause;lastNotice=-1;if(pause)Notices.cancelTimer(this);else enforce();ensurePulse();}
+    JSONObject state() throws JSONException {String pkg=overlayVisible?gatePkg:sessionPkg;return new JSONObject().put("mode",gate).put("pkg",pkg).put("label",UsageReader.label(this,pkg)).put("purpose",purpose).put("daily",dailyRemaining(pkg)).put("session",sessionRemaining).put("activePkg",sessionPkg).put("free",!store.managed(System.currentTimeMillis())).put("paused",systemPaused||foreground.equals(getPackageName())).put("visible",overlayVisible);}
+    void dismissStart(){
+        if(gate.equals("unlock")){checkpoint();store.event("dismiss","열지 않기","","",0);waitingUnlock=false;hideOverlay();sessionPkg="";sessionRemaining=0;performGlobalAction(GLOBAL_ACTION_HOME);foreground="";Notices.cancelTimer(this);ensurePulse();
+            if(Build.VERSION.SDK_INT>=28)performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN);
+        }else stopApp();
     }
     @Override public void onInterrupt(){}
-    @Override public void onDestroy(){checkpoint();live=null;main.removeCallbacksAndMessages(null);try{unregisterReceiver(screen);}catch(Exception ignored){}if(overlay!=null){window.removeView(overlay.view);overlay.close();}Notices.cancelTimer(this);super.onDestroy();}
+    @Override public void onDestroy(){checkpoint();live=null;main.removeCallbacksAndMessages(null);try{unregisterReceiver(screen);}catch(Exception ignored){}if(overlay!=null){window.removeView(overlay.root);overlay.close();}Notices.cancelTimer(this);super.onDestroy();}
 }
