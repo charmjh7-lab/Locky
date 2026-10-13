@@ -48,6 +48,7 @@ final class Links {
     static void dictionary(Context c,String word) throws Exception {
         String choice=Store.get(c).settings.getString("dictionary","");Intent i=choice.isEmpty()?null:dictionaryIntent(c,choice,word);
         if(i==null){Store.get(c).settings.edit().remove("dictionary").apply();dictionaryPicker(c,word);return;}
-        c.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        int flags=Intent.FLAG_ACTIVITY_NEW_TASK;if(!Intent.ACTION_VIEW.equals(i.getAction()))flags|=Intent.FLAG_ACTIVITY_CLEAR_TOP;
+        c.startActivity(i.addFlags(flags));
     }
 }
