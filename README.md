@@ -5,10 +5,10 @@ A lightweight personal Android app for intentional phone use. Android 8+; design
 ## Features
 
 - Accessibility overlay prepared on screen-off, visible after unlock; tools and purposes remain available during free time.
-- Inline auto-saved notes and checklists; local ChatGPT conversation list, new chats and deletion.
+- Fixed-size inline notes and direct questions on the compact start screen; separate text/check notes with a single editor scroll and pinned actions; local ChatGPT conversation list, new chats and deletion.
 - Official Continue with ChatGPT: system browser, loopback callback, PKCE, state, nonce, signature/issuer/audience validation, Android Keystore encrypted credentials; account-specific models and streaming Responses API.
-- Samsung dictionary launch, Android word processing chooser, then Naver dictionary fallback. Samsung's external search intent is not a stable API: the app may open at its home rather than prefill the word.
-- Persistent custom purposes with a daily deterministic shuffle; direct input is always first. Aimless starts are counted separately.
+- Remembered dictionary selection: explicit Android word processing activity, Samsung dictionary or Naver dictionary. Samsung's external search intent is not a stable API: the app may open at its home rather than prefill the word.
+- Separate phone/app purpose presets, deletable defaults and persistent custom purposes, with a daily deterministic shuffle; direct input is always first. Aimless starts are counted separately.
 - Per-app daily budget (default 60 min, max 120), foreground-only sessions (5–10 min), purpose reminder and extension, or a complete block during focus hours.
 - System countdown notification for the daily budget. Tap to view daily/session remaining time. Android's status bar presentation differs by One UI version; a third-party app cannot guarantee Samsung Clock's exact timer chip.
 - Recurring focus/free schedule including overnight focus periods; configurable 30/20/10/5/1-minute reminders and custom offsets; daily and weekly local narrative briefings with all observed apps, timestamps and purpose-linked detours.
@@ -17,7 +17,7 @@ A lightweight personal Android app for intentional phone use. Android 8+; design
 
 Open **권한·배터리 설정**. Enable Locky's accessibility service and usage access. Allow notifications and exact alarms. For downloaded APKs, Android may require app info → menu → Allow restricted settings before accessibility can be enabled. On Samsung, exclude Locky from sleeping apps. Accessibility observes package transitions; it does not read node text, take screenshots or collect messages/passwords. Usage/notes/chat history stays on this device; only user-sent ChatGPT messages leave it. The briefing runs locally without AI calls or account access.
 
-Daily budgets are per app and only deducted in focus hours. Daily totals reset at local midnight; an exhausted-app block stays until the next free period, including overnight focus windows. Free hours do not spend the budget. Explicitly increasing an app's allowance applies the larger budget immediately. A session pauses for system UI and the time detail screen; leaving for another app or turning the screen off ends the current session, and the next entry asks again. Daily usage never advances while the screen is off. Grants shorter than five minutes are possible when less daily time remains. Settings take effect immediately and cannot erase already recorded use.
+Daily budgets are per app and only deducted in focus hours. Daily totals reset at local midnight; an exhausted-app block stays until the next free period, including overnight focus windows. Free hours do not spend the budget. Explicitly increasing an app's allowance applies the larger budget immediately. A session pauses for notification shade, overview and the time detail screen; leaving for another app or turning the screen off ends the current session, and the next entry asks again. Daily usage never advances while the screen is off. Grants shorter than five minutes are possible when less daily time remains. Settings take effect immediately and cannot erase already recorded use.
 
 ## Real platform limits
 
@@ -26,6 +26,8 @@ This is a voluntary self-management app, not device-owner kiosk software. Disabl
 ChatGPT integration follows the official personal/local-client OAuth documentation. It does not import conversations from ChatGPT. Connection and account quota require the user's actual approval on the device. No API key or subscription token is included in this repository. All local history is retained, and completed history is sent to maintain context; long chats can increase input usage.
 
 ## Build and release
+
+Version 1.1.0 (`versionCode 2`) upgrades the original signed installation without deleting records, notes, chats or purposes.
 
 JDK 17, Gradle 8.11.1, Android SDK 35. `gradle :app:testDebugUnitTest :app:lintDebug :app:assembleRelease`.
 
