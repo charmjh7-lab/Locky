@@ -35,6 +35,8 @@ jobs:
           npx playwright install --with-deps chromium
           node scripts/ui-test.cjs
       - name: Policy tests, lint and signed APK
+        id: policy
+        if: ${{ !cancelled() }}
         run: |
           result=0
           gradle :app:testDebugUnitTest :app:lintDebug :app:assembleRelease :app:assembleDebug :app:assembleDebugAndroidTest :fixture:assembleDebug --no-daemon || result=$?
@@ -43,12 +45,14 @@ jobs:
           fi
           exit "$result"
       - name: Enable KVM
+        if: ${{ !cancelled() && steps.policy.outcome == 'success' }}
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android/sdk/ndk
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Android lifecycle and integration tests
+        if: ${{ !cancelled() && steps.policy.outcome == 'success' }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
