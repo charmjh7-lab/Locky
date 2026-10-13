@@ -44,6 +44,7 @@ jobs:
           exit "$result"
       - name: Enable KVM
         run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android/sdk/ndk
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
@@ -53,9 +54,17 @@ jobs:
           api-level: 35
           arch: x86_64
           target: google_apis
+          emulator-boot-timeout: 180
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: gradle :app:connectedDebugAndroidTest --no-daemon
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -partition-size 2048 -memory 2048
+          script: |
+            result=0
+            gradle :app:connectedDebugAndroidTest --no-daemon || result=$?
+            if [ "$result" != 0 ]; then
+              find app/build/outputs/androidTest-results -name '*.xml' -exec cat {} +
+              adb logcat -d -t 1200 | grep -E 'AndroidRuntime|FATAL EXCEPTION|chromium|locky' || true
+            fi
+            exit "$result"
       - name: Verify distributable
         run: |
           mkdir -p distribution

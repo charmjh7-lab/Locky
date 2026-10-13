@@ -17,7 +17,7 @@ A lightweight personal Android app for intentional phone use. Android 8+; design
 
 Open **권한·배터리 설정**. Enable Locky's accessibility service and usage access. Allow notifications and exact alarms. For downloaded APKs, Android may require app info → menu → Allow restricted settings before accessibility can be enabled. On Samsung, exclude Locky from sleeping apps. Accessibility observes package transitions; it does not read node text, take screenshots or collect messages/passwords. Usage/notes/chat history stays on this device; only user-sent ChatGPT messages leave it. The briefing runs locally without AI calls or account access.
 
-Daily budgets are per app and only deducted in focus hours. They reset at local midnight; free hours do not spend the budget. A session pauses for system UI, the time detail screen and screen-off; leaving for another app ends the current session and the next entry asks again. Grants shorter than five minutes are possible when less daily time remains. Settings take effect immediately and cannot erase already recorded use.
+Daily budgets are per app and only deducted in focus hours. They reset at local midnight; free hours do not spend the budget. A session pauses for system UI and the time detail screen; leaving for another app or turning the screen off ends the current session, and the next entry asks again. Daily usage never advances while the screen is off. Grants shorter than five minutes are possible when less daily time remains. Settings take effect immediately and cannot erase already recorded use.
 
 ## Real platform limits
 

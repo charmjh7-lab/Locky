@@ -32,7 +32,7 @@ final class WebHost {
         view.loadUrl("https://appassets.androidplatform.net/assets/index.html");
     }
     void screen(String name){pendingScreen=name;if(ready)evaluate("navigate("+JSONObject.quote(name)+")");}
-    void evaluate(String js){main.post(()->{if(view.getParent()!=null||!isOverlay)view.evaluateJavascript(js,null);});}
+    void evaluate(String js){main.post(()->{if(ready&&(view.getParent()!=null||!isOverlay))view.evaluateJavascript(js,null);});}
     void close(){view.removeJavascriptInterface("Native");view.destroy();hosts.removeIf(r->r.get()==null||r.get()==this);}
     static void refreshAll(){for(var r:hosts){WebHost h=r.get();if(h!=null)h.evaluate("refresh()");}}
     void answer(String id,Object value,String error){evaluate("receive("+JSONObject.quote(id)+","+(value==null?"null":value.toString())+","+(error==null?"null":JSONObject.quote(error))+")");}
