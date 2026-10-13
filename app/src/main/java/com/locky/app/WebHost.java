@@ -18,12 +18,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 final class WebHost {
     static final List<WeakReference<WebHost>> hosts=new CopyOnWriteArrayList<>();
-    final android.widget.FrameLayout root;final WebView view;final Context context;final Store store;final boolean isOverlay;final Handler main=new Handler(Looper.getMainLooper());String pendingScreen="home";boolean ready=false;
-    WebHost(Context c,boolean overlay){context=c;store=Store.get(c);isOverlay=overlay;root=new android.widget.FrameLayout(c);view=new WebView(c);root.setBackgroundColor(Color.rgb(244,243,237));root.addView(view,new android.widget.FrameLayout.LayoutParams(-1,-1));hosts.add(new WeakReference<>(this));
-        WebSettings s=view.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(false);s.setAllowFileAccess(false);s.setAllowContentAccess(false);s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);s.setMediaPlaybackRequiresUserGesture(true);s.setSupportMultipleWindows(false);view.setBackgroundColor(Color.rgb(244,243,237));
-        WebViewAssetLoader loader=new WebViewAssetLoader.Builder().addPathHandler("/assets/",new WebViewAssetLoader.AssetsPathHandler(c)).build();
-        view.setWebViewClient(new WebViewClient(){@Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){return loader.shouldInterceptRequest(r.getUrl());}@Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return true;}@Override public void onPageFinished(WebView v,String url){ready=true;screen(pendingScreen);}});
-        view.addJavascriptInterface(new Bridge(),"Native");view.setOnKeyListener((v,key,e)->{if(key==KeyEvent.KEYCODE_BACK&&e.getAction()==KeyEvent.ACTION_UP){evaluate("back()");return true;}return false;});
+    final android.widget.FrameLayout root;WebView view;final Context context;final Store store;final boolean isOverlay;final Handler main=new Handler(Looper.getMainLooper());volatile String pendingScreen="home";boolean ready=false,closed=false;
+    WebHost(Context c,boolean overlay){context=c;store=Store.get(c);isOverlay=overlay;root=new android.widget.FrameLayout(c);root.setBackgroundColor(Color.rgb(244,243,237));hosts.add(new WeakReference<>(this));
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root,(v,insets)->{
             androidx.core.graphics.Insets bars=insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()|androidx.core.view.WindowInsetsCompat.Type.displayCutout());
             androidx.core.graphics.Insets ime=insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime());
@@ -31,17 +27,24 @@ final class WebHost {
             evaluate("insetsChanged("+insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime())+")");return androidx.core.view.WindowInsetsCompat.CONSUMED;
         });
         root.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){public void onViewAttachedToWindow(View v){androidx.core.view.ViewCompat.requestApplyInsets(v);}public void onViewDetachedFromWindow(View v){}});
+        createView();
+    }
+    void createView(){if(closed)return;view=new WebView(context);root.addView(view,new android.widget.FrameLayout.LayoutParams(-1,-1));
+        WebSettings s=view.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(false);s.setAllowFileAccess(false);s.setAllowContentAccess(false);s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);s.setMediaPlaybackRequiresUserGesture(true);s.setSupportMultipleWindows(false);view.setBackgroundColor(Color.rgb(244,243,237));
+        WebViewAssetLoader loader=new WebViewAssetLoader.Builder().addPathHandler("/assets/",new WebViewAssetLoader.AssetsPathHandler(context)).build();
+        view.setWebViewClient(new WebViewClient(){@Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){return loader.shouldInterceptRequest(r.getUrl());}@Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return true;}@Override public void onPageFinished(WebView v,String url){if(closed||v!=view)return;ready=true;screen(pendingScreen);}@Override public boolean onRenderProcessGone(WebView v,RenderProcessGoneDetail detail){if(v!=view)return true;ready=false;root.removeView(v);v.removeJavascriptInterface("Native");v.destroy();if(!closed)main.post(WebHost.this::createView);return true;}});
+        view.addJavascriptInterface(new Bridge(),"Native");view.setOnKeyListener((v,key,e)->{if(key==KeyEvent.KEYCODE_BACK&&e.getAction()==KeyEvent.ACTION_UP){evaluate("back()");return true;}return false;});
         view.loadUrl("https://appassets.androidplatform.net/assets/index.html");
     }
     void screen(String name){pendingScreen=name;if(ready)evaluate("navigate("+JSONObject.quote(name)+")");}
-    void evaluate(String js){main.post(()->{if(ready&&(view.getParent()!=null||!isOverlay))view.evaluateJavascript(js,null);});}
-    void close(){view.removeJavascriptInterface("Native");view.destroy();hosts.removeIf(r->r.get()==null||r.get()==this);}
+    void evaluate(String js){main.post(()->{if(!closed&&ready&&(view.getParent()!=null||!isOverlay))view.evaluateJavascript(js,null);});}
+    void close(){closed=true;ready=false;main.removeCallbacksAndMessages(null);root.removeView(view);view.removeJavascriptInterface("Native");view.destroy();hosts.removeIf(r->r.get()==null||r.get()==this);}
     static void refreshAll(){for(var r:hosts){WebHost h=r.get();if(h!=null)h.evaluate("refresh()");}}
     void answer(String id,Object value,String error){evaluate("receive("+JSONObject.quote(id)+","+(value==null?"null":value.toString())+","+(error==null?"null":JSONObject.quote(error))+")");}
     final class Bridge {
         @JavascriptInterface public void request(String id,String action,String raw){
             if(!action.matches("[A-Za-z]+")||raw.length()>1000000){answer(id,null,"요청을 처리할 수 없습니다.");return;}
-            if(Set.of("choose","grant","extend","stop","utility","open","permission","dictionary","linkTest","signin","cancelLogin","exit","dismiss").contains(action))main.post(()->handle(id,action,raw));
+            if(Set.of("choose","grant","extend","stop","utility","open","permission","dictionary","dictionaryPicker","linkTest","signin","cancelLogin","exit","dismiss").contains(action))main.post(()->handle(id,action,raw));
             else LockyApp.app.work.execute(()->handle(id,action,raw));
         }
     }
@@ -51,6 +54,8 @@ final class WebHost {
             case "state":out=state();break;
             case "tick":out=new JSONObject().put("gate",g==null?new JSONObject():g.state()).put("free",!store.managed(System.currentTimeMillis())).put("busy",LockyApp.app.chat.busy.get()).put("chatError",LockyApp.app.chat.error).put("connection",LockyApp.app.auth.connection());break;
             case "apps":out=apps();break;
+            case "usageApps":out=usageApps();break;
+            case "excludeUsage":{Set<String> excluded=new HashSet<>(store.settings.getStringSet("usage-excluded",Set.of()));String target=a.getString("pkg");if(a.getBoolean("excluded"))excluded.add(target);else excluded.remove(target);store.settings.edit().putStringSet("usage-excluded",excluded).apply();if(g!=null)g.policyChanged();break;}
             case "purpose":out=store.purpose(a,a.optString("scope","phone"));break;
             case "removePurpose":store.getWritableDatabase().delete("purposes","id=?",new String[]{a.getString("id")});break;
             case "choose":if(g!=null&&isOverlay)g.choosePhone(resolvePurpose(a));else {JSONObject p=resolvePurpose(a);store.event("unlock",p.getString("label"),"",p.optString("pkg"),0,p.optInt("aimless",0)==1);Intent i=Links.intent(context,p.optString("pkg"),p.optString("uri"));if(i!=null)context.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));else if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);}break;
@@ -60,8 +65,9 @@ final class WebHost {
             case "utility":if(g!=null)g.useUtility(a.getString("name"));else store.event("utility",a.getString("name"),context.getPackageName(),"",0);break;
             case "open":if(isOverlay&&g!=null)g.openMain(a.getString("screen"));else screen(a.getString("screen"));break;
             case "dismiss":if(isOverlay&&g!=null)g.dismissStart();else if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);break;
-            case "remember":if(!isOverlay)store.settings.edit().putString("last-screen",a.optString("screen","home")).putString("last-chat",a.optString("chat")).putString("last-note",a.optString("note")).apply();break;
+            case "remember":if(!isOverlay){pendingScreen=a.optString("screen","home");store.settings.edit().putString("last-screen",a.optString("screen","home")).putString("last-chat",a.optString("chat")).putString("last-note",a.optString("note")).apply();}break;
             case "dictionaries":out=Links.dictionaries(context);break;
+            case "dictionaryPicker":if(isOverlay&&g!=null)g.hideOverlay();Links.dictionaryPicker(context,a.optString("word"));break;
             case "dictionaryChoice":store.settings.edit().putString("dictionary",a.getString("id")).apply();break;
             case "exit":if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);break;
             case "dictionary":if(g!=null)g.useUtility("사전");else store.event("utility","사전",context.getPackageName(),"",0);if(isOverlay&&g!=null)g.hideOverlay();Links.dictionary(context,a.getString("word"));break;
@@ -86,8 +92,8 @@ final class WebHost {
             case "models":out=LockyApp.app.auth.models();store.settings.edit().putString("models",out.toString()).apply();break;
             case "account":LockyApp.app.auth.select(a.getString("client"));store.settings.edit().putString("model","").putString("models","[]").apply();break;
             case "signout":out=new JSONObject().put("message",LockyApp.app.auth.signOut());store.settings.edit().putString("model","").putString("models","[]").apply();break;
-            case "signin":if(isOverlay&&g!=null){g.openMain("chats");break;}LockyApp.app.auth.signIn(a.optString("client"),a.optBoolean("consent",false),new ChatGPT.SignIn(){public void browser(String url){main.post(()->{try{new androidx.browser.customtabs.CustomTabsIntent.Builder().build().launchUrl(context,Uri.parse(url));}catch(Exception e){context.startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}});}public void progress(){refreshAll();}public void success(){LockyApp.app.work.execute(()->{try{JSONArray models=LockyApp.app.auth.models();store.settings.edit().putString("models",models.toString()).apply();if(models.length()>0)store.settings.edit().putString("model",models.getJSONObject(0).getString("slug")).apply();}catch(Exception ignored){}refreshAll();});}public void error(String error){refreshAll();}});break;
-            case "cancelLogin":LockyApp.app.auth.cancelLogin();break;
+            case "signin":if(isOverlay&&g!=null){g.openMain("chats");break;}LockyApp.app.auth.signIn(a.optString("client"),a.optBoolean("consent",false),new ChatGPT.SignIn(){public void browser(String url){if(context instanceof MainActivity)((MainActivity)context).loginBrowser(url);}public void progress(){refreshAll();}public void success(){main.post(()->{if(context instanceof MainActivity)((MainActivity)context).releaseLoginBrowser();});LockyApp.app.work.execute(()->{try{JSONArray models=LockyApp.app.auth.models();store.settings.edit().putString("models",models.toString()).apply();if(models.length()>0)store.settings.edit().putString("model",models.getJSONObject(0).getString("slug")).apply();}catch(Exception ignored){}refreshAll();});}public void error(String error){main.post(()->{if(context instanceof MainActivity)((MainActivity)context).releaseLoginBrowser();});refreshAll();}});break;
+            case "cancelLogin":LockyApp.app.auth.cancelLogin();if(context instanceof MainActivity)((MainActivity)context).releaseLoginBrowser();break;
             case "permission":permission(a.getString("name"));break;
             default:throw new IllegalArgumentException("지원하지 않는 요청입니다.");
         }
@@ -109,6 +115,12 @@ final class WebHost {
         Intent launcher=new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);List<ResolveInfo> list=context.getPackageManager().queryIntentActivities(launcher,0);Set<String> seen=new HashSet<>();JSONArray out=new JSONArray();list.sort(Comparator.comparing(x->x.loadLabel(context.getPackageManager()).toString()));
         String home="";ResolveInfo h=context.getPackageManager().resolveActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),PackageManager.MATCH_DEFAULT_ONLY);if(h!=null)home=h.activityInfo.packageName;
         for(ResolveInfo r:list){String pkg=r.activityInfo.packageName;if(!seen.add(pkg)||pkg.equals(context.getPackageName())||pkg.equals(home)||pkg.equals("com.android.settings"))continue;out.put(new JSONObject().put("pkg",pkg).put("label",UsageReader.label(context,pkg)).put("icon",icon(r.loadIcon(context.getPackageManager()))));}return out;
+    }
+    JSONArray usageApps() throws Exception {
+        Map<String,JSONObject> choices=new TreeMap<>();JSONArray launchable=apps();for(int j=0;j<launchable.length();j++){JSONObject app=launchable.getJSONObject(j);choices.put(app.getString("pkg"),app);}
+        JSONArray known=store.rows("SELECT DISTINCT pkg,label FROM usage");for(int j=0;j<known.length();j++){JSONObject app=known.getJSONObject(j);choices.putIfAbsent(app.getString("pkg"),app);}
+        for(String pkg:store.settings.getStringSet("usage-excluded",Set.of()))choices.putIfAbsent(pkg,new JSONObject().put("pkg",pkg).put("label",UsageReader.label(context,pkg)));
+        JSONArray out=new JSONArray();for(var app:choices.values()){String pkg=app.getString("pkg");if(pkg.equals(context.getPackageName()))continue;boolean system=false;try{ApplicationInfo info=context.getPackageManager().getApplicationInfo(pkg,0);system=(info.flags&(ApplicationInfo.FLAG_SYSTEM|ApplicationInfo.FLAG_UPDATED_SYSTEM_APP))!=0;if(!app.has("icon"))app.put("icon",icon(info.loadIcon(context.getPackageManager())));}catch(PackageManager.NameNotFoundException ignored){}app.put("excluded",UsageReader.excluded(context,pkg)).put("system",system);out.put(app);}return out;
     }
     String icon(Drawable d){Bitmap b=Bitmap.createBitmap(48,48,Bitmap.Config.ARGB_8888);d.setBounds(0,0,48,48);d.draw(new Canvas(b));java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();b.compress(Bitmap.CompressFormat.PNG,100,out);b.recycle();return "data:image/png;base64,"+android.util.Base64.encodeToString(out.toByteArray(),android.util.Base64.NO_WRAP);}
     void permission(String name){

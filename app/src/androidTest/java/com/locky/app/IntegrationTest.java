@@ -11,6 +11,27 @@ import static org.junit.Assert.*;
 @RunWith(AndroidJUnit4.class)
 public class IntegrationTest {
     @Before public void keepOtherAccessibilityServicesEnabled(){Configurator.getInstance().setUiAutomationFlags(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);}
+    @Test public void lockyItselfReturnsFromRecentTasksAfterConnectionLink() throws Exception {
+        Context c=ApplicationProvider.getApplicationContext();UiDevice d=UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
+        c.startActivity(MainActivity.launchIntent(c).putExtra("screen","chats").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));assertTrue(d.wait(Until.hasObject(By.text("Continue with ChatGPT")),10000));
+        c.startActivity(new Intent(Intent.ACTION_VIEW,android.net.Uri.parse("locky://connection")).setPackage(c.getPackageName()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));assertTrue(d.wait(Until.hasObject(By.text("Continue with ChatGPT")),10000));
+        for(android.app.ActivityManager.AppTask task:c.getSystemService(android.app.ActivityManager.class).getAppTasks()){Intent base=task.getTaskInfo().baseIntent;assertEquals("Recent task lost launcher identity",Intent.ACTION_MAIN,base.getAction());assertTrue(base.hasCategory(Intent.CATEGORY_LAUNCHER));}
+        d.pressHome();d.pressRecentApps();UiObject2 tip=d.wait(Until.findObject(By.textContains("Select text and images")),1500);if(tip!=null)tip.click();
+        UiObject2 card=d.wait(Until.findObject(By.desc(java.util.regex.Pattern.compile("Locky(?:,.*)?"))),5000);if(card==null)card=d.wait(Until.findObject(By.text("Locky")),3000);
+        if(card==null){java.io.ByteArrayOutputStream xml=new java.io.ByteArrayOutputStream();d.dumpWindowHierarchy(xml);fail("Locky's actual recent card missing: "+xml.toString("UTF-8"));}
+        android.graphics.Rect bounds=card.getVisibleBounds();while(card.getParent()!=null&&(bounds.width()<d.getDisplayWidth()/2||bounds.height()<d.getDisplayHeight()/4)){card=card.getParent();bounds=card.getVisibleBounds();}card.click();
+        assertTrue("Locky itself could not reopen from Recents",d.wait(Until.hasObject(By.text("Continue with ChatGPT")),10000));d.pressHome();
+    }
+    @Test public void systemAndChosenAppsAreExcludedIncludingOldBriefingRows() throws Exception {
+        Context c=ApplicationProvider.getApplicationContext();Store s=Store.get(c);String pkg="com.android.settings";assertTrue(UsageReader.excluded(c,pkg));assertTrue(UsageReader.excluded(c,"com.android.systemui"));assertTrue(UsageReader.excluded(c,"com.samsung.android.sidegesturepad"));
+        long end=Rules.dayStart(System.currentTimeMillis(),java.time.ZoneId.systemDefault())+3600000,start=end-60000;s.usage(start,end,pkg,"시스템 제외 검사",true,0);assertEquals(0,s.rows("SELECT id FROM usage WHERE label='시스템 제외 검사'").length());
+        ContentValues old=new ContentValues();old.put("start",start);old.put("end",end);old.put("pkg",pkg);old.put("label","시스템 제외 검사");old.put("managed",1);old.put("parent",0);s.put("usage",old);
+        java.util.Set<String> before=new java.util.HashSet<>(s.settings.getStringSet("usage-excluded",java.util.Set.of()));try{java.util.Set<String> excluded=new java.util.HashSet<>(before);excluded.add("test.user-excluded");s.settings.edit().putStringSet("usage-excluded",excluded).commit();s.usage(start,end,"test.user-excluded","선택 제외 검사",true,0);assertEquals(0,s.rows("SELECT id FROM usage WHERE pkg='test.user-excluded'").length());JSONArray apps=Briefing.build(c,1,0).getJSONArray("apps");for(int j=0;j<apps.length();j++)assertNotEquals(pkg,apps.getJSONObject(j).getString("pkg"));assertEquals(0,s.used(pkg,System.currentTimeMillis()));}finally{s.settings.edit().putStringSet("usage-excluded",before).commit();s.getWritableDatabase().delete("usage","label='시스템 제외 검사'",null);}
+    }
+    @Test public void systemDictionaryPickerRemembersTargetAndDeliversEachWord() throws Exception {
+        Context c=ApplicationProvider.getApplicationContext();Store s=Store.get(c);UiDevice d=UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());String previous=s.settings.getString("dictionary","");
+        try{InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{try{Links.dictionaryPicker(c,"첫 검색어");}catch(Exception e){throw new RuntimeException(e);}});UiObject2 target=d.wait(Until.findObject(By.text("Locky test dictionary")),10000);assertNotNull("Native dictionary target missing",target);target.click();assertTrue(d.wait(Until.hasObject(By.text("사전 검색: 첫 검색어")),10000));long deadline=System.currentTimeMillis()+3000;while(s.settings.getString("dictionary","").isEmpty()&&System.currentTimeMillis()<deadline)Thread.sleep(100);assertTrue(s.settings.getString("dictionary","").startsWith("process:com.locky.fixture/"));d.pressHome();InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{try{Links.dictionary(c,"두 번째 검색어");}catch(Exception e){throw new RuntimeException(e);}});assertTrue("Remembered dictionary did not receive new word",d.wait(Until.hasObject(By.text("사전 검색: 두 번째 검색어")),10000));}finally{s.settings.edit().putString("dictionary",previous).commit();d.pressHome();}
+    }
 
     @Test public void storedPurposeMemoChatAndBudgetSurviveActivityRestart() throws Exception {
         Context c=ApplicationProvider.getApplicationContext();Store s=Store.get(c);

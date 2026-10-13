@@ -6,7 +6,7 @@ import android.os.*;
 
 final class Notices {
     static void channels(Context c) {NotificationManager n=c.getSystemService(NotificationManager.class);n.createNotificationChannel(new NotificationChannel("timer","남은 사용 시간",NotificationManager.IMPORTANCE_LOW));n.createNotificationChannel(new NotificationChannel("brief","사용 브리핑",NotificationManager.IMPORTANCE_DEFAULT));n.createNotificationChannel(new NotificationChannel("reminder","집중 시간 알림",NotificationManager.IMPORTANCE_DEFAULT));}
-    static PendingIntent open(Context c,String screen) {return PendingIntent.getActivity(c,screen.hashCode(),new Intent(c,MainActivity.class).putExtra("screen",screen).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);}
+    static PendingIntent open(Context c,String screen) {return PendingIntent.getActivity(c,screen.hashCode(),MainActivity.launchIntent(c).putExtra("screen",screen).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);}
     static boolean allowed(Context c){return Build.VERSION.SDK_INT<33||c.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)==android.content.pm.PackageManager.PERMISSION_GRANTED;}
     static void timer(Context c,String label,long daily,long session) {
         if(Build.VERSION.SDK_INT>=33&&c.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)return;

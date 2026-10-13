@@ -16,7 +16,7 @@ final class Briefing {
         long total=0,deviation=0,linked=0,initialDeviation=0;JSONArray timeline=new JSONArray();
         for(int i=0;i<usage.length();i++){
             JSONObject u=usage.getJSONObject(i);long duration=Math.max(0,Math.min(end,u.getLong("end"))-Math.max(start,u.getLong("start")));String pkg=u.getString("pkg"),label=u.getString("label");
-            if(duration==0||label.equals("첫 화면")||label.equals("사용 확인"))continue;
+            if(duration==0||!UsageReader.recordable(c,pkg)||label.equals("첫 화면")||label.equals("사용 확인"))continue;
             String key=pkg.equals(c.getPackageName())?label:pkg;totals.merge(key,duration,Long::sum);labels.put(key,label);total+=duration;
             JSONObject context=contexts.get(u.getLong("parent"));if(context==null&&u.getLong("parent")>0){JSONArray prior=s.rows("SELECT * FROM events WHERE id=?",""+u.getLong("parent"));if(prior.length()>0){context=prior.getJSONObject(0);contexts.put(context.getLong("id"),context);}}JSONObject initial=context;
             if(context!=null&&context.getLong("parent")>0){initial=contexts.get(context.getLong("parent"));if(initial==null){JSONArray prior=s.rows("SELECT * FROM events WHERE id=?",""+context.getLong("parent"));if(prior.length()>0){initial=prior.getJSONObject(0);contexts.put(initial.getLong("id"),initial);}}}

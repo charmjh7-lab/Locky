@@ -11,7 +11,8 @@ final class Store extends SQLiteOpenHelper {
     static volatile Store instance;
     static Store get(Context c) { if(instance==null)synchronized(Store.class){if(instance==null)instance=new Store(c.getApplicationContext());}return instance; }
     final android.content.SharedPreferences settings;
-    private Store(Context c) { super(c,"locky.db",null,2); settings=c.getSharedPreferences("locky-settings",0);setWriteAheadLoggingEnabled(true); }
+    final Context context;
+    private Store(Context c) { super(c,"locky.db",null,2);context=c; settings=c.getSharedPreferences("locky-settings",0);if(!settings.contains("usage-excluded"))settings.edit().putStringSet("usage-excluded",new HashSet<>(Set.of("com.samsung.android.sidegesturepad"))).apply();setWriteAheadLoggingEnabled(true); }
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE purposes(id TEXT PRIMARY KEY,label TEXT NOT NULL,pkg TEXT NOT NULL DEFAULT '',uri TEXT NOT NULL DEFAULT '',aimless INTEGER NOT NULL DEFAULT 0,scope TEXT NOT NULL DEFAULT '*')");
         db.execSQL("CREATE TABLE rules(pkg TEXT PRIMARY KEY,label TEXT NOT NULL,mode TEXT NOT NULL,minutes INTEGER NOT NULL)");
@@ -54,7 +55,7 @@ final class Store extends SQLiteOpenHelper {
         ContentValues v=new ContentValues();v.put("aimless",aimless?1:0);v.put("time",System.currentTimeMillis());v.put("kind",kind);v.put("purpose",purpose);v.put("pkg",pkg);v.put("target",target);v.put("parent",parent);return getWritableDatabase().insertOrThrow("events",null,v);
     }
     synchronized void usage(long from,long to,String pkg,String label,boolean managed,long parent) {
-        if(to<=from||pkg.isEmpty())return;
+        if(to<=from||pkg.isEmpty()||UsageReader.excluded(context,pkg))return;
         // Accessibility observation owns a span. Recovery fills only uncovered gaps,
         // even when an overlay/system pause was recorded under another package.
         long cursor=from;List<long[]> gaps=new ArrayList<>();
@@ -72,6 +73,7 @@ final class Store extends SQLiteOpenHelper {
         ContentValues v=new ContentValues();v.put("start",from);v.put("end",to);v.put("pkg",pkg);v.put("label",label);v.put("managed",managed?1:0);v.put("parent",parent);d.insertOrThrow("usage",null,v);
     }
     synchronized long used(String pkg,long now) {
+        if(UsageReader.excluded(context,pkg))return 0;
         long start=Rules.dayStart(now,ZoneId.systemDefault()),total=0,cursor=start;
         try(Cursor c=getReadableDatabase().rawQuery("SELECT start,end FROM usage WHERE pkg=? AND managed=1 AND end>? AND start<? ORDER BY start",new String[]{pkg,""+start,""+now})) {while(c.moveToNext()){long a=Math.max(cursor,c.getLong(0)),b=Math.min(now,c.getLong(1));total+=Math.max(0,b-a);cursor=Math.max(cursor,b);}}return total;
     }

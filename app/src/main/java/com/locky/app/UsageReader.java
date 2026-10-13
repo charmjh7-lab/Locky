@@ -29,7 +29,13 @@ final class UsageReader {
         if(visible)add(out,pkg,since,end);return out;
     }
     static String home(Context c){ResolveInfo h=c.getPackageManager().resolveActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),PackageManager.MATCH_DEFAULT_ONLY);return h==null?"":h.activityInfo.packageName;}
-    static boolean recordable(Context c,String pkg){return !pkg.isEmpty()&&!pkg.equals(home(c))&&!pkg.equals("com.android.systemui")&&!pkg.contains("permissioncontroller");}
+    static boolean excluded(Context c,String pkg){
+        if(pkg.isEmpty()||pkg.equals(home(c))||pkg.equals("com.android.systemui")||pkg.contains("permissioncontroller")||pkg.equals("com.android.server.telecom"))return true;
+        if(c.getSharedPreferences("locky-settings",0).getStringSet("usage-excluded",Set.of("com.samsung.android.sidegesturepad")).contains(pkg))return true;
+        if(pkg.equals(c.getPackageName()))return false;
+        try {ApplicationInfo info=c.getPackageManager().getApplicationInfo(pkg,0);return (info.flags&(ApplicationInfo.FLAG_SYSTEM|ApplicationInfo.FLAG_UPDATED_SYSTEM_APP))!=0;}catch(PackageManager.NameNotFoundException ignored){return false;}
+    }
+    static boolean recordable(Context c,String pkg){return !excluded(c,pkg);}
     private static void add(JSONArray out,String pkg,long start,long end) throws JSONException {if(!pkg.isEmpty()&&end>start)out.put(new JSONObject().put("pkg",pkg).put("start",start).put("end",end));}
     static boolean launcherApp(Context c,String pkg){return c.getPackageManager().getLaunchIntentForPackage(pkg)!=null;}
 }
