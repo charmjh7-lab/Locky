@@ -224,8 +224,9 @@ final class WebHost {
             case "saveDay":{
                 if(!(context instanceof MainActivity))throw new IllegalStateException("로키 앱에서 브리핑을 열어 주세요.");
                 JSONObject data=Briefing.rawDay(context,Math.max(0,Math.min(179,a.optInt("offset",0))));
-                String filename="Locky-"+data.getString("date")+"-raw.json",payload=data.toString(2);
-                main.post(()->((MainActivity)context).saveRawToDocument(filename,payload));
+                String filename="Locky-"+data.getString("date")+"-raw.json";
+                String token=RawExport.stage(context,data.toString(2));
+                ((MainActivity)context).runOnUiThread(()->((MainActivity)context).saveRawToDocument(filename,token));
                 break;
             }
             case "newChat":out=new JSONObject().put("id",store.newChat());break;
