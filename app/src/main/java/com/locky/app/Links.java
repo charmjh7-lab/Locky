@@ -69,9 +69,15 @@ final class Links {
         if(i==null){Store.get(c).settings.edit().remove("dictionary").apply();dictionaryPicker(c,word);return;}
         // Daum's popup must retain its isolated task flags; startActivityForResult
         // cannot be combined with NEW_TASK (Android immediately cancels its result).
-        if(c instanceof DictionaryActivity && !isolatedDaumPopup(i))
+        if(c instanceof DictionaryActivity && isolatedDaumPopup(i)) {
+            // The service launch path is the one that displayed Daum's mini
+            // dictionary correctly before the intermediate Activity regression.
+            GuardService guard=((DictionaryActivity)c).guard;
+            if(guard==null)throw new ActivityNotFoundException("로키 접근성 서비스를 확인해 주세요.");
+            guard.startActivity(i.addFlags(dictionaryFlags(i)));
+        } else if(c instanceof DictionaryActivity) {
             ((Activity)c).startActivityForResult(i,DictionaryActivity.REQUEST);
-        else c.startActivity(i.addFlags(dictionaryFlags(i)));
+        } else c.startActivity(i.addFlags(dictionaryFlags(i)));
     }
 }
 

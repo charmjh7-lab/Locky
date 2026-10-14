@@ -28,71 +28,12 @@ public final class GuardService extends AccessibilityService {
     long sessionPolicyEnd;
     FloatingTimer floatingTimer;
     DictionaryActivity dictionaryHost;boolean dictionaryOpening;
-    // The Daum PROCESS_TEXT popup needs the original service-to-popup launch path.
-    static final String DAUM_DICTIONARY="net.daum.android.dictionary";
-    boolean daumPopupActive,daumPopupSeen,daumPopupLaunched;
-    android.graphics.Bitmap daumBackdrop;
-    DaumBackdropActivity daumBackdropHost;
-    Intent pendingDaumPopup;
-    final Runnable missingDaumPopup=()->{if(daumPopupActive&&!daumPopupSeen)finishDaumPopup();};
-    final Runnable returnedFromDaumPopup=()->{
-        if(daumPopupActive&&daumPopupSeen&&!DAUM_DICTIONARY.equals(foreground))finishDaumPopup();
-    };
-    void popupForeground(String pkg){
-        if(!daumPopupActive)return;
-        if(DAUM_DICTIONARY.equals(pkg)){
-            daumPopupSeen=true;main.removeCallbacks(missingDaumPopup);main.removeCallbacks(returnedFromDaumPopup);
-        }else if(daumPopupSeen&&!pkg.isEmpty()&&!pkg.equals("android")&&!systemPackages.contains(pkg)){
-            main.removeCallbacks(returnedFromDaumPopup);
-            main.postDelayed(returnedFromDaumPopup,750);
-        }
-    }
-    void finishDaumPopup(){
-        if(!daumPopupActive)return;
-        daumPopupActive=false;daumPopupSeen=false;daumPopupLaunched=false;
-        main.removeCallbacks(missingDaumPopup);main.removeCallbacks(returnedFromDaumPopup);
-        DaumBackdropActivity activity=daumBackdropHost;
-        daumBackdropHost=null;pendingDaumPopup=null;daumBackdrop=null;
-        utility="첫 화면";revealOverlay();
-        if(activity!=null&&!activity.isFinishing())activity.finish();
-    }
-    void launchDaumPopup(Intent intent){
-        // An accessibility overlay always sits above an ordinary app popup.
-        // Draw our *own* start view into an Activity backdrop, so the popup can
-        // appear over an identical-looking start screen instead of a blank app.
-        if(overlay==null||overlay.root.getWidth()<1||overlay.root.getHeight()<1)
-            throw new IllegalStateException("시작화면이 아직 준비되지 않았습니다.");
-        int width=overlay.root.getWidth(),height=overlay.root.getHeight();
-        final float scale=Math.min(1f,(float)Math.sqrt(2300000d/((double)width*height)));
-        android.graphics.Bitmap backdrop=android.graphics.Bitmap.createBitmap(
-            Math.max(1,Math.round(width*scale)),Math.max(1,Math.round(height*scale)),
-            android.graphics.Bitmap.Config.ARGB_8888);
-        android.graphics.Canvas canvas=new android.graphics.Canvas(backdrop);
-        canvas.scale(scale,scale);overlay.root.draw(canvas);
-        daumBackdrop=backdrop;pendingDaumPopup=intent;daumPopupActive=true;
-        daumPopupSeen=false;daumPopupLaunched=false;
-        main.removeCallbacks(returnedFromDaumPopup);main.removeCallbacks(missingDaumPopup);
-        useUtility("사전");
-        try{
-            startActivity(new Intent(this,DaumBackdropActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS|Intent.FLAG_ACTIVITY_NO_ANIMATION));
-        }catch(RuntimeException e){finishDaumPopup();throw e;}
-    }
-    void showDaumPopup(DaumBackdropActivity activity){
-        if(!daumPopupActive||daumPopupLaunched||pendingDaumPopup==null||!activity.equals(daumBackdropHost))return;
-        daumPopupLaunched=true;
-        setOverlayExposure(false);
-        try{
-            startActivity(pendingDaumPopup.addFlags(Links.dictionaryFlags(pendingDaumPopup)));
-            main.postDelayed(missingDaumPopup,6000);
-        }catch(RuntimeException e){finishDaumPopup();android.widget.Toast.makeText(this,"사전 팝업을 열지 못했습니다.",android.widget.Toast.LENGTH_LONG).show();}
-    }
     WebHost overlay;WindowManager window;WindowManager.LayoutParams overlayLayout;final Set<String> systemPackages=new HashSet<>();
     String homePackage="";
     volatile boolean pulseScheduled;volatile long pulseCount;
     final Runnable pulse=new Runnable(){public void run(){pulseScheduled=false;if(live!=GuardService.this)return;pulseCount++;checkpoint();enforce();ensurePulse();}};
     final BroadcastReceiver screen=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){
-        String a=i.getAction();if(Intent.ACTION_SCREEN_OFF.equals(a)){finishDaumPopup();overview=false;overviewCandidate="";checkpoint();interactive=false;clearSessions();foreground="";store.settings.edit().putBoolean("checkpoint-interactive",false).putString("last-package","").apply();waitingUnlock=true;systemPaused=false;main.removeCallbacks(checkUnlock);prepareUnlock();Notices.cancelTimer(c);main.removeCallbacks(pulse);pulseScheduled=false;}
+        String a=i.getAction();if(Intent.ACTION_SCREEN_OFF.equals(a)){interactive=false;if(dictionaryHost!=null)dictionaryHost.returnToStart();overview=false;overviewCandidate="";checkpoint();interactive=false;clearSessions();foreground="";store.settings.edit().putBoolean("checkpoint-interactive",false).putString("last-package","").apply();waitingUnlock=true;systemPaused=false;main.removeCallbacks(checkUnlock);prepareUnlock();Notices.cancelTimer(c);main.removeCallbacks(pulse);pulseScheduled=false;}
         else if(Intent.ACTION_USER_PRESENT.equals(a)){interactive=true;waitingUnlock=false;main.removeCallbacks(checkUnlock);prepareUnlock();observeForeground(null);ensurePulse();}
         else if(Intent.ACTION_SCREEN_ON.equals(a)){interactive=true;unlockChecks=0;main.removeCallbacks(checkUnlock);main.post(checkUnlock);}
         else if(Intent.ACTION_TIME_CHANGED.equals(a)||Intent.ACTION_TIMEZONE_CHANGED.equals(a)){checkpoint();policyChanged();Scheduler.schedule(c);}
@@ -121,8 +62,6 @@ public final class GuardService extends AccessibilityService {
         interactive=getSystemService(PowerManager.class).isInteractive();
         if(!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked())return;
         if(waitingUnlock){waitingUnlock=false;prepareUnlock();}
-        if(daumPopupActive&&event!=null&&event.getPackageName()!=null)
-            popupForeground(event.getPackageName().toString());
         observeForeground(event);
         // Window events can precede availability of the new application's root.
         // Recheck after the transition rather than retaining an obsolete session.
@@ -168,13 +107,12 @@ public final class GuardService extends AccessibilityService {
     void pauseSystem(){
         hideFloatingTimer();
         boolean changed=!systemPaused;if(changed){checkpoint();systemPaused=true;lastNotice=-1;}
-        if(overlayVisible&&overlay!=null&&dictionaryHost==null&&!daumPopupActive)setOverlayExposure(false);
+        if(overlayVisible&&overlay!=null&&dictionaryHost==null)setOverlayExposure(false);
         if(changed&&!sessionPkg.isEmpty())Notices.paused(this,UsageReader.label(this,sessionPkg),dailyRemaining(sessionPkg),sessionRemaining);
         ensurePulse();
     }
     void switchForeground(String pkg){
         if(dictionaryHost!=null)dictionaryHost.foregroundChanged(pkg);
-        popupForeground(pkg);
         if(systemPaused){checkpoint();systemPaused=false;lastNotice=-1;}
         if(!pkg.equals(foreground)) {
             checkpoint();
@@ -222,7 +160,7 @@ public final class GuardService extends AccessibilityService {
         try {
         long now=System.currentTimeMillis();boolean managed=store.managed(now);if(managed!=wasManaged){wasManaged=managed;if(!managed){clearSessions();if(overlayVisible&&!gate.equals("unlock"))hideOverlay();Notices.cancelTimer(this);}else{clearSessions();}Scheduler.schedule(this);}
         if(!sessionPkg.isEmpty()&&sessionPolicyEnd>0&&now>=sessionPolicyEnd)clearSessions();
-        if(dictionaryHost!=null||daumPopupActive)return;
+        if(dictionaryHost!=null)return;
         if(!interactive||systemPaused||foreground.equals(getPackageName())||getSystemService(KeyguardManager.class).isKeyguardLocked()||foreground.isEmpty())return;
         if(overlayVisible&&gate.equals("unlock"))return;
         if(!LockyApp.app.authBrowser.isEmpty()&&foreground.equals(LockyApp.app.authBrowser)){if(overlayVisible)hideOverlay();Notices.cancelTimer(this);return;}
@@ -265,13 +203,16 @@ public final class GuardService extends AccessibilityService {
         p.alpha=0;p.gravity=Gravity.TOP|Gravity.START;p.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;p.setTitle("Locky");overlayLayout=p;return p;
     }
     void revealOverlay(){
-        if(overlayVisible&&overlay!=null)setOverlayExposure(!daumPopupActive&&interactive&&!systemPaused&&!getSystemService(KeyguardManager.class).isKeyguardLocked());
+        // A borrowed start view belongs to the dictionary Activity, not the
+        // accessibility overlay. Its visibility follows that Activity.
+        if(dictionaryHost!=null)return;
+        if(overlayVisible&&overlay!=null)setOverlayExposure(interactive&&!systemPaused&&!getSystemService(KeyguardManager.class).isKeyguardLocked());
     }
     void setOverlayExposure(boolean exposed){
         if(overlay==null)return;
         // Keep the measured window attached during screen-off/keyguard preparation. Alpha zero
         // and passive flags prevent both private pixels and input interception before unlock.
-        if(dictionaryHost!=null){overlay.root.setVisibility(exposed?View.VISIBLE:View.INVISIBLE);if(exposed)overlay.resumeOverlay();else overlay.pause();return;}
+        if(dictionaryHost!=null)return;
         overlay.root.setVisibility(View.VISIBLE);
         overlay.root.setImportantForAccessibility(exposed?View.IMPORTANT_FOR_ACCESSIBILITY_AUTO:View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
         int passive=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
@@ -279,26 +220,19 @@ public final class GuardService extends AccessibilityService {
             float alpha=exposed?1f:0f;int flags=exposed?overlayLayout.flags&~passive:overlayLayout.flags|passive;
             if(overlayLayout.alpha!=alpha||overlayLayout.flags!=flags){overlayLayout.alpha=alpha;overlayLayout.flags=flags;window.updateViewLayout(overlay.root,overlayLayout);}
         }
-        if(exposed)overlay.resumeOverlay();
-        else if(!daumPopupActive)overlay.prepareOverlay();
-        // During Daum's popup, leave the original WebView rendered and attached.
-        // The backdrop handles occlusion, and there is no blank frame to rebuild.
+        if(exposed)overlay.resumeOverlay();else overlay.prepareOverlay();
     }
     void openDictionary(String word,boolean picker) throws Exception {
-        if(dictionaryOpening||dictionaryHost!=null||daumPopupActive)return;
-        if(!picker){
-            String choice=store.settings.getString("dictionary","");
-            if(!choice.isEmpty()){
-                Intent target=Links.dictionaryIntent(this,choice,word);
-                if(target!=null&&Links.isolatedDaumPopup(target)){
-                    launchDaumPopup(target);return;
-                }
-            }
-        }
+        // Every successive query in the dictionary view stays in the same host
+        // Activity. Only the external dictionary popup is relaunched.
+        if(dictionaryHost!=null){dictionaryHost.search(word,picker);return;}
+        if(dictionaryOpening)return;
         dictionaryOpening=true;
         try{
             useUtility("사전");
-            startActivity(new Intent(this,DictionaryActivity.class).putExtra("word",word).putExtra("picker",picker).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            startActivity(new Intent(this,DictionaryActivity.class)
+                .putExtra("word",word).putExtra("picker",picker)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_NO_ANIMATION|Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS));
         }catch(RuntimeException e){dictionaryOpening=false;throw e;}
     }
     boolean borrowStart(DictionaryActivity activity){
@@ -311,7 +245,7 @@ public final class GuardService extends AccessibilityService {
         if(live!=this)return;
         window.addView(overlay.root,gateLayout());if(overlayVisible)revealOverlay();else overlay.root.setVisibility(View.GONE);utility="첫 화면";
     }
-    void hideOverlay(){finishDaumPopup();checkpoint();overlayVisible=false;if(overlay!=null){overlay.pause();overlay.root.setVisibility(View.GONE);}segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();utility="첫 화면";}
+    void hideOverlay(){if(dictionaryHost!=null)dictionaryHost.returnToStart();checkpoint();overlayVisible=false;if(overlay!=null){overlay.pause();overlay.root.setVisibility(View.GONE);}segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();utility="첫 화면";}
     void choosePhone(JSONObject p) throws Exception {checkpoint();phoneEvent=store.event("unlock",p.getString("label"),"",p.optString("pkg"),0,p.optInt("aimless",0)==1);hideOverlay();launch(p);enforce();ensurePulse();}
     void allowApp(JSONObject p,int minutes) throws Exception {
         checkpoint();long remaining=dailyRemaining(gatePkg);JSONObject rule=store.rule(gatePkg);if(!store.managed(System.currentTimeMillis())){hideOverlay();return;}
@@ -334,6 +268,6 @@ public final class GuardService extends AccessibilityService {
         }else stopApp();
     }
     @Override public void onInterrupt(){}
-    @Override public void onDestroy(){hideFloatingTimer();finishDaumPopup();checkpoint();live=null;if(dictionaryHost!=null)dictionaryHost.returnToStart();main.removeCallbacksAndMessages(null);try{unregisterReceiver(screen);}catch(Exception ignored){}if(overlay!=null){try{window.removeViewImmediate(overlay.root);}catch(IllegalArgumentException ignored){}overlay.close();}Notices.cancelTimer(this);super.onDestroy();}
+    @Override public void onDestroy(){hideFloatingTimer();checkpoint();live=null;if(dictionaryHost!=null)dictionaryHost.returnToStart();main.removeCallbacksAndMessages(null);try{unregisterReceiver(screen);}catch(Exception ignored){}if(overlay!=null){try{window.removeViewImmediate(overlay.root);}catch(IllegalArgumentException ignored){}overlay.close();}Notices.cancelTimer(this);super.onDestroy();}
 }
 
