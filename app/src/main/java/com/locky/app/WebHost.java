@@ -151,6 +151,7 @@ final class WebHost {
     JSONObject resolvePurpose(JSONObject a) throws Exception {if(a.has("label"))return store.purpose(a,a.optString("scope","phone"));JSONArray p=store.rows("SELECT * FROM purposes WHERE id=?",a.getString("id"));if(p.length()==0)throw new IllegalStateException("사용 목적을 다시 선택해 주세요.");return p.getJSONObject(0);}
     void saveSettings(JSONObject a) throws Exception {
         var e=store.settings.edit();if(a.has("enabled"))e.putBoolean("enabled",a.getBoolean("enabled"));
+        if(a.has("floatingTimer"))e.putBoolean("floatingTimer",a.getBoolean("floatingTimer"));
         if(a.has("start")||a.has("end")){int start=a.optInt("start",store.settings.getInt("start",540)),end=a.optInt("end",store.settings.getInt("end",1260));if(start<0||start>1439||end<0||end>1439||start==end)throw new IllegalArgumentException("서로 다른 시작·종료 시간을 선택해 주세요.");e.putInt("start",start).putInt("end",end);}
         if(a.has("reminders")){JSONArray input=a.getJSONArray("reminders"),values=new JSONArray();Set<Integer> seen=new HashSet<>();for(int i=0;i<input.length();i++){int m=input.getInt(i);if(m>=1&&m<=180&&seen.add(m))values.put(m);}e.putString("reminders",values.toString());}
         if(a.has("weeklyDay"))e.putInt("weeklyDay",Math.max(1,Math.min(7,a.getInt("weeklyDay"))));
