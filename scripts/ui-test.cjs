@@ -93,11 +93,11 @@ const server=http.createServer((req,res)=>{const name=req.url==='/'?'index.html'
  await page.evaluate(()=>reshufflePurposesForStart());
  assert.notDeepEqual(await page.locator(".start-purposes [data-purpose]").evaluateAll(nodes=>nodes.map(x=>x.dataset.purpose)),previousPositions);
  await page.locator('[data-act=managePurposes]').click();
- await page.locator('[data-editpurpose="phone1"]').click();
+ await page.locator('#sheet [data-editpurpose="phone1"]').click();
  await page.locator('#purposeLink').check();await page.locator('#purposeApp').selectOption('app.video');
  await page.locator('#savePurpose').click();
  assert.equal(demo.allPurposes.find(p=>p.id==='phone1').pkg,'app.video');
- await page.locator('[data-act=managePurposes]').click();await page.locator('[data-editpurpose="phone1"]').click();
+ await page.locator('[data-act=managePurposes]').click();await page.locator('#sheet [data-editpurpose="phone1"]').click();
  assert.equal(await page.locator('#purposeApp').inputValue(),'app.video');
  await page.locator('#purposeApp').selectOption('app.2');await page.locator('#savePurpose').click();
  assert.equal(demo.allPurposes.find(p=>p.id==='phone1').pkg,'app.2');
