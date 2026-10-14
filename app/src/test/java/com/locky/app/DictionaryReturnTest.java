@@ -47,7 +47,17 @@ public class DictionaryReturnTest {
         assertEquals(expected,launched.getFlags()&expected);
         a.returnToStart();controller.destroy();
     }
+    void registerWorkingDictionary() {
+        ComponentName target=new ComponentName("com.example.dictionary","com.example.dictionary.Lookup");
+        ResolveInfo info=new ResolveInfo();info.activityInfo=new ActivityInfo();
+        info.activityInfo.packageName=target.getPackageName();info.activityInfo.name=target.getClassName();
+        info.activityInfo.exported=true;info.activityInfo.applicationInfo=new ApplicationInfo();
+        info.activityInfo.applicationInfo.packageName=target.getPackageName();
+        Shadows.shadowOf(g.getPackageManager()).addResolveInfoForIntent(Links.process(""),info);
+        g.store.settings.edit().putString("dictionary","process:"+target.flattenToString()).commit();
+    }
     @Test public void aTransientForeignWindowDoesNotCloseTheDictionary() {
+        registerWorkingDictionary();
         ActivityController<DictionaryActivity> controller=Robolectric.buildActivity(DictionaryActivity.class,new Intent(g,DictionaryActivity.class).putExtra("word","단어")).create();
         DictionaryActivity a=controller.get();
         g.foreground="com.android.settings";a.foregroundChanged(g.foreground);
@@ -57,6 +67,7 @@ public class DictionaryReturnTest {
         a.returnToStart();controller.destroy();
     }
     @Test public void aSettledForeignWindowReturnsToStart() {
+        registerWorkingDictionary();
         ActivityController<DictionaryActivity> controller=Robolectric.buildActivity(DictionaryActivity.class,new Intent(g,DictionaryActivity.class).putExtra("word","단어")).create();
         DictionaryActivity a=controller.get();
         g.foreground="com.android.settings";a.foregroundChanged(g.foreground);
