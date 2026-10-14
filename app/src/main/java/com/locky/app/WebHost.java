@@ -18,7 +18,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 final class WebHost {
     static final List<WeakReference<WebHost>> hosts=new CopyOnWriteArrayList<>();
-    final android.widget.FrameLayout root;WebView view;final Context context;final Store store;final boolean isOverlay;final Handler main=new Handler(Looper.getMainLooper());volatile String pendingScreen="home";boolean ready=false,closed=false;
+    final android.widget.FrameLayout root;final View loadingView;WebView view;final Context context;final Store store;final boolean isOverlay;final Handler main=new Handler(Looper.getMainLooper());volatile String pendingScreen="home",paintedScreen="";boolean ready=false,closed=false;
     WebHost(Context c,boolean overlay){context=c;store=Store.get(c);isOverlay=overlay;root=new android.widget.FrameLayout(c);root.setBackgroundColor(Color.rgb(244,243,237));hosts.add(new WeakReference<>(this));
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root,(v,insets)->{
             androidx.core.graphics.Insets bars=insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()|androidx.core.view.WindowInsetsCompat.Type.displayCutout());
@@ -27,12 +27,28 @@ final class WebHost {
             evaluate("insetsChanged("+insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime())+")");return androidx.core.view.WindowInsetsCompat.CONSUMED;
         });
         root.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){public void onViewAttachedToWindow(View v){androidx.core.view.ViewCompat.requestApplyInsets(v);}public void onViewDetachedFromWindow(View v){}});
+        if(overlay){
+            android.widget.LinearLayout waiting=new android.widget.LinearLayout(c);waiting.setOrientation(android.widget.LinearLayout.VERTICAL);
+            waiting.setGravity(Gravity.CENTER);waiting.setPadding(32,24,32,24);waiting.setBackgroundColor(Color.rgb(244,243,237));
+            android.widget.TextView title=new android.widget.TextView(c);title.setText("휴대폰 시작");title.setTextColor(Color.rgb(35,55,46));title.setTextSize(22);title.setGravity(Gravity.CENTER);waiting.addView(title);
+            android.widget.TextView detail=new android.widget.TextView(c);detail.setText("시작화면을 준비하고 있습니다");detail.setTextColor(Color.rgb(109,120,111));detail.setTextSize(14);detail.setGravity(Gravity.CENTER);
+            android.widget.LinearLayout.LayoutParams info=new android.widget.LinearLayout.LayoutParams(-2,-2);info.topMargin=16;waiting.addView(detail,info);
+            android.widget.Button retry=new android.widget.Button(c);retry.setText("다시 불러오기");
+            android.widget.LinearLayout.LayoutParams retryParams=new android.widget.LinearLayout.LayoutParams(-2,-2);retryParams.topMargin=18;waiting.addView(retry,retryParams);
+            retry.setOnClickListener(v->{if(closed||view==null)return;showLoading();ready=false;view.reload();});
+            android.widget.Button dismiss=new android.widget.Button(c);dismiss.setText("그냥 끄기");waiting.addView(dismiss,new android.widget.LinearLayout.LayoutParams(-2,-2));
+            dismiss.setOnClickListener(v->{GuardService g=GuardService.live;if(g!=null){if("unlock".equals(g.gate))g.dismissStart();else g.stopApp();}});
+            loadingView=waiting;root.addView(waiting,new android.widget.FrameLayout.LayoutParams(-1,-1));
+        }else loadingView=null;
         createView();
     }
-    void createView(){if(closed)return;view=new WebView(context);root.addView(view,new android.widget.FrameLayout.LayoutParams(-1,-1));
+    void showLoading(){if(!isOverlay)return;paintedScreen="";if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);if(view!=null)view.setVisibility(View.INVISIBLE);}
+    void rendered(String screen){if(closed||!isOverlay||!ready||!pendingScreen.equals(screen)||view==null)return;
+        paintedScreen=screen;view.setVisibility(View.VISIBLE);if(loadingView!=null)loadingView.setVisibility(View.GONE);}
+    void createView(){if(closed)return;view=new WebView(context);root.addView(view,0,new android.widget.FrameLayout.LayoutParams(-1,-1));if(isOverlay){view.setVisibility(View.INVISIBLE);if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);}
         WebSettings s=view.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(false);s.setAllowFileAccess(false);s.setAllowContentAccess(false);s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);s.setMediaPlaybackRequiresUserGesture(true);s.setSupportMultipleWindows(false);view.setBackgroundColor(Color.rgb(244,243,237));
         WebViewAssetLoader loader=new WebViewAssetLoader.Builder().addPathHandler("/assets/",new WebViewAssetLoader.AssetsPathHandler(context)).build();
-        view.setWebViewClient(new WebViewClient(){@Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){return loader.shouldInterceptRequest(r.getUrl());}@Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return true;}@Override public void onPageFinished(WebView v,String url){if(closed||v!=view)return;ready=true;screen(pendingScreen);}@Override public boolean onRenderProcessGone(WebView v,RenderProcessGoneDetail detail){if(v!=view)return true;ready=false;root.removeView(v);v.removeJavascriptInterface("Native");v.destroy();if(!closed)main.post(WebHost.this::createView);return true;}});
+        view.setWebViewClient(new WebViewClient(){@Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){return loader.shouldInterceptRequest(r.getUrl());}@Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return true;}@Override public void onPageFinished(WebView v,String url){if(closed||v!=view)return;ready=true;screen(pendingScreen);}@Override public boolean onRenderProcessGone(WebView v,RenderProcessGoneDetail detail){if(v!=view)return true;ready=false;showLoading();root.removeView(v);v.removeJavascriptInterface("Native");v.destroy();if(!closed)main.post(WebHost.this::createView);return true;}});
         view.addJavascriptInterface(new Bridge(),"Native");view.setOnKeyListener((v,key,e)->{if(key==KeyEvent.KEYCODE_BACK&&e.getAction()==KeyEvent.ACTION_UP){evaluate("back()");return true;}return false;});
         view.loadUrl("https://appassets.androidplatform.net/assets/index.html");
     }
@@ -51,7 +67,7 @@ final class WebHost {
             ready=false;root.removeView(candidate);candidate.removeJavascriptInterface("Native");candidate.destroy();createView();
         },2200);
     }
-    void screen(String name){pendingScreen=name;if(ready)evaluate("navigate("+JSONObject.quote(name)+")");}
+    void screen(String name){pendingScreen=name;if(isOverlay&&!name.equals(paintedScreen))showLoading();if(ready)evaluate("navigate("+JSONObject.quote(name)+")");}
     void evaluate(String js){main.post(()->{if(!closed&&ready&&(view.getParent()!=null||!isOverlay))view.evaluateJavascript(js,null);});}
     void close(){closed=true;ready=false;main.removeCallbacksAndMessages(null);root.removeView(view);view.removeJavascriptInterface("Native");view.destroy();hosts.removeIf(r->r.get()==null||r.get()==this);}
     static void refreshAll(){for(var r:hosts){WebHost h=r.get();if(h!=null)h.evaluate("refresh()");}}
@@ -59,6 +75,7 @@ final class WebHost {
     final class Bridge {
         @JavascriptInterface public void request(String id,String action,String raw){
             if(!action.matches("[A-Za-z]+")||raw.length()>1000000){answer(id,null,"요청을 처리할 수 없습니다.");return;}
+            if("rendered".equals(action)){main.post(()->{try{rendered(new JSONObject(raw).optString("screen"));}catch(JSONException ignored){}});return;}
             if(Set.of("choose","grant","extend","stop","utility","open","permission","dictionary","dictionaryPicker","linkTest","signin","cancelLogin","exit","dismiss").contains(action))main.post(()->handle(id,action,raw));
             else LockyApp.app.work.execute(()->handle(id,action,raw));
         }
