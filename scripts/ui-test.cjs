@@ -28,6 +28,24 @@ const server=http.createServer((req,res)=>{const name=req.url==='/'?'index.html'
  const fit=async()=>{await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));await page.waitForFunction(()=>Math.abs(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--viewport'))-innerHeight)<1);const r=await page.evaluate(()=>{const red=document.querySelector('.dismiss').getBoundingClientRect(),p=document.querySelector('.start-purposes'),last=p?.lastElementChild?.getBoundingClientRect(),footer=document.querySelector('.start-footer').getBoundingClientRect();return {scroll:document.documentElement.scrollHeight,width:document.documentElement.scrollWidth,h:innerHeight,w:innerWidth,redBottom:red.bottom,redHeight:red.height,footerTop:footer.top,purposesBottom:last?.bottom};});assert(r.scroll<=r.h+1,JSON.stringify(r));assert(r.width<=r.w,JSON.stringify(r));assert(r.redBottom<=r.h,JSON.stringify(r));assert(r.redHeight>=50);assert(!r.purposesBottom||r.purposesBottom<=r.footerTop+1,JSON.stringify(r));};
  for(const viewport of [{width:360,height:600},{width:390,height:780},{width:700,height:900}]){await page.setViewportSize(viewport);await page.waitForTimeout(70);await fit();}
  await page.setViewportSize({width:390,height:780});await fit();
+ // The compact chooser must remain actionable even when the display is short.
+ for(const viewport of [{width:320,height:560},{width:360,height:600},{width:390,height:780}]){
+   await page.setViewportSize(viewport);await page.waitForTimeout(80);await fit();
+   const measurement=await page.evaluate(()=>{
+     const chooser=document.querySelector('.start-purposes').getBoundingClientRect();
+     const tools=document.querySelector('.quick-tools').getBoundingClientRect();
+     const dictionary=document.querySelector('.dictionary-bar').getBoundingClientRect();
+     const footer=document.querySelector('.start-footer').getBoundingClientRect();
+     const intro=document.querySelector('.purpose-intro').getBoundingClientRect();
+     const direct=document.querySelector('[data-act=direct]').getBoundingClientRect();
+     return {chooserTop:chooser.top,toolsBottom:tools.bottom,dictionaryBottom:dictionary.bottom,footerTop:footer.top,introBottom:intro.bottom,directTop:direct.top,directBottom:direct.bottom};
+   });
+   assert(measurement.toolsBottom<=measurement.dictionaryBottom&&measurement.dictionaryBottom<=measurement.chooserTop+1,JSON.stringify(measurement));
+   assert(measurement.introBottom<=measurement.directTop+1,JSON.stringify(measurement));
+   assert(measurement.directBottom<=measurement.footerTop+1,JSON.stringify(measurement));
+ }
+ await page.setViewportSize({width:390,height:780});await fit();
+
  // With only a few purposes, spare height must appear on both sides of the content instead of stretching editors.
  const balanced=await page.evaluate(async()=>{
    const previous=state.allPurposes;
@@ -36,14 +54,22 @@ const server=http.createServer((req,res)=>{const name=req.url==='/'?'index.html'
    render();await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
    const header=document.querySelector('.start-page .top').getBoundingClientRect();
    const tools=document.querySelector('.quick-tools').getBoundingClientRect();
+   const dictionary=document.querySelector('.dictionary-bar').getBoundingClientRect();
    const purposes=document.querySelector('.start-purposes').getBoundingClientRect();
    const footer=document.querySelector('.start-footer').getBoundingClientRect();
-   const result={toolHeight:tools.height,topGap:tools.top-header.bottom,bottomGap:footer.top-purposes.bottom};
+   const panel=document.querySelector('.start-purposes');
+   const result={toolHeight:tools.height,topGap:tools.top-header.bottom,toolsToDictionary:dictionary.top-tools.bottom,dictionaryToPurposes:purposes.top-dictionary.bottom,bottomGap:footer.top-purposes.bottom,heading:panel.querySelector('#purposeQuestion')?.textContent,helper:panel.querySelector('.purpose-helper')?.textContent,panelBackground:getComputedStyle(panel).backgroundColor,panelBorder:getComputedStyle(panel).borderTopWidth};
    state.allPurposes=previous;render();return result;
  });
  assert(balanced.toolHeight<=195,JSON.stringify(balanced));
- assert(balanced.topGap>18&&balanced.bottomGap>18,JSON.stringify(balanced));
- assert(Math.abs(balanced.topGap-balanced.bottomGap)<18,JSON.stringify(balanced));
+ assert(balanced.topGap>=0&&balanced.topGap<=16,JSON.stringify(balanced)); // Utilities stay directly below the header.
+ assert(balanced.toolsToDictionary>=0&&balanced.toolsToDictionary<=16,JSON.stringify(balanced));
+ assert(balanced.dictionaryToPurposes>24&&balanced.bottomGap>24,JSON.stringify(balanced)); // The chooser floats independently below the tools.
+ assert(Math.abs(balanced.dictionaryToPurposes-balanced.bottomGap)<22,JSON.stringify(balanced));
+ assert.equal(balanced.heading,'무엇을 하려고 열었나요?');
+ assert.equal(balanced.helper,'목적을 선택하면 휴대폰 사용을 시작합니다.');
+ assert.equal(balanced.panelBorder,'1px');
+ assert.notEqual(balanced.panelBackground,'rgba(0, 0, 0, 0)');
 
  const initial=await page.locator('.quick-tools').boundingBox();await page.locator('#noteBody').fill('길어도 고정 크기\n'.repeat(80));await page.waitForTimeout(450);assert(demo.notes.some(n=>n.body.includes('길어도')));assert.equal(Math.round((await page.locator('.quick-tools').boundingBox()).height),Math.round(initial.height));await fit();
  await page.locator('.note-heading').click();await page.locator('#noteTitle').fill('내 메모');await page.waitForTimeout(400);assert.equal(demo.notes[0].title,'내 메모');
