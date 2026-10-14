@@ -44,6 +44,8 @@ public final class MainActivity extends Activity {
         });
     }
     @Override protected void onResume(){super.onResume();android.util.Log.i("LockyLifecycle","resume task="+getTaskId());host.resume();LockyApp.app.auth.foreground(true);Scheduler.schedule(this);if(GuardService.live!=null)GuardService.live.pauseForActivity();WebHost.refreshAll();if(!java.util.List.of("starting","checking","browser","returning","exchange","identity","saving").contains(LockyApp.app.auth.connection().optString("phase")))releaseLoginBrowser();}
+    @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(focused&&host!=null)host.resume();}
+    @Override public void onConfigurationChanged(android.content.res.Configuration config){super.onConfigurationChanged(config);if(host!=null)host.resume();}
     @Override protected void onPause(){LockyApp.app.auth.foreground(false);host.evaluate("remember()");host.pause();super.onPause();}
     @Override public void onBackPressed(){host.evaluate("back()");}
     @Override protected void onDestroy(){releaseLoginBrowser();host.close();super.onDestroy();}

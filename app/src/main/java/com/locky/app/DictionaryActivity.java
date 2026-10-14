@@ -26,7 +26,7 @@ public final class DictionaryActivity extends Activity {
         });
     }
     boolean allows(String pkg){return pkg.equals(getPackageName())||packages.contains(pkg)||pkg.equals("android")||pkg.contains("intentresolver");}
-    @Override protected void onPause(){if(launched){away=true;if(guard!=null&&guard.overlay!=null)++guard.overlay.visualGeneration;}super.onPause();}
+    @Override protected void onPause(){if(launched){away=true;if(guard!=null&&guard.overlay!=null)guard.overlay.pause();}super.onPause();}
     @Override protected void onResume(){super.onResume();if(launched&&away)returnToStart();else if(guard!=null&&guard.overlay!=null)guard.overlay.resumeOverlay();}
     void returnToStart(){if(returning)return;returning=true;if(guard!=null)guard.returnDictionary(this);finish();}
     @Override public void onBackPressed(){returnToStart();}
