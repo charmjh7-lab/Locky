@@ -59,7 +59,7 @@ public final class GuardService extends AccessibilityService {
         main.removeCallbacks(settledForeground);
         main.postDelayed(settledForeground,500);
     }
-    boolean overview;volatile String lastWindows="";
+    boolean overview;String overviewCandidate="";long overviewCandidateSince;volatile String lastWindows="";
     void observeForeground(AccessibilityEvent event) {
         if(store==null||!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked())return;
         List<ForegroundPolicy.Window> candidates=new ArrayList<>();StringBuilder diagnostic=new StringBuilder();
@@ -74,11 +74,22 @@ public final class GuardService extends AccessibilityService {
         lastWindows=diagnostic.toString();ForegroundPolicy.Result visible=ForegroundPolicy.select(candidates,systemPackages);
         if(event!=null&&event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED&&event.getClassName()!=null){
             String name=event.getClassName().toString().toLowerCase(Locale.ROOT),pkg=event.getPackageName()==null?"":event.getPackageName().toString();
-            if(pkg.equals(homePackage)&&(name.contains("recents")||name.contains("overview")))overview=true;
-            else if(pkg.equals(homePackage)&&name.contains("launcher"))overview=false;
+            boolean systemLauncher=pkg.equals(homePackage)||pkg.equals("com.android.systemui")||pkg.contains("launcher");
+            if(systemLauncher&&(name.contains("recents")||name.contains("overview")||name.contains("recentapps"))){overview=true;overviewCandidate="";}
+            else if(pkg.equals(homePackage)&&name.contains("launcher")&&visible.pkg.equals(homePackage)){overview=false;overviewCandidate="";}
         }
-        if(!visible.pkg.isEmpty()&&!visible.pkg.equals(homePackage)&&!systemPackages.contains(visible.pkg))overview=false;
-        if(visible.paused||overview){pauseSystem();return;}
+        // A recent-task thumbnail can expose its old app window before the user actually enters it.
+        // Require the target application window to hold focus through a short settle period.
+        if(overview){
+            boolean focusedApp=false;
+            for(ForegroundPolicy.Window w:candidates)if(w.type==AccessibilityWindowInfo.TYPE_APPLICATION&&w.pkg.equals(visible.pkg)&&w.focused)focusedApp=true;
+            if(visible.paused||visible.pkg.isEmpty()||visible.pkg.equals(homePackage)||!focusedApp){overviewCandidate="";pauseSystem();return;}
+            long now=SystemClock.uptimeMillis();
+            if(!visible.pkg.equals(overviewCandidate)){overviewCandidate=visible.pkg;overviewCandidateSince=now;main.postDelayed(settledForeground,350);pauseSystem();return;}
+            if(now-overviewCandidateSince<300){pauseSystem();return;}
+            overview=false;overviewCandidate="";
+        }
+        if(visible.paused){pauseSystem();return;}
         if(visible.pkg.isEmpty())return; // transient/root unavailable: do not trust background event senders
         String pkg=visible.pkg;
         if(pkg.contains("incallui")||pkg.equals("com.android.server.telecom")){if(overlayVisible)hideOverlay();pauseSystem();return;}
