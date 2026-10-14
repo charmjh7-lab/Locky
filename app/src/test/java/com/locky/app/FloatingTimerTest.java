@@ -38,12 +38,13 @@ public class FloatingTimerTest {
         service.foreground=service.sessionPkg="user.video";service.interactive=true;service.sessionRemaining=300000;
     }
     @After public void cleanup(){timer.hide();service.main.removeCallbacksAndMessages(null);service.store.close();Store.instance=null;}
-    @Test public void countdownUsesExistingSessionAndDoesNotCaptureTouchesOrFocus(){
+    @Test public void countdownUsesExistingSessionAndOnlyCapsuleCapturesTouchesWithoutFocus(){
         service.syncFloatingTimer();assertNotNull(timer.root);assertEquals("05:00",timer.remaining.getText().toString());
         assertEquals(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,params.type);
-        assertTrue((params.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)!=0);
+        assertEquals(0,params.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+        assertTrue((params.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)!=0);
         assertTrue((params.flags&WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)!=0);
-        assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS,timer.root.getImportantForAccessibility());
+        assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_YES,timer.root.getImportantForAccessibility());
         service.sessionRemaining=299001;service.syncFloatingTimer();assertEquals("05:00",timer.remaining.getText().toString());
         service.sessionRemaining=299000;service.syncFloatingTimer();assertEquals("04:59",timer.remaining.getText().toString());assertEquals(1,added);
     }

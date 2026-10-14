@@ -181,7 +181,7 @@ public final class GuardService extends AccessibilityService {
             &&dailyRemaining(foreground)>0&&sessionRemaining>0
             &&!getSystemService(KeyguardManager.class).isKeyguardLocked()
             &&(LockyApp.app==null||!foreground.equals(LockyApp.app.authBrowser));
-        floatingTimer.update(visible,sessionRemaining);
+        floatingTimer.update(visible,foreground,sessionEvent,rule==null?"":rule.optString("label"),purpose,sessionRemaining,dailyRemaining(foreground));
     }
     void hideFloatingTimer(){if(floatingTimer!=null)floatingTimer.hide();}
     @Override public void onConfigurationChanged(android.content.res.Configuration config){super.onConfigurationChanged(config);hideFloatingTimer();syncFloatingTimer();if(overlayVisible&&overlay!=null)overlay.resumeOverlay();}
