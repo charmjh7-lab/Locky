@@ -85,7 +85,7 @@ public class IntegrationTest {
             long allowed=g.sessionRemaining;Thread.sleep(1300);assertTrue("Foreground timer did not decrease",g.sessionRemaining<allowed);
             long chosenSession=g.sessionEvent;device.openNotification();long shadeDeadline=System.currentTimeMillis()+4000;while(!g.systemPaused&&System.currentTimeMillis()<shadeDeadline)Thread.sleep(100);assertTrue("Shade not detected: "+g.lastWindows,g.systemPaused);long paused=g.sessionRemaining;Thread.sleep(1100);assertTrue("Shade time was charged: paused="+g.systemPaused+"; windows="+g.lastWindows,Math.abs(g.sessionRemaining-paused)<300);
             device.pressBack();Thread.sleep(1200);assertEquals("Notification drawer ended the chosen session",chosenSession,g.sessionEvent);assertFalse("Notification drawer redisplayed the app start gate",g.overlayVisible);
-            device.pressHome();long homeDeadline=System.currentTimeMillis()+5000;while(!g.sessionPkg.isEmpty()&&System.currentTimeMillis()<homeDeadline)Thread.sleep(100);assertEquals("Home did not end the session; foreground="+g.foreground+"; paused="+g.systemPaused+"; windows="+g.lastWindows+"; timer="+observedTimer+"; "+timerState,"",g.sessionPkg);long usedAtHome=s.used("com.locky.fixture",System.currentTimeMillis());Thread.sleep(1100);assertEquals("Home time was charged",usedAtHome,s.used("com.locky.fixture",System.currentTimeMillis()));
+            device.pressHome();long homeDeadline=System.currentTimeMillis()+5000;while(!g.sessionPkg.isEmpty()&&System.currentTimeMillis()<homeDeadline)Thread.sleep(100);assertEquals("Home did not park the active session; foreground="+g.foreground+"; paused="+g.systemPaused+"; windows="+g.lastWindows+"; timer="+observedTimer+"; "+timerState,"",g.sessionPkg);long usedAtHome=s.used("com.locky.fixture",System.currentTimeMillis());Thread.sleep(1100);assertEquals("Home time was charged",usedAtHome,s.used("com.locky.fixture",System.currentTimeMillis()));
             device.pressRecentApps();
             // Pixel's first-use overview education temporarily hides task nodes.
             UiObject2 overviewTip=device.wait(Until.findObject(By.textContains("Select text and images")),1500);
@@ -96,8 +96,8 @@ public class IntegrationTest {
             }
             if(recentCard==null){java.io.ByteArrayOutputStream xml=new java.io.ByteArrayOutputStream();device.dumpWindowHierarchy(xml);fail("Recent task card not found; timer="+observedTimer+"; "+timerState+"; XML="+xml.toString("UTF-8"));}
             recentCard.click();
-            assertTrue("Recent-task reentry did not show app gate",device.wait(Until.hasObject(By.textContains("들어가나요")),10000));
-            InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{try{g.allowApp(new JSONObject().put("label","다시 사용"),5);}catch(Exception e){throw new RuntimeException(e);}});
+            long resumedDeadline=System.currentTimeMillis()+10000;while(!"com.locky.fixture".equals(g.sessionPkg)&&System.currentTimeMillis()<resumedDeadline)Thread.sleep(100);
+            assertEquals("Recent-task return must resume the original session",chosenSession,g.sessionEvent);assertEquals("com.locky.fixture",g.sessionPkg);assertFalse("Return within five minutes must not ask the purpose again",g.overlayVisible);
             long exhaustedAt=Rules.dayStart(System.currentTimeMillis(),java.time.ZoneId.systemDefault())+1200000;s.usage(exhaustedAt-300000,exhaustedAt,"com.locky.fixture","테스트 앱",true,0);g.policyChanged();assertTrue("Daily exhaustion screen not displayed",device.wait(Until.hasObject(By.textContains("쉬어갈 시간")),10000));
             InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{s.settings.edit().putBoolean("enabled",false).commit();g.policyChanged();});Thread.sleep(500);assertFalse(g.overlayVisible);
             device.sleep();Thread.sleep(300);device.wakeUp();device.executeShellCommand("wm dismiss-keyguard");assertTrue("Unlock screen not displayed",device.wait(Until.hasObject(By.textContains("무엇을")),12000));
@@ -139,3 +139,4 @@ public class IntegrationTest {
         }finally{s.getWritableDatabase().delete("rules","pkg=?",new String[]{pkg});s.settings.edit().remove("blocked-until:"+pkg).putInt("start",start).putInt("end",end).putBoolean("enabled",enabled).commit();}
     }
 }
+

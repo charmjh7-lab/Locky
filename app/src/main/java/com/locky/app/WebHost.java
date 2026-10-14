@@ -19,6 +19,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 final class WebHost {
     static final List<WeakReference<WebHost>> hosts=new CopyOnWriteArrayList<>();
     final android.widget.FrameLayout root;final View loadingView;WebView view;final Context context;final Store store;final boolean isOverlay;final Handler main=new Handler(Looper.getMainLooper());volatile String pendingScreen="home",paintedScreen="",pendingChat="";boolean ready=false,closed=false;
+    String renderedScreen="",recoveryDraft="";long visualGeneration,visualCompleted,lastOverlayRecovery;
     WebHost(Context c,boolean overlay){context=c;store=Store.get(c);isOverlay=overlay;root=new android.widget.FrameLayout(c);root.setBackgroundColor(Color.rgb(244,243,237));hosts.add(new WeakReference<>(this));
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root,(v,insets)->{
             androidx.core.graphics.Insets bars=insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()|androidx.core.view.WindowInsetsCompat.Type.displayCutout());
@@ -26,7 +27,7 @@ final class WebHost {
             v.setPadding(bars.left,bars.top,bars.right,Math.max(bars.bottom,ime.bottom));
             evaluate("insetsChanged("+insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime())+")");return androidx.core.view.WindowInsetsCompat.CONSUMED;
         });
-        root.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){public void onViewAttachedToWindow(View v){androidx.core.view.ViewCompat.requestApplyInsets(v);}public void onViewDetachedFromWindow(View v){}});
+        root.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){public void onViewAttachedToWindow(View v){androidx.core.view.ViewCompat.requestApplyInsets(v);if(isOverlay)main.post(WebHost.this::resumeOverlay);}public void onViewDetachedFromWindow(View v){++visualGeneration;}});
         if(overlay){
             android.widget.LinearLayout waiting=new android.widget.LinearLayout(c);waiting.setOrientation(android.widget.LinearLayout.VERTICAL);
             waiting.setGravity(Gravity.CENTER);waiting.setPadding(32,24,32,24);waiting.setBackgroundColor(Color.rgb(244,243,237));
@@ -42,13 +43,52 @@ final class WebHost {
         }else loadingView=null;
         createView();
     }
-    void showLoading(){if(!isOverlay)return;paintedScreen="";if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);if(view!=null)view.setVisibility(View.INVISIBLE);}
+    void showLoading(){if(!isOverlay)return;++visualGeneration;renderedScreen="";paintedScreen="";if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);if(view!=null)view.setVisibility(View.INVISIBLE);}
     void rendered(String screen){if(closed||!isOverlay||!ready||!pendingScreen.equals(screen)||view==null)return;
-        paintedScreen=screen;view.setVisibility(View.VISIBLE);if(loadingView!=null)loadingView.setVisibility(View.GONE);}
+        renderedScreen=screen;
+        if(!recoveryDraft.isEmpty()){
+            String draft=recoveryDraft;recoveryDraft="";
+            view.evaluateJavascript("(()=>{const values="+draft+";for(const id of ['word','quickQuestion']){const el=document.getElementById(id);if(el&&typeof values[id]==='string')el.value=values[id];}})()",value->requestVisualState());
+        }else requestVisualState();
+    }
+    void resumeOverlay(){
+        if(closed||!isOverlay||view==null||root.getVisibility()!=View.VISIBLE)return;
+        view.onResume();view.resumeTimers();root.requestLayout();view.requestLayout();root.postInvalidateOnAnimation();view.postInvalidateOnAnimation();
+        if(!ready)return;
+        if(pendingScreen.equals(renderedScreen))requestVisualState();
+        else if(renderedScreen.isEmpty()){evaluate("navigate("+JSONObject.quote(pendingScreen)+")");watchRenderSignal();}
+    }
+    void watchRenderSignal(){
+        if(!isOverlay||!ready||view==null)return;WebView candidate=view;long generation=visualGeneration;
+        main.postDelayed(()->{if(!closed&&candidate==view&&generation==visualGeneration&&renderedScreen.isEmpty()&&root.getVisibility()==View.VISIBLE)recoverOverlay(candidate);},3000);
+    }
+    void requestVisualState(){
+        if(closed||!isOverlay||!ready||view==null||!view.isAttachedToWindow()||root.getVisibility()!=View.VISIBLE||!pendingScreen.equals(renderedScreen))return;
+        GuardService guard=GuardService.live;if(guard!=null&&guard.dictionaryHost!=null&&guard.dictionaryHost.away)return;
+        WebView candidate=view;String screen=pendingScreen;long generation=++visualGeneration;
+        // A DOM/JS completion signal does not mean Chromium has prepared its frame.
+        candidate.postVisualStateCallback(generation,new WebView.VisualStateCallback(){@Override public void onComplete(long id){
+            if(closed||candidate!=view||generation!=visualGeneration||!screen.equals(pendingScreen)||root.getVisibility()!=View.VISIBLE)return;
+            visualCompleted=generation;paintedScreen=screen;candidate.setVisibility(View.VISIBLE);if(loadingView!=null)loadingView.setVisibility(View.GONE);
+            candidate.requestLayout();candidate.postInvalidateOnAnimation();root.postInvalidateOnAnimation();
+        }});
+        main.postDelayed(()->{if(!closed&&candidate==view&&generation==visualGeneration&&visualCompleted!=generation&&root.getVisibility()==View.VISIBLE)recoverOverlay(candidate);},3000);
+    }
+    void recoverOverlay(WebView candidate){
+        long now=SystemClock.uptimeMillis();if(lastOverlayRecovery!=0&&now-lastOverlayRecovery<5000)return;lastOverlayRecovery=now;
+        final boolean[] recovered={false};
+        java.util.function.Consumer<String> rebuild=draft->{
+            if(recovered[0]||closed||candidate!=view)return;recovered[0]=true;
+            if(draft!=null)try{Object decoded=new JSONTokener(draft).nextValue();if(decoded instanceof String)recoveryDraft=new JSONObject((String)decoded).toString();}catch(Exception ignored){}
+            ready=false;showLoading();root.removeView(candidate);candidate.removeJavascriptInterface("Native");candidate.destroy();createView();
+        };
+        candidate.evaluateJavascript("JSON.stringify(Object.fromEntries(['word','quickQuestion'].map(id=>[id,document.getElementById(id)?.value||''])))",rebuild::accept);
+        main.postDelayed(()->rebuild.accept(null),500);
+    }
     void createView(){if(closed)return;view=new WebView(context);root.addView(view,0,new android.widget.FrameLayout.LayoutParams(-1,-1));if(isOverlay){view.setVisibility(View.INVISIBLE);if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);}
         WebSettings s=view.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(false);s.setAllowFileAccess(false);s.setAllowContentAccess(false);s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);s.setMediaPlaybackRequiresUserGesture(true);s.setSupportMultipleWindows(false);view.setBackgroundColor(Color.rgb(244,243,237));
         WebViewAssetLoader loader=new WebViewAssetLoader.Builder().addPathHandler("/assets/",new WebViewAssetLoader.AssetsPathHandler(context)).build();
-        view.setWebViewClient(new WebViewClient(){@Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){return loader.shouldInterceptRequest(r.getUrl());}@Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return true;}@Override public void onPageFinished(WebView v,String url){if(closed||v!=view)return;ready=true;screen(pendingScreen);}@Override public boolean onRenderProcessGone(WebView v,RenderProcessGoneDetail detail){if(v!=view)return true;ready=false;showLoading();root.removeView(v);v.removeJavascriptInterface("Native");v.destroy();if(!closed)main.post(WebHost.this::createView);return true;}});
+        view.setWebViewClient(new WebViewClient(){@Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){return loader.shouldInterceptRequest(r.getUrl());}@Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return true;}@Override public void onPageFinished(WebView v,String url){if(closed||v!=view)return;ready=true;screen(pendingScreen);}@Override public boolean onRenderProcessGone(WebView v,RenderProcessGoneDetail detail){if(v!=view)return true;++visualGeneration;ready=false;showLoading();root.removeView(v);v.removeJavascriptInterface("Native");v.destroy();if(!closed)main.post(WebHost.this::createView);return true;}});
         view.addJavascriptInterface(new Bridge(),"Native");view.setOnKeyListener((v,key,e)->{if(key==KeyEvent.KEYCODE_BACK&&e.getAction()==KeyEvent.ACTION_UP){evaluate("back()");return true;}return false;});
         view.loadUrl("https://appassets.androidplatform.net/assets/index.html");
     }
@@ -68,9 +108,9 @@ final class WebHost {
         },2200);
     }
     void openChat(String id){pendingChat=id;screen("chat");}
-    void screen(String name){pendingScreen=name;if(!"chat".equals(name))pendingChat="";if(isOverlay&&!name.equals(paintedScreen))showLoading();if(ready)evaluate("chat".equals(name)&&!pendingChat.isEmpty()?"openChatById("+JSONObject.quote(pendingChat)+")":"navigate("+JSONObject.quote(name)+")");}
+    void screen(String name){pendingScreen=name;if(!"chat".equals(name))pendingChat="";if(isOverlay&&!name.equals(paintedScreen))showLoading();if(ready)evaluate("chat".equals(name)&&!pendingChat.isEmpty()?"openChatById("+JSONObject.quote(pendingChat)+")":"navigate("+JSONObject.quote(name)+")");watchRenderSignal();}
     void evaluate(String js){main.post(()->{if(!closed&&ready&&(view.getParent()!=null||!isOverlay))view.evaluateJavascript(js,null);});}
-    void close(){closed=true;ready=false;main.removeCallbacksAndMessages(null);root.removeView(view);view.removeJavascriptInterface("Native");view.destroy();hosts.removeIf(r->r.get()==null||r.get()==this);}
+    void close(){closed=true;ready=false;++visualGeneration;main.removeCallbacksAndMessages(null);root.removeView(view);view.removeJavascriptInterface("Native");view.destroy();hosts.removeIf(r->r.get()==null||r.get()==this);}
     static void refreshAll(){for(var r:hosts){WebHost h=r.get();if(h!=null)h.evaluate("refresh()");}}
     void answer(String id,Object value,String error){evaluate("receive("+JSONObject.quote(id)+","+(value==null?"null":value.toString())+","+(error==null?"null":JSONObject.quote(error))+")");}
     final class Bridge {
@@ -100,10 +140,10 @@ final class WebHost {
             case "dismiss":if(isOverlay&&g!=null)g.dismissStart();else if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);break;
             case "remember":if(!isOverlay){pendingScreen=a.optString("screen","home");store.settings.edit().putString("last-screen",a.optString("screen","home")).putString("last-chat",a.optString("chat")).putString("last-note",a.optString("note")).apply();}break;
             case "dictionaries":out=Links.dictionaries(context);break;
-            case "dictionaryPicker":if(isOverlay&&g!=null)g.hideOverlay();Links.dictionaryPicker(context,a.optString("word"));break;
+            case "dictionaryPicker":if(isOverlay&&g!=null)g.openDictionary(a.optString("word"),true);else Links.dictionaryPicker(context,a.optString("word"));break;
             case "dictionaryChoice":store.settings.edit().putString("dictionary",a.getString("id")).apply();break;
             case "exit":if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);break;
-            case "dictionary":if(g!=null)g.useUtility("사전");else store.event("utility","사전",context.getPackageName(),"",0);if(isOverlay&&g!=null)g.hideOverlay();Links.dictionary(context,a.getString("word"));break;
+            case "dictionary":if(g!=null)g.useUtility("사전");else store.event("utility","사전",context.getPackageName(),"",0);if(isOverlay&&g!=null)g.openDictionary(a.getString("word"),false);else Links.dictionary(context,a.getString("word"));break;
             case "linkTest":Intent link=Links.intent(context,a.optString("pkg"),a.optString("uri"));if(link==null)throw new IllegalArgumentException("이 앱에서 지원하는 연결인지 확인해 주세요. 딥링크는 앱마다 달라요.");if(isOverlay&&g!=null)g.hideOverlay();context.startActivity(link.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));break;
             case "saveNote":store.note(a);break;
             case "deleteNote":store.getWritableDatabase().delete("notes","id=?",new String[]{a.getString("id")});break;

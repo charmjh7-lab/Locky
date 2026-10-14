@@ -49,7 +49,7 @@ final class Links {
         if(hasProcess)types.add(process(word));if(hasSearch)types.add(search(word));if(hasWeb)types.add(web(word));Intent primary=types.remove(0);
         PendingIntent picked=PendingIntent.getBroadcast(c,52,new Intent(c,DictionaryChoiceReceiver.class).setAction("com.locky.app.DICTIONARY_CHOSEN"),PendingIntent.FLAG_UPDATE_CURRENT|(android.os.Build.VERSION.SDK_INT>=31?PendingIntent.FLAG_MUTABLE:0));
         Intent chooser=Intent.createChooser(primary,"기본 사전 선택 · 다음부터 바로 검색",picked.getIntentSender());if(!types.isEmpty())chooser.putExtra(Intent.EXTRA_ALTERNATE_INTENTS,types.toArray(new Intent[0]));
-        c.startActivity(chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        if(c instanceof DictionaryActivity)((Activity)c).startActivityForResult(chooser,DictionaryActivity.REQUEST);else c.startActivity(chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     }
     static int dictionaryFlags(Intent i) {
         int flags=Intent.FLAG_ACTIVITY_NEW_TASK;
@@ -62,6 +62,7 @@ final class Links {
     static void dictionary(Context c,String word) throws Exception {
         String choice=Store.get(c).settings.getString("dictionary","");Intent i=choice.isEmpty()?null:dictionaryIntent(c,choice,word);
         if(i==null){Store.get(c).settings.edit().remove("dictionary").apply();dictionaryPicker(c,word);return;}
-        c.startActivity(i.addFlags(dictionaryFlags(i)));
+        if(c instanceof DictionaryActivity)((Activity)c).startActivityForResult(i,DictionaryActivity.REQUEST);else c.startActivity(i.addFlags(dictionaryFlags(i)));
     }
 }
+
