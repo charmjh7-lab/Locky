@@ -279,7 +279,10 @@ public final class GuardService extends AccessibilityService {
             float alpha=exposed?1f:0f;int flags=exposed?overlayLayout.flags&~passive:overlayLayout.flags|passive;
             if(overlayLayout.alpha!=alpha||overlayLayout.flags!=flags){overlayLayout.alpha=alpha;overlayLayout.flags=flags;window.updateViewLayout(overlay.root,overlayLayout);}
         }
-        if(exposed)overlay.resumeOverlay();else overlay.prepareOverlay();
+        if(exposed)overlay.resumeOverlay();
+        else if(!daumPopupActive)overlay.prepareOverlay();
+        // During Daum's popup, leave the original WebView rendered and attached.
+        // The backdrop handles occlusion, and there is no blank frame to rebuild.
     }
     void openDictionary(String word,boolean picker) throws Exception {
         if(dictionaryOpening||dictionaryHost!=null||daumPopupActive)return;

@@ -41,10 +41,12 @@ public class DictionaryReturnTest {
         info.activityInfo.applicationInfo.packageName=target.getPackageName();
         Shadows.shadowOf(g.getPackageManager()).addResolveInfoForIntent(Links.process(""),info);
         g.store.settings.edit().putString("dictionary","process:"+target.flattenToString()).commit();
-        g.gateLayout();
+        g.gateLayout();g.overlayLayout.alpha=1f;
         g.overlay.root.layout(0,0,480,840);
         android.view.View original=g.overlay.root;
+        g.overlay.resumeOverlay();
         g.openDictionary("다음 검색어",false);
+        assertTrue(g.overlay.presentationActive);
         assertTrue(g.daumPopupActive);assertNull(g.dictionaryHost);
         assertEquals(0,detached);assertEquals(1f,g.overlayLayout.alpha,0.001f);
         Intent host=Shadows.shadowOf((Application)g.getApplicationContext()).getNextStartedActivity();
@@ -56,6 +58,7 @@ public class DictionaryReturnTest {
         // The overlay only becomes transparent after the backdrop is drawn.
         assertEquals(1f,g.overlayLayout.alpha,0.001f);
         g.showDaumPopup(activity);
+        assertTrue(g.overlay.presentationActive);
         assertEquals(0f,g.overlayLayout.alpha,0.001f);
         Intent launched=Shadows.shadowOf((Application)g.getApplicationContext()).getNextStartedActivity();
         assertNotNull(launched);assertEquals(target,launched.getComponent());
