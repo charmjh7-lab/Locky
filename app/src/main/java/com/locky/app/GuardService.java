@@ -28,12 +28,44 @@ public final class GuardService extends AccessibilityService {
     long sessionPolicyEnd;
     FloatingTimer floatingTimer;
     DictionaryActivity dictionaryHost;boolean dictionaryOpening;
+    // The Daum PROCESS_TEXT popup needs the original service-to-popup launch path.
+    static final String DAUM_DICTIONARY="net.daum.android.dictionary";
+    boolean daumPopupActive,daumPopupSeen;
+    final Runnable missingDaumPopup=()->{if(daumPopupActive&&!daumPopupSeen)finishDaumPopup();};
+    final Runnable returnedFromDaumPopup=()->{
+        if(daumPopupActive&&daumPopupSeen&&!DAUM_DICTIONARY.equals(foreground))finishDaumPopup();
+    };
+    void popupForeground(String pkg){
+        if(!daumPopupActive)return;
+        if(DAUM_DICTIONARY.equals(pkg)){
+            daumPopupSeen=true;main.removeCallbacks(missingDaumPopup);main.removeCallbacks(returnedFromDaumPopup);
+        }else if(daumPopupSeen&&!pkg.isEmpty()&&!pkg.equals("android")&&!systemPackages.contains(pkg)){
+            main.removeCallbacks(returnedFromDaumPopup);
+            main.postDelayed(returnedFromDaumPopup,750);
+        }
+    }
+    void finishDaumPopup(){
+        if(!daumPopupActive)return;
+        daumPopupActive=false;daumPopupSeen=false;
+        main.removeCallbacks(missingDaumPopup);main.removeCallbacks(returnedFromDaumPopup);
+        utility="첫 화면";revealOverlay();
+    }
+    void launchDaumPopup(Intent intent){
+        daumPopupActive=true;daumPopupSeen=false;
+        main.removeCallbacks(returnedFromDaumPopup);main.removeCallbacks(missingDaumPopup);
+        useUtility("사전");
+        setOverlayExposure(false);
+        try{
+            startActivity(intent.addFlags(Links.dictionaryFlags(intent)));
+            main.postDelayed(missingDaumPopup,6000);
+        }catch(RuntimeException e){finishDaumPopup();throw e;}
+    }
     WebHost overlay;WindowManager window;WindowManager.LayoutParams overlayLayout;final Set<String> systemPackages=new HashSet<>();
     String homePackage="";
     volatile boolean pulseScheduled;volatile long pulseCount;
     final Runnable pulse=new Runnable(){public void run(){pulseScheduled=false;if(live!=GuardService.this)return;pulseCount++;checkpoint();enforce();ensurePulse();}};
     final BroadcastReceiver screen=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){
-        String a=i.getAction();if(Intent.ACTION_SCREEN_OFF.equals(a)){overview=false;overviewCandidate="";checkpoint();interactive=false;clearSessions();foreground="";store.settings.edit().putBoolean("checkpoint-interactive",false).putString("last-package","").apply();waitingUnlock=true;systemPaused=false;main.removeCallbacks(checkUnlock);prepareUnlock();Notices.cancelTimer(c);main.removeCallbacks(pulse);pulseScheduled=false;}
+        String a=i.getAction();if(Intent.ACTION_SCREEN_OFF.equals(a)){finishDaumPopup();overview=false;overviewCandidate="";checkpoint();interactive=false;clearSessions();foreground="";store.settings.edit().putBoolean("checkpoint-interactive",false).putString("last-package","").apply();waitingUnlock=true;systemPaused=false;main.removeCallbacks(checkUnlock);prepareUnlock();Notices.cancelTimer(c);main.removeCallbacks(pulse);pulseScheduled=false;}
         else if(Intent.ACTION_USER_PRESENT.equals(a)){interactive=true;waitingUnlock=false;main.removeCallbacks(checkUnlock);prepareUnlock();observeForeground(null);ensurePulse();}
         else if(Intent.ACTION_SCREEN_ON.equals(a)){interactive=true;unlockChecks=0;main.removeCallbacks(checkUnlock);main.post(checkUnlock);}
         else if(Intent.ACTION_TIME_CHANGED.equals(a)||Intent.ACTION_TIMEZONE_CHANGED.equals(a)){checkpoint();policyChanged();Scheduler.schedule(c);}
@@ -62,6 +94,8 @@ public final class GuardService extends AccessibilityService {
         interactive=getSystemService(PowerManager.class).isInteractive();
         if(!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked())return;
         if(waitingUnlock){waitingUnlock=false;prepareUnlock();}
+        if(daumPopupActive&&event!=null&&event.getPackageName()!=null)
+            popupForeground(event.getPackageName().toString());
         observeForeground(event);
         // Window events can precede availability of the new application's root.
         // Recheck after the transition rather than retaining an obsolete session.
@@ -113,6 +147,7 @@ public final class GuardService extends AccessibilityService {
     }
     void switchForeground(String pkg){
         if(dictionaryHost!=null)dictionaryHost.foregroundChanged(pkg);
+        popupForeground(pkg);
         if(systemPaused){checkpoint();systemPaused=false;lastNotice=-1;}
         if(!pkg.equals(foreground)) {
             checkpoint();
@@ -160,7 +195,7 @@ public final class GuardService extends AccessibilityService {
         try {
         long now=System.currentTimeMillis();boolean managed=store.managed(now);if(managed!=wasManaged){wasManaged=managed;if(!managed){clearSessions();if(overlayVisible&&!gate.equals("unlock"))hideOverlay();Notices.cancelTimer(this);}else{clearSessions();}Scheduler.schedule(this);}
         if(!sessionPkg.isEmpty()&&sessionPolicyEnd>0&&now>=sessionPolicyEnd)clearSessions();
-        if(dictionaryHost!=null)return;
+        if(dictionaryHost!=null||daumPopupActive)return;
         if(!interactive||systemPaused||foreground.equals(getPackageName())||getSystemService(KeyguardManager.class).isKeyguardLocked()||foreground.isEmpty())return;
         if(overlayVisible&&gate.equals("unlock"))return;
         if(!LockyApp.app.authBrowser.isEmpty()&&foreground.equals(LockyApp.app.authBrowser)){if(overlayVisible)hideOverlay();Notices.cancelTimer(this);return;}
@@ -203,7 +238,7 @@ public final class GuardService extends AccessibilityService {
         p.alpha=0;p.gravity=Gravity.TOP|Gravity.START;p.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;p.setTitle("Locky");overlayLayout=p;return p;
     }
     void revealOverlay(){
-        if(overlayVisible&&overlay!=null)setOverlayExposure(interactive&&!systemPaused&&!getSystemService(KeyguardManager.class).isKeyguardLocked());
+        if(overlayVisible&&overlay!=null)setOverlayExposure(!daumPopupActive&&interactive&&!systemPaused&&!getSystemService(KeyguardManager.class).isKeyguardLocked());
     }
     void setOverlayExposure(boolean exposed){
         if(overlay==null)return;
@@ -219,7 +254,23 @@ public final class GuardService extends AccessibilityService {
         }
         if(exposed)overlay.resumeOverlay();else overlay.prepareOverlay();
     }
-    void openDictionary(String word,boolean picker){if(dictionaryOpening||dictionaryHost!=null)return;dictionaryOpening=true;try{useUtility("사전");startActivity(new Intent(this,DictionaryActivity.class).putExtra("word",word).putExtra("picker",picker).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}catch(RuntimeException e){dictionaryOpening=false;throw e;}}
+    void openDictionary(String word,boolean picker) throws Exception {
+        if(dictionaryOpening||dictionaryHost!=null||daumPopupActive)return;
+        if(!picker){
+            String choice=store.settings.getString("dictionary","");
+            if(!choice.isEmpty()){
+                Intent target=Links.dictionaryIntent(this,choice,word);
+                if(target!=null&&Links.isolatedDaumPopup(target)){
+                    launchDaumPopup(target);return;
+                }
+            }
+        }
+        dictionaryOpening=true;
+        try{
+            useUtility("사전");
+            startActivity(new Intent(this,DictionaryActivity.class).putExtra("word",word).putExtra("picker",picker).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        }catch(RuntimeException e){dictionaryOpening=false;throw e;}
+    }
     boolean borrowStart(DictionaryActivity activity){
         dictionaryOpening=false;        if(!overlayVisible||overlay==null||dictionaryHost!=null)return false;
         checkpoint();window.removeViewImmediate(overlay.root);dictionaryHost=activity;activity.setContentView(overlay.root);overlay.root.setVisibility(View.VISIBLE);overlay.resumeOverlay();return true;
@@ -230,7 +281,7 @@ public final class GuardService extends AccessibilityService {
         if(live!=this)return;
         window.addView(overlay.root,gateLayout());if(overlayVisible)revealOverlay();else overlay.root.setVisibility(View.GONE);utility="첫 화면";
     }
-    void hideOverlay(){checkpoint();overlayVisible=false;if(overlay!=null){overlay.pause();overlay.root.setVisibility(View.GONE);}segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();utility="첫 화면";}
+    void hideOverlay(){finishDaumPopup();checkpoint();overlayVisible=false;if(overlay!=null){overlay.pause();overlay.root.setVisibility(View.GONE);}segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();utility="첫 화면";}
     void choosePhone(JSONObject p) throws Exception {checkpoint();phoneEvent=store.event("unlock",p.getString("label"),"",p.optString("pkg"),0,p.optInt("aimless",0)==1);hideOverlay();launch(p);enforce();ensurePulse();}
     void allowApp(JSONObject p,int minutes) throws Exception {
         checkpoint();long remaining=dailyRemaining(gatePkg);JSONObject rule=store.rule(gatePkg);if(!store.managed(System.currentTimeMillis())){hideOverlay();return;}
@@ -253,6 +304,6 @@ public final class GuardService extends AccessibilityService {
         }else stopApp();
     }
     @Override public void onInterrupt(){}
-    @Override public void onDestroy(){hideFloatingTimer();checkpoint();live=null;if(dictionaryHost!=null)dictionaryHost.returnToStart();main.removeCallbacksAndMessages(null);try{unregisterReceiver(screen);}catch(Exception ignored){}if(overlay!=null){try{window.removeViewImmediate(overlay.root);}catch(IllegalArgumentException ignored){}overlay.close();}Notices.cancelTimer(this);super.onDestroy();}
+    @Override public void onDestroy(){hideFloatingTimer();finishDaumPopup();checkpoint();live=null;if(dictionaryHost!=null)dictionaryHost.returnToStart();main.removeCallbacksAndMessages(null);try{unregisterReceiver(screen);}catch(Exception ignored){}if(overlay!=null){try{window.removeViewImmediate(overlay.root);}catch(IllegalArgumentException ignored){}overlay.close();}Notices.cancelTimer(this);super.onDestroy();}
 }
 

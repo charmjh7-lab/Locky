@@ -33,6 +33,29 @@ public class DictionaryReturnTest {
         a.returnToStart();assertNull(g.dictionaryHost);assertSame(root,g.overlay.root);assertEquals("unlock",g.overlay.pendingScreen);assertTrue(g.overlayVisible);assertEquals(1,attached);
         controller.destroy();assertEquals("Destroy must not restore twice",1,attached);
     }
+    @Test public void daumPopupDoesNotLaunchFlashingBridgeActivity() throws Exception {
+        ComponentName target=new ComponentName("net.daum.android.dictionary","net.daum.android.dictionary.MiniPopup");
+        ResolveInfo info=new ResolveInfo();info.activityInfo=new ActivityInfo();
+        info.activityInfo.packageName=target.getPackageName();info.activityInfo.name=target.getClassName();
+        info.activityInfo.exported=true;info.activityInfo.applicationInfo=new ApplicationInfo();
+        info.activityInfo.applicationInfo.packageName=target.getPackageName();
+        Shadows.shadowOf(g.getPackageManager()).addResolveInfoForIntent(Links.process(""),info);
+        g.store.settings.edit().putString("dictionary","process:"+target.flattenToString()).commit();
+        g.gateLayout();
+        g.openDictionary("다음 검색어",false);
+        assertTrue(g.daumPopupActive);assertNull(g.dictionaryHost);
+        assertEquals(0,detached);assertEquals(0f,g.overlayLayout.alpha,0.001f);
+        Intent launched=Shadows.shadowOf((Application)g.getApplicationContext()).getNextStartedActivity();
+        assertNotNull(launched);assertEquals(target,launched.getComponent());
+        assertEquals("다음 검색어",launched.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT));
+        int flags=Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_MULTIPLE_TASK|Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS;
+        assertEquals(flags,launched.getFlags()&flags);
+        g.popupForeground(g.DAUM_DICTIONARY);assertTrue(g.daumPopupSeen);
+        g.foreground=g.getPackageName();g.popupForeground(g.foreground);
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(850));
+        assertFalse(g.daumPopupActive);assertTrue(g.overlayVisible);
+        assertEquals(1f,g.overlayLayout.alpha,0.001f);
+    }
     @Test public void miniDictionaryRetainsIsolatedPopupTaskFlags() throws Exception {
         ComponentName target=new ComponentName("net.daum.android.dictionary","net.daum.android.dictionary.MiniPopup");
         ResolveInfo info=new ResolveInfo();info.activityInfo=new ActivityInfo();info.activityInfo.packageName=target.getPackageName();info.activityInfo.name=target.getClassName();info.activityInfo.exported=true;info.activityInfo.applicationInfo=new ApplicationInfo();info.activityInfo.applicationInfo.packageName=target.getPackageName();info.nonLocalizedLabel="Mini dictionary";
