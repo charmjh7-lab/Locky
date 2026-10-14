@@ -28,6 +28,15 @@ public class IntegrationTest {
         ContentValues old=new ContentValues();old.put("start",start);old.put("end",end);old.put("pkg",pkg);old.put("label","시스템 제외 검사");old.put("managed",1);old.put("parent",0);s.put("usage",old);
         java.util.Set<String> before=new java.util.HashSet<>(s.settings.getStringSet("usage-excluded",java.util.Set.of()));try{java.util.Set<String> excluded=new java.util.HashSet<>(before);excluded.add("test.user-excluded");s.settings.edit().putStringSet("usage-excluded",excluded).commit();s.usage(start,end,"test.user-excluded","선택 제외 검사",true,0);assertEquals(0,s.rows("SELECT id FROM usage WHERE pkg='test.user-excluded'").length());JSONArray apps=Briefing.build(c,1,0).getJSONArray("apps");for(int j=0;j<apps.length();j++)assertNotEquals(pkg,apps.getJSONObject(j).getString("pkg"));assertEquals(0,s.used(pkg,System.currentTimeMillis()));}finally{s.settings.edit().putStringSet("usage-excluded",before).commit();s.getWritableDatabase().delete("usage","label='시스템 제외 검사'",null);}
     }
+    @Test public void daumPopupDoesNotReactivateExistingDictionaryTask() {
+        Intent popup=new Intent(Intent.ACTION_PROCESS_TEXT).setComponent(
+            new ComponentName("net.daum.android.dictionary","net.daum.android.dictionary.MiniPopup"));
+        int flags=Links.dictionaryFlags(popup);
+        assertTrue((flags&Intent.FLAG_ACTIVITY_NEW_TASK)!=0);
+        assertTrue((flags&Intent.FLAG_ACTIVITY_MULTIPLE_TASK)!=0);
+        assertTrue((flags&Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)!=0);
+        assertEquals(0,flags&Intent.FLAG_ACTIVITY_CLEAR_TOP);
+    }
     @Test public void systemDictionaryPickerRemembersTargetAndDeliversEachWord() throws Exception {
         Context c=ApplicationProvider.getApplicationContext();Store s=Store.get(c);UiDevice d=UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());String previous=s.settings.getString("dictionary","");
         try{InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{try{Links.dictionaryPicker(c,"첫 검색어");}catch(Exception e){throw new RuntimeException(e);}});UiObject2 target=d.wait(Until.findObject(By.text("Locky test dictionary")),10000);assertNotNull("Native dictionary target missing",target);target.click();assertTrue(d.wait(Until.hasObject(By.text("사전 검색: 첫 검색어")),10000));long deadline=System.currentTimeMillis()+3000;while(s.settings.getString("dictionary","").isEmpty()&&System.currentTimeMillis()<deadline)Thread.sleep(100);assertTrue(s.settings.getString("dictionary","").startsWith("process:com.locky.fixture/"));d.pressHome();InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{try{Links.dictionary(c,"두 번째 검색어");}catch(Exception e){throw new RuntimeException(e);}});assertTrue("Remembered dictionary did not receive new word",d.wait(Until.hasObject(By.text("사전 검색: 두 번째 검색어")),10000));}finally{s.settings.edit().putString("dictionary",previous).commit();d.pressHome();}

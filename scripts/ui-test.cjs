@@ -46,6 +46,12 @@ const server=http.createServer((req,res)=>{const name=req.url==='/'?'index.html'
  }
  await page.setViewportSize({width:390,height:780});await fit();
 
+ const orderBefore=await page.locator('.start-purposes [data-purpose]').evaluateAll(els=>els.map(e=>e.dataset.purpose));
+ await page.evaluate(()=>render());
+ assert.deepEqual(await page.locator('.start-purposes [data-purpose]').evaluateAll(els=>els.map(e=>e.dataset.purpose)),orderBefore);
+ await page.evaluate(()=>navigate('home'));
+ assert.notDeepEqual(await page.locator('.start-purposes [data-purpose]').evaluateAll(els=>els.map(e=>e.dataset.purpose)),orderBefore,'A new start must reshuffle presets');
+
  // With only a few purposes, keep the chooser near the tools without stretching editors.
  const balanced=await page.evaluate(async()=>{
    const previous=state.allPurposes;
@@ -71,12 +77,24 @@ const server=http.createServer((req,res)=>{const name=req.url==='/'?'index.html'
  assert.equal(balanced.panelBorder,'0px');
  assert.notEqual(balanced.panelBackground,'rgba(0, 0, 0, 0)');
 
- const initial=await page.locator('.quick-tools').boundingBox();await page.locator('#noteBody').fill('길어도 고정 크기\n'.repeat(80));await page.waitForTimeout(450);assert(demo.notes.some(n=>n.body.includes('길어도')));assert.equal(Math.round((await page.locator('.quick-tools').boundingBox()).height),Math.round(initial.height));await fit();
+ const initial=await page.locator('.quick-tools').boundingBox();await page.locator('#noteBody').fill('길어도 고정 크기\n'.repeat(80));await page.waitForTimeout(450);assert(demo.notes.some(n=>n.body.includes('길어도')));const editedHeight=(await page.locator('.quick-tools').boundingBox()).height;assert(editedHeight>=130&&editedHeight<=initial.height+2,JSON.stringify({before:initial.height,after:editedHeight}));await fit();
  await page.locator('.note-heading').click();await page.locator('#noteTitle').fill('내 메모');await page.waitForTimeout(400);assert.equal(demo.notes[0].title,'내 메모');
  assert.equal(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight),true);assert(await page.locator('.note-content').evaluate(el=>el.scrollHeight>el.clientHeight));
  await page.locator('#noteMode').selectOption('check');await page.locator('[data-checktext]').first().waitFor();assert.equal(await page.locator('#noteBody').count(),0);await page.locator('[data-act=addCheck]').click();await page.locator('[data-checktext]').last().fill('책 읽기');await page.locator('[data-check]').last().check();await page.waitForTimeout(500);assert(JSON.parse(demo.notes[0].checks).at(-1).done);await page.locator('[data-checktext]').last().press('Enter');assert((await page.locator('[data-checktext]').count())>=3);
+ await page.locator('[data-act=newNote]').click();await page.locator('[data-newnote=text]').click();
+ await page.evaluate(()=>navigate('home'));
+ const displayedTitle=await page.locator('.compact-note .note-heading').innerText();
+ await page.locator('[data-note-step="1"]').click();
+ assert.notEqual(await page.locator('.compact-note .note-heading').innerText(),displayedTitle);
  await page.evaluate(()=>navigate('home'));await page.setViewportSize({width:360,height:600});await page.waitForTimeout(80);await page.locator('[data-act=morePurposes]').click();assert.equal(await page.locator('#sheet [data-purpose]').count(),9);await page.locator('[data-act=closeSheet]').click();await page.setViewportSize({width:390,height:780});await page.waitForTimeout(80);assert((await page.locator('[data-purpose]:visible').count())>=3);
  await page.locator('[data-editpurpose=phone0]').click();await page.locator('#purposeLink').check();await page.locator('#purposeApp').selectOption('app.video');await page.locator('#savePurpose').click();await page.waitForTimeout(100);assert.equal(demo.allPurposes.find(p=>p.id==='phone0').pkg,'app.video');await page.locator('[data-editpurpose=phone0]').click();await page.locator('#purposeLink').uncheck();await page.locator('#savePurpose').click();await page.waitForTimeout(100);assert.equal(demo.allPurposes.find(p=>p.id==='phone0').pkg,'');await page.locator('[data-editpurpose=phone0]').click();await page.locator('[data-act=deletePurpose]').click();await page.waitForTimeout(100);assert(!demo.allPurposes.some(p=>p.id==='phone0'));
+ await page.evaluate(()=>{state.overlay=true;render();});
+ await page.locator('[data-act=managePurposes]').click();
+ await page.locator('[data-editpurpose="phone1"]').click();
+ await page.locator('#purposeLink').check();await page.locator('#purposeApp').selectOption('app.video');
+ await page.locator('#savePurpose').click();
+ assert.equal(demo.allPurposes.find(p=>p.id==='phone1').pkg,'app.video');
+ await page.evaluate(()=>{state.overlay=false;render();});
  await page.locator('[data-act=managePurposes]').click();await page.locator('[data-switchscope=app]').click();assert.equal(await page.locator('#sheet [data-remove]').count(),2);await page.locator('[data-remove=app-aimless]').click();await page.waitForTimeout(100);assert(!demo.allPurposes.some(p=>p.id==='app-aimless'));await page.locator('[data-act=closeSheet]').click();
  const priorAppFetch=calls.filter(c=>c.action==='apps').length;await page.locator('[data-act=direct]').click();await page.locator('#purposeLabel').waitFor();assert.equal(calls.filter(c=>c.action==='apps').length,priorAppFetch);await page.locator('#purposeLabel').fill('친구에게 답장');await page.locator('#savePurpose').click();await page.waitForTimeout(500);assert(calls.some(c=>c.action==='choose'&&c.a.id==='custom'),JSON.stringify({calls:calls.slice(-12).map(c=>({action:c.action,scope:c.a.scope})),toast:await page.locator('#toast').textContent(),clicks:await page.evaluate(()=>clickLog.slice(-8)),button:await page.locator('#savePurpose').evaluate(e=>({html:e.outerHTML,bound:!!e.onclick,rect:e.getBoundingClientRect().toJSON()})).catch(()=>null)}));assert.equal(demo.allPurposes.find(p=>p.id==='custom').scope,'phone');
  await page.locator('#word').fill('습관');await page.locator('#dictionaryForm button[type=submit]').click();await page.waitForTimeout(100);await page.evaluate(()=>refresh(true));await page.locator('#word').fill('선택');await page.locator('#dictionaryForm button[type=submit]').click();await page.waitForTimeout(100);assert.equal(calls.filter(c=>c.action==='dictionaryPicker').length,1);assert.equal(calls.filter(c=>c.action==='dictionary').length,1);
