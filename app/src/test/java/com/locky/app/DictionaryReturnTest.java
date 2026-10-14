@@ -5,6 +5,7 @@ import android.content.*;
 import android.content.pm.*;
 import android.view.WindowManager;
 import java.lang.reflect.Proxy;
+import java.time.Duration;
 import org.junit.*;
 import org.junit.runner.RunWith;
 import org.robolectric.*;
@@ -32,14 +33,35 @@ public class DictionaryReturnTest {
         a.returnToStart();assertNull(g.dictionaryHost);assertSame(root,g.overlay.root);assertEquals("unlock",g.overlay.pendingScreen);assertTrue(g.overlayVisible);assertEquals(1,attached);
         controller.destroy();assertEquals("Destroy must not restore twice",1,attached);
     }
-    @Test public void miniDictionaryIsLaunchedAboveTheActivityWithoutANewTask() throws Exception {
+    @Test public void miniDictionaryRetainsIsolatedPopupTaskFlags() throws Exception {
         ComponentName target=new ComponentName("net.daum.android.dictionary","net.daum.android.dictionary.MiniPopup");
         ResolveInfo info=new ResolveInfo();info.activityInfo=new ActivityInfo();info.activityInfo.packageName=target.getPackageName();info.activityInfo.name=target.getClassName();info.activityInfo.exported=true;info.activityInfo.applicationInfo=new ApplicationInfo();info.activityInfo.applicationInfo.packageName=target.getPackageName();info.nonLocalizedLabel="Mini dictionary";
         Shadows.shadowOf(g.getPackageManager()).addResolveInfoForIntent(Links.process(""),info);
         g.store.settings.edit().putString("dictionary","process:"+target.flattenToString()).commit();
         ActivityController<DictionaryActivity> controller=Robolectric.buildActivity(DictionaryActivity.class,new Intent(g,DictionaryActivity.class).putExtra("word","단어")).create();
-        DictionaryActivity a=controller.get();Links.dictionary(a,"두 번째 단어");ShadowActivity.IntentForResult launched=Shadows.shadowOf(a).getNextStartedActivityForResult();
-        assertEquals(target,launched.intent.getComponent());assertEquals("두 번째 단어",launched.intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT));assertEquals(0,launched.intent.getFlags()&Intent.FLAG_ACTIVITY_NEW_TASK);assertEquals(DictionaryActivity.REQUEST,launched.requestCode);
+        DictionaryActivity a=controller.get();Links.dictionary(a,"두 번째 단어");
+        Intent launched=Shadows.shadowOf(a).getNextStartedActivity();
+        assertNotNull(launched);assertEquals(target,launched.getComponent());
+        assertEquals("두 번째 단어",launched.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT));
+        int expected=Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_MULTIPLE_TASK|Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS;
+        assertEquals(expected,launched.getFlags()&expected);
         a.returnToStart();controller.destroy();
+    }
+    @Test public void aTransientForeignWindowDoesNotCloseTheDictionary() {
+        ActivityController<DictionaryActivity> controller=Robolectric.buildActivity(DictionaryActivity.class,new Intent(g,DictionaryActivity.class).putExtra("word","단어")).create();
+        DictionaryActivity a=controller.get();
+        g.foreground="com.android.settings";a.foregroundChanged(g.foreground);
+        g.foreground=g.getPackageName();a.foregroundChanged(g.foreground);
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(900));
+        assertSame(a,g.dictionaryHost);
+        a.returnToStart();controller.destroy();
+    }
+    @Test public void aSettledForeignWindowReturnsToStart() {
+        ActivityController<DictionaryActivity> controller=Robolectric.buildActivity(DictionaryActivity.class,new Intent(g,DictionaryActivity.class).putExtra("word","단어")).create();
+        DictionaryActivity a=controller.get();
+        g.foreground="com.android.settings";a.foregroundChanged(g.foreground);
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(900));
+        assertNull(g.dictionaryHost);
+        controller.destroy();
     }
 }

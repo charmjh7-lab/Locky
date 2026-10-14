@@ -51,9 +51,14 @@ final class Links {
         Intent chooser=Intent.createChooser(primary,"기본 사전 선택 · 다음부터 바로 검색",picked.getIntentSender());if(!types.isEmpty())chooser.putExtra(Intent.EXTRA_ALTERNATE_INTENTS,types.toArray(new Intent[0]));
         if(c instanceof DictionaryActivity)((Activity)c).startActivityForResult(chooser,DictionaryActivity.REQUEST);else c.startActivity(chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     }
+    static boolean isolatedDaumPopup(Intent i) {
+        return Intent.ACTION_PROCESS_TEXT.equals(i.getAction())
+            && i.getComponent()!=null
+            && "net.daum.android.dictionary".equals(i.getComponent().getPackageName());
+    }
     static int dictionaryFlags(Intent i) {
         int flags=Intent.FLAG_ACTIVITY_NEW_TASK;
-        if(Intent.ACTION_PROCESS_TEXT.equals(i.getAction())&&i.getComponent()!=null&&"net.daum.android.dictionary".equals(i.getComponent().getPackageName())){
+        if(isolatedDaumPopup(i)){
             // Daum's popup should not restore the dictionary home screen.
             flags|=Intent.FLAG_ACTIVITY_MULTIPLE_TASK|Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS;
         }else if(!Intent.ACTION_VIEW.equals(i.getAction()))flags|=Intent.FLAG_ACTIVITY_CLEAR_TOP;
@@ -62,7 +67,11 @@ final class Links {
     static void dictionary(Context c,String word) throws Exception {
         String choice=Store.get(c).settings.getString("dictionary","");Intent i=choice.isEmpty()?null:dictionaryIntent(c,choice,word);
         if(i==null){Store.get(c).settings.edit().remove("dictionary").apply();dictionaryPicker(c,word);return;}
-        if(c instanceof DictionaryActivity)((Activity)c).startActivityForResult(i,DictionaryActivity.REQUEST);else c.startActivity(i.addFlags(dictionaryFlags(i)));
+        // Daum's popup must retain its isolated task flags; startActivityForResult
+        // cannot be combined with NEW_TASK (Android immediately cancels its result).
+        if(c instanceof DictionaryActivity && !isolatedDaumPopup(i))
+            ((Activity)c).startActivityForResult(i,DictionaryActivity.REQUEST);
+        else c.startActivity(i.addFlags(dictionaryFlags(i)));
     }
 }
 

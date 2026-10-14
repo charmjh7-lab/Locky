@@ -112,7 +112,7 @@ public final class GuardService extends AccessibilityService {
         ensurePulse();
     }
     void switchForeground(String pkg){
-        if(dictionaryHost!=null&&!dictionaryHost.allows(pkg))dictionaryHost.returnToStart();
+        if(dictionaryHost!=null)dictionaryHost.foregroundChanged(pkg);
         if(systemPaused){checkpoint();systemPaused=false;lastNotice=-1;}
         if(!pkg.equals(foreground)) {
             checkpoint();

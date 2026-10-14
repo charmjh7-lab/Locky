@@ -59,9 +59,13 @@ public class OverlayRenderingTest {
         view.scripts.clear();host.resumeOverlay();assertSame(view,host.view);assertTrue(view.scripts.isEmpty());assertEquals(0,view.loads);assertEquals(3,view.frames.size());
         view.complete(2);host.didDraw(view);Shadows.shadowOf(Looper.getMainLooper()).idle();assertEquals("unlock",host.paintedScreen);
     }
-    @Test public void slowVisualCallbackNeverDestroysAWorkingDocument(){
-        rendered();Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(10));assertSame(view,host.view);assertEquals(0,view.loads);
-        host.resumeOverlay();assertEquals(1,view.frames.size());assertTrue(view.resumes>1);
+    @Test public void stalledVisualCallbackRestoresTheExistingDocumentWithoutReload(){
+        rendered();Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(4));
+        assertSame(view,host.view);assertEquals(0,view.loads);
+        assertTrue(host.frameReady);assertEquals(View.VISIBLE,view.getVisibility());
+        assertEquals(View.GONE,host.loadingView.getVisibility());assertEquals(2,view.frames.size());
+        view.complete(0);assertTrue(host.frameReady);
+        host.resumeOverlay();assertEquals(2,view.frames.size());assertTrue(view.resumes>1);
     }
     @Test public void failedInitialLoadCanRetryBeforeReadyButSuccessfulPageCannotReload(){
         host.ready=false;host.loadFailed=true;host.retryInitialLoad();assertSame(view,host.view);assertEquals(1,view.loads);assertFalse(host.ready);

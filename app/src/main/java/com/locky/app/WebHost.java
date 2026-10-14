@@ -22,7 +22,7 @@ final class WebHost {
     // DOM completion, Chromium frame preparation and Android drawing are separate states.
     String renderedScreen="";long navigationGeneration,visualGeneration,visualPending=-1,visualCompleted=-1;
     boolean frameReady,presentationActive,everRendered,loadFailed;int initialRetries;
-    private Runnable initialWatch;
+    private Runnable initialWatch,visualWatch;int visualRetryCount;
     WebHost(Context c,boolean overlay){context=c;store=Store.get(c);isOverlay=overlay;presentationActive=!overlay;root=new android.widget.FrameLayout(c);root.setBackgroundColor(Color.rgb(244,243,237));hosts.add(new WeakReference<>(this));
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root,(v,insets)->{
             androidx.core.graphics.Insets bars=insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()|androidx.core.view.WindowInsetsCompat.Type.displayCutout());
@@ -46,7 +46,7 @@ final class WebHost {
         }else loadingView=null;
         createView();
     }
-    void resetVisualState(){++visualGeneration;visualPending=-1;visualCompleted=-1;frameReady=false;paintedScreen="";}
+    void resetVisualState(){if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}++visualGeneration;visualPending=-1;visualCompleted=-1;frameReady=false;paintedScreen="";visualRetryCount=0;}
     void showLoading(){resetVisualState();renderedScreen="";if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);if(isOverlay&&view!=null)view.setVisibility(View.INVISIBLE);}
     void rendered(WebView source,String screen,long navigation){
         if(closed||source!=view||!ready||navigation!=navigationGeneration)return;
@@ -85,10 +85,28 @@ final class WebHost {
         if(isOverlay&&guard!=null&&guard.dictionaryHost!=null&&guard.dictionaryHost.away)return;
         WebView candidate=view;String screen=pendingScreen;long generation=visualGeneration,navigation=navigationGeneration;
         visualPending=generation;
+        // A callback can stall after reattaching the same WebView. Retry once,
+        // then display the already-rendered DOM instead of reloading and losing drafts.
+        visualWatch=()->{
+            visualWatch=null;
+            if(closed||candidate!=view||generation!=visualGeneration||navigation!=navigationGeneration
+                ||frameReady||visualPending!=generation||root.getVisibility()!=View.VISIBLE
+                ||!screen.equals(pendingScreen))return;
+            visualPending=-1;redraw();
+            if(visualRetryCount++==0)requestVisualState();
+            else{
+                frameReady=true;candidate.setVisibility(View.VISIBLE);
+                if(loadingView!=null)loadingView.setVisibility(View.GONE);
+                redraw();
+            }
+        };
+        main.postDelayed(visualWatch,1200);
         candidate.postVisualStateCallback(generation,new WebView.VisualStateCallback(){@Override public void onComplete(long id){
             if(closed||candidate!=view||generation!=visualGeneration||navigation!=navigationGeneration
                 ||!screen.equals(pendingScreen))return;
             if(root.getVisibility()!=View.VISIBLE){visualPending=-1;return;}
+            if(frameReady)return;
+            if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}
             visualPending=-1;frameReady=true;
             // This only makes a prepared frame drawable; onDraw records Android presentation.
             candidate.setVisibility(View.VISIBLE);if(loadingView!=null)loadingView.setVisibility(View.GONE);redraw();

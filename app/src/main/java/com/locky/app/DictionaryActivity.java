@@ -14,6 +14,19 @@ public final class DictionaryActivity extends Activity {
     GuardService guard;
     boolean launched,away,returning;
     final Set<String> packages=new HashSet<>();
+    // Short-lived system/launcher windows must not end a dictionary lookup.
+    private static final long FOREIGN_WINDOW_SETTLE_MS=800;
+    private final Runnable foreignWindowSettled=()->{
+        if(returning||guard==null||guard.dictionaryHost!=this)return;
+        String pkg=guard.foreground;
+        if(!pkg.isEmpty()&&!allows(pkg))returnToStart();
+    };
+    void foregroundChanged(String pkg){
+        if(guard==null||returning)return;
+        guard.main.removeCallbacks(foreignWindowSettled);
+        if(!pkg.isEmpty()&&!allows(pkg))
+            guard.main.postDelayed(foreignWindowSettled,FOREIGN_WINDOW_SETTLE_MS);
+    }
     @Override public void onCreate(Bundle saved){
         super.onCreate(saved);androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(),false);
         guard=GuardService.live;
@@ -28,7 +41,7 @@ public final class DictionaryActivity extends Activity {
     boolean allows(String pkg){return pkg.equals(getPackageName())||packages.contains(pkg)||pkg.equals("android")||pkg.contains("intentresolver");}
     @Override protected void onPause(){if(launched){away=true;if(guard!=null&&guard.overlay!=null)guard.overlay.pause();}super.onPause();}
     @Override protected void onResume(){super.onResume();if(launched&&away)returnToStart();else if(guard!=null&&guard.overlay!=null)guard.overlay.resumeOverlay();}
-    void returnToStart(){if(returning)return;returning=true;if(guard!=null)guard.returnDictionary(this);finish();}
+    void returnToStart(){if(returning)return;returning=true;if(guard!=null){guard.main.removeCallbacks(foreignWindowSettled);guard.returnDictionary(this);}finish();}
     @Override public void onBackPressed(){returnToStart();}
-    @Override protected void onDestroy(){if(guard!=null)guard.returnDictionary(this);super.onDestroy();}
+    @Override protected void onDestroy(){if(guard!=null){guard.main.removeCallbacks(foreignWindowSettled);guard.returnDictionary(this);}super.onDestroy();}
 }
