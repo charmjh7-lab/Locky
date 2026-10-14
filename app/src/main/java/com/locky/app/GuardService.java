@@ -232,7 +232,8 @@ public final class GuardService extends AccessibilityService {
             useUtility("사전");
             startActivity(new Intent(this,DictionaryActivity.class)
                 .putExtra("word",word).putExtra("picker",picker)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_NO_ANIMATION|Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS));
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_MULTIPLE_TASK
+                    |Intent.FLAG_ACTIVITY_NO_ANIMATION|Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS));
         }catch(RuntimeException e){dictionaryOpening=false;throw e;}
     }
     boolean borrowStart(DictionaryActivity activity){

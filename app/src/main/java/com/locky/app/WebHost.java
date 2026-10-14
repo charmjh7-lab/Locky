@@ -81,8 +81,8 @@ final class WebHost {
     void requestVisualState(){
         if(closed||!ready||view==null||!view.isAttachedToWindow()||root.getVisibility()!=View.VISIBLE
             ||!pendingScreen.equals(renderedScreen)||frameReady||visualPending==visualGeneration)return;
-        GuardService guard=GuardService.live;
-        if(isOverlay&&guard!=null&&guard.dictionaryHost!=null&&guard.dictionaryHost.away)return;
+        // The dictionary host retains the original WebView and must continue
+        // painting beneath popup dictionaries while its Activity is paused.
         WebView candidate=view;String screen=pendingScreen;long generation=visualGeneration,navigation=navigationGeneration;
         visualPending=generation;
         // A callback can stall after reattaching the same WebView. Retry once,
