@@ -10,12 +10,12 @@ public final class MainActivity extends Activity {
     private CustomTabsServiceConnection browserConnection;
     private boolean browserBound;
     private int browserGeneration;
-    static Intent launchIntent(Context c){return new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setComponent(new ComponentName(c,MainActivity.class));}
+    static Intent launchIntent(Context c){return new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setComponent(new ComponentName(c,MainActivity.class)).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);}
     static boolean connectionReturn(Intent i){return i!=null&&Intent.ACTION_VIEW.equals(i.getAction())&&i.getData()!=null&&"locky".equals(i.getData().getScheme())&&"connection".equals(i.getData().getHost());}
     @Override public void onCreate(Bundle state){super.onCreate(state);androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(),false);Store s=Store.get(this);if(!s.settings.contains("installed"))s.settings.edit().putLong("installed",System.currentTimeMillis()).apply();Intent incoming=getIntent();setIntent(launchIntent(this));host=new WebHost(this,false);setContentView(host.root);String screen=connectionReturn(incoming)?"chats":incoming.getStringExtra("screen");host.screen(screen==null?s.settings.getString("last-screen",GuardService.live==null?"setup":"home"):screen);}
-    @Override protected void onNewIntent(Intent i){super.onNewIntent(i);setIntent(launchIntent(this));if(connectionReturn(i))host.screen("chats");else if(i.hasExtra("screen"))host.screen(i.getStringExtra("screen"));}
-    @Override protected void onResume(){super.onResume();LockyApp.app.auth.foreground(true);Scheduler.schedule(this);if(GuardService.live!=null)GuardService.live.pauseForActivity();WebHost.refreshAll();if(!java.util.List.of("starting","checking","browser","returning","exchange","identity","saving").contains(LockyApp.app.auth.connection().optString("phase")))releaseLoginBrowser();}
-    @Override protected void onPause(){LockyApp.app.auth.foreground(false);host.evaluate("remember()");super.onPause();}
+    @Override protected void onNewIntent(Intent i){super.onNewIntent(i);setIntent(launchIntent(this));if(connectionReturn(i))host.screen("chats");else if(i.hasExtra("screen"))host.screen(i.getStringExtra("screen"));host.resume();android.util.Log.i("LockyLifecycle","new-intent task="+getTaskId());}
+    @Override protected void onResume(){super.onResume();android.util.Log.i("LockyLifecycle","resume task="+getTaskId());host.resume();LockyApp.app.auth.foreground(true);Scheduler.schedule(this);if(GuardService.live!=null)GuardService.live.pauseForActivity();WebHost.refreshAll();if(!java.util.List.of("starting","checking","browser","returning","exchange","identity","saving").contains(LockyApp.app.auth.connection().optString("phase")))releaseLoginBrowser();}
+    @Override protected void onPause(){LockyApp.app.auth.foreground(false);host.evaluate("remember()");host.pause();super.onPause();}
     @Override public void onBackPressed(){host.evaluate("back()");}
     @Override protected void onDestroy(){releaseLoginBrowser();host.close();super.onDestroy();}
     void loginBrowser(String url){runOnUiThread(()->{
