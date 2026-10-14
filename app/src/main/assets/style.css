@@ -61,3 +61,20 @@
 .chat-source-item:last-child{border-bottom:0}.chat-source-item>span:first-child{font-size:11px;color:var(--green);font-weight:700}
 .chat-source-item>span:last-child{flex:1;min-width:0;overflow-wrap:anywhere;text-decoration:underline;text-decoration-color:#9fad9d}
 .chat-source-footer{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+
+/* Illustrated searchable app chooser while retaining the platform selector as fallback. */
+.purpose-app-preview{display:flex;gap:10px;align-items:center;margin:10px 0;padding:9px 11px;border:1px solid #c7d7c7;border-radius:12px;background:#e6efe4;min-height:52px}
+.purpose-app-preview img{width:34px;height:34px;object-fit:contain;border-radius:8px}
+.purpose-app-preview span{display:flex;flex-direction:column;min-width:0;flex:1}
+.purpose-app-preview strong{font-size:15px}.purpose-app-preview small{font-size:12px;color:var(--muted)}
+.purpose-app-results{display:grid;grid-template-columns:1fr 1fr;gap:7px;max-height:205px;overflow-y:auto;overscroll-behavior:contain;padding:3px 0 6px}
+.purpose-app-row{display:flex;align-items:center;gap:7px;padding:8px 6px;border:1px solid var(--line);border-radius:10px;min-width:0;min-height:52px;background:var(--white);text-align:left}
+.purpose-app-row.selected{border-color:var(--green);background:#e7f0e5}
+.purpose-app-row img{height:30px;width:30px;object-fit:contain;flex-shrink:0;border-radius:7px}
+.purpose-app-row span{min-width:0;display:flex;flex-direction:column;flex:1}.purpose-app-row strong{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.purpose-app-row small{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.purpose-app-row svg{width:15px;height:15px;color:var(--green)}
+#purposeAppCount{margin:5px 0 10px}
+.brief-export{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:13px 14px;margin:8px 0;background:var(--white);border:1px solid var(--line);border-radius:12px}
+.brief-export strong{font-size:15px}.brief-export p{margin-top:3px;font-size:12px}
+.brief-export-actions{display:flex;gap:7px}.brief-export-actions button{font-size:13px;padding:8px 12px}
