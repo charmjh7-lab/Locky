@@ -85,16 +85,24 @@ async function flushMemo(){clearTimeout(memoTimer);if(memoSaving)await memoSavin
 function autoNoteHeight(){const scroller=$('.full-note .note-content');if(!scroller)return;const top=scroller.scrollTop;scroller.querySelectorAll('textarea').forEach(el=>{const key=el.value+'|'+el.clientWidth;if(el._measureKey===key)return;el._measureKey=key;el.style.height='auto';el.style.height=Math.max(el.id==='noteBody'?scroller.clientHeight-8:32,el.scrollHeight)+'px';});scroller.scrollTop=top;}
 function insetsChanged(visible){nativeKeyboard=visible;viewportChanged(visible);}
 function layoutStart(){const page=$('.start-page');if(!page||document.body.classList.contains('keyboard'))return;const area=page.querySelector('.start-purposes'),tools=page.querySelector('.quick-tools');if(!area)return;
- const grid=area.querySelector('.reason-grid');if(!grid)return;const items=[...grid.querySelectorAll('.purpose-item')],more=grid.querySelector('.more-reasons');const css=getComputedStyle(page),gap=parseFloat(css.gap)||0;const children=[...page.children];let available=page.clientHeight-parseFloat(css.paddingTop)-parseFloat(css.paddingBottom)-gap*(children.length-1);
- for(const child of children)if(child!==area&&child!==tools){const style=getComputedStyle(child);available-=child.getBoundingClientRect().height;if(!child.classList.contains("start-footer"))available+=(0-parseFloat(style.marginTop)||0)+(0-parseFloat(style.marginBottom)||0);}
+ const grid=area.querySelector('.reason-grid');if(!grid)return;const items=[...grid.querySelectorAll('.purpose-item')],more=grid.querySelector('.more-reasons'),css=getComputedStyle(page),gap=parseFloat(css.gap)||0;
+ // Restore the CSS-sized compact tools before measuring. Excess space belongs around the content, not inside these editors.
+ if(tools){tools.style.height='';tools.style.flex='';}
+ const preferredTools=tools?tools.getBoundingClientRect().height:0,minimumTools=tools?96:0;
+ const children=[...page.children];let available=page.clientHeight-parseFloat(css.paddingTop)-parseFloat(css.paddingBottom)-gap*(children.length-1);
+ for(const child of children)if(child!==area&&child!==tools)available-=child.getBoundingClientRect().height;
  const heading=area.querySelector('.sectionhead');if(heading)available-=heading.getBoundingClientRect().height+5;
- const minimum=tools?Math.min(140,normalHeight*.24):0,row=44,rowGap=6,direct=44;let count=items.length;
+ const row=44,rowGap=6,direct=44;let count=items.length;
  const required=n=>direct+(n?rowGap+Math.ceil(n/2)*row+(Math.ceil(n/2)-1)*rowGap:0);
- while(count>0&&required(count)+(count<items.length?rowGap+34:0)+minimum>available)count--;
+ while(count>0&&required(count)+(count<items.length?rowGap+34:0)+minimumTools>available)count--;
  if(count<items.length&&count%2===1)count--;
- const chosen=items.findIndex(el=>el.querySelector('.selected'));const shown=new Set(items.slice(0,count));if(chosen>=count&&count>0){shown.delete(items[count-1]);shown.add(items[chosen]);}
- items.forEach(el=>el.hidden=!shown.has(el));if(more)more.hidden=count===items.length;const content=required(count)+(count<items.length?rowGap+34:0);
- if(tools){const height=Math.max(96,available-content);tools.style.height=height+'px';tools.style.flex='0 0 '+height+'px';}area.style.flex='0 0 auto';}
+ const chosen=items.findIndex(el=>el.querySelector('.selected'));const shown=new Set(items.slice(0,count));
+ if(chosen>=count&&count>0){shown.delete(items[count-1]);shown.add(items[chosen]);}
+ items.forEach(el=>el.hidden=!shown.has(el));if(more)more.hidden=count===items.length;
+ const content=required(count)+(count<items.length?rowGap+34:0);
+ if(tools){const height=Math.max(minimumTools,Math.min(preferredTools,available-content));tools.style.height=height+'px';tools.style.flex='0 0 '+height+'px';}
+ area.style.flex='0 0 auto';
+}
 function viewportChanged(reveal=false){requestAnimationFrame(()=>{const v=window.visualViewport,h=v?.height||innerHeight,top=v?.offsetTop||0,editing=document.activeElement?.matches('input,textarea,select');const keyboard=nativeKeyboard||innerHeight-h>100||(editing&&normalWidth===innerWidth&&normalHeight-h>100);
  if(!normalHeight||normalWidth!==innerWidth||(!keyboard&&!editing)){normalHeight=h;normalWidth=innerWidth;}
  document.documentElement.style.setProperty('--viewport',h+'px');document.documentElement.style.setProperty('--rest-height',normalHeight+'px');document.documentElement.style.setProperty('--vtop',top+'px');document.body.classList.toggle('keyboard',!!keyboard);layoutStart();autoNoteHeight();const active=document.activeElement;if(reveal===true&&active?.matches('input,textarea,select'))active.scrollIntoView({block:'nearest',inline:'nearest'});});}
