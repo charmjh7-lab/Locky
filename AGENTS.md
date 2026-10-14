@@ -11,3 +11,8 @@ UI는 주요 행동의 명확성, 시각적 위계, 조작의 접근성, 탐색�
 GitHub Actions 사용량을 확인한다. 별도 요청 없이 APK·릴리스를 만들지 않고 이미 검증된 동일 커밋의 산출물을 우선한다. 실제로 확인하지 않은 테스트 성공·실기기 동작·APK 제공을 주장하지 않는다.
 
 작업 완료 때 변경·실행한 검증·미검증·남은 위험을 구분한다. 중단 작업은 현재 Git 상태와 기존 작업 기록을 확인해 이어서 진행한다. 비밀 값·사용자 데이터를 로그나 커밋에 남기지 않는다.
+
+
+## 인간 중심 UX·UI 규칙(v4)
+
+UI·작업 경로를 수정할 때 `docs/UX_PROJECT_BRIEF.md`의 제품별 UX 목표를 참고하고, `docs/INTERACTION_COMPLETENESS.md`에 따라 실제 필요한 생성·열기·수정·삭제·취소·닫기·돌아가기와 저장 경로가 누락되지 않았는지 확인한다. 길고 스크롤 가능한 콘텐츠·키보드·작은 화면에서도 필수 조작이 보이거나 동등하게 쉽게 접근 가능해야 한다. 클릭에서 데이터 변경, 화면 갱신, 영속 저장·재진입까지 확인하고, `docs/HUMAN_UX_ACCEPTANCE.md`, `docs/UX_PRODUCT_QUALITY.md`, `docs/UI_DESIGN_GUIDE.md`, `docs/REPEATED_FAILURE_PATTERNS.md`, `docs/EXTERNAL_STANDARDS.md`의 관련 내용을 적용한다. 기존 교육·사용시간·보안·데이터 계약을 우선하며 형식적인 UI 개편 및 불필요한 전체 테스트를 피한다.
