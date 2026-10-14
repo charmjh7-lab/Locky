@@ -2,8 +2,23 @@
 
 .checkrow textarea[data-checktext]{height:32px;min-height:32px;resize:none;line-height:1.5;overflow:auto}.full-note .checkrow textarea[data-checktext]{min-height:32px;height:auto;overflow:hidden}.compact-note .checkrow textarea[data-checktext]{width:0}
 
-/* Share spare vertical space above and below the compact start tools. Keep the dismiss control anchored. */
-.start-page:not(.gate-page)>.quick-tools{margin-top:auto}
+/* Keep the utility editors and dictionary at the top. The purpose chooser is a separate decision below. */
+.start-page:not(.gate-page)>.quick-tools{margin-top:0}
+.start-page:not(.gate-page)>.start-purposes{margin-top:auto;padding:14px 12px 12px;background:var(--white);border:1px solid #d2dcd0;border-radius:18px;box-shadow:0 4px 18px rgba(35,55,46,.05)}
+.start-page:not(.gate-page)>.start-purposes .sectionhead{height:auto;min-height:32px;margin:0;gap:7px}
+.start-page:not(.gate-page)>.start-purposes .sectionhead h2{font-size:19px;line-height:1.25;letter-spacing:-.4px;display:flex;align-items:center}
+.start-page:not(.gate-page)>.start-purposes .sectionhead h2:before{content:"";display:inline-block;flex:0 0 4px;height:19px;border-radius:3px;background:var(--green);margin-right:9px}
+.start-page:not(.gate-page)>.start-purposes .purpose-intro{margin-bottom:12px}
+.start-page:not(.gate-page)>.start-purposes .purpose-helper{font-size:13px;line-height:1.45;margin:2px 0 0 13px;color:var(--muted)}
+.start-page:not(.gate-page)>.start-purposes .purpose-item .reason{background:#f5f7f3;border-color:#dce3db}
+.start-page:not(.gate-page)>.start-purposes .reason.direct{background:var(--pale);border-color:#d4dfd1;color:var(--green);font-weight:650}
+.start-page:not(.gate-page)>.start-purposes .reason:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+@media(max-height:640px){
+ .start-page:not(.gate-page)>.start-purposes{padding:9px 10px 10px}
+ .start-page:not(.gate-page)>.start-purposes .purpose-intro{margin-bottom:7px}
+ .start-page:not(.gate-page)>.start-purposes .sectionhead h2{font-size:17px}
+ .start-page:not(.gate-page)>.start-purposes .purpose-helper{font-size:12px}
+}
 .notes-page.overlay-note{height:var(--viewport)}
 
 :root{font-size:16px}h1{font-size:25px}h2{font-size:22px}h3{font-size:18px}.small,.textbtn,label,.info p,.permission p,.notice,.pill{font-size:14px}.top>strong{font-size:18px}.primary,.secondary,.field,.message,.info strong,.setting-link strong,.mini-head button:not(.iconbtn),.dictionary-bar input,.note-content textarea,.quick-chat textarea,.checkrow [data-checktext]{font-size:16px}.nav button{font-size:13px}.start-page .top{height:32px}.quick-tools{min-height:96px;max-height:none}.dictionary-bar{height:46px}.reason,.reason.direct{min-height:44px;height:44px;font-size:16px;padding:7px 10px}.more-reasons{min-height:34px;height:34px;font-size:14px}.reason-grid{gap:6px}.start-purposes{flex:0 0 auto;overflow:visible}.start-purposes .sectionhead{height:34px}.purpose-item .reason{padding-right:32px}.preset-edit{position:absolute;right:0;top:0;height:100%;width:32px;color:var(--muted);display:grid;place-items:center}.preset-edit svg{width:18px;height:18px}.note-actions>span{font-size:12px}.note-actions{min-height:34px}.note-tabs button,.note-actions select,.toggle,.reminder,.permission button{font-size:14px}.dismiss{font-size:20px}.sheet .sectionhead h2{font-size:21px}.link-toggle{display:flex;align-items:center;gap:10px;font-size:16px}.link-toggle input{width:22px;height:22px;accent-color:var(--green)}[hidden]{display:none!important}
