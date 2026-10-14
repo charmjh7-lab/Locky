@@ -10,6 +10,19 @@ import org.json.*;
 import static org.junit.Assert.*;
 @RunWith(AndroidJUnit4.class)
 public class IntegrationTest {
+    @Test public void dailyRawExportIncludesLocalEventAndUsageRowsInTimeOrder() throws Exception {
+        Context c=ApplicationProvider.getApplicationContext();
+        JSONObject raw=Briefing.rawDay(c,0);
+        assertEquals(1,raw.getInt("schemaVersion"));
+        assertEquals(java.time.LocalDate.now().toString(),raw.getString("date"));
+        assertTrue(raw.getLong("periodEnd")>=raw.getLong("periodStart"));
+        JSONArray events=raw.getJSONArray("events"),usage=raw.getJSONArray("usage");
+        long prior=Long.MIN_VALUE;
+        for(int i=0;i<events.length();i++){JSONObject e=events.getJSONObject(i);assertTrue(e.has("purpose"));assertTrue(e.getLong("time")>=prior);prior=e.getLong("time");}
+        prior=Long.MIN_VALUE;
+        for(int i=0;i<usage.length();i++){JSONObject u=usage.getJSONObject(i);assertTrue(u.has("pkg"));assertTrue(u.getLong("start")>=prior);prior=u.getLong("start");}
+        assertFalse(raw.has("access_token"));
+    }
     @Before public void keepOtherAccessibilityServicesEnabled(){Configurator.getInstance().setUiAutomationFlags(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);}
     @Test public void lockyItselfReturnsFromRecentTasksAfterConnectionLink() throws Exception {
         Context c=ApplicationProvider.getApplicationContext();UiDevice d=UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
