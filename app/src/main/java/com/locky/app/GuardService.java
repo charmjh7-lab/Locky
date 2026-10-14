@@ -142,7 +142,7 @@ public final class GuardService extends AccessibilityService {
         if(!overlayVisible&&(now/30000!=lastNotice)){lastNotice=now/30000;Notices.timer(this,rule.optString("label"),dailyRemaining(foreground),sessionRemaining);}
     }
     long lastNotice=-1;
-    void prepareUnlock(){showGate("unlock","");utility="첫 화면";unlockChecks=0;}
+    void prepareUnlock(){boolean reused=overlayVisible&&gate.equals("unlock")&&!interactive;showGate("unlock","");if(reused&&overlay!=null)overlay.evaluate("reshufflePurposesForStart()");utility="첫 화면";unlockChecks=0;}
     void showGate(String type,String pkg){
         if(overlayVisible&&gate.equals(type)&&gatePkg.equals(pkg)){if(overlay!=null&&interactive&&!getSystemService(KeyguardManager.class).isKeyguardLocked())overlay.root.setVisibility(View.VISIBLE);return;}checkpoint();gate=type;gatePkg=pkg;utility=type.equals("unlock")?"첫 화면":"사용 확인";
         if(overlay==null){overlay=new WebHost(this,true);WindowManager.LayoutParams p=new WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,PixelFormat.OPAQUE);p.gravity=Gravity.TOP|Gravity.START;p.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;p.setTitle("Locky");window.addView(overlay.root,p);}

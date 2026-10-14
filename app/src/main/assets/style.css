@@ -33,3 +33,7 @@
 .compact-note .mini-head .iconbtn{width:25px;min-width:25px;height:28px;padding:3px}
 .start-purposes .purpose-edit{font-size:13px;padding:4px 7px}
 @media(max-height:640px){.start-page:not(.gate-page)>.quick-tools{height:clamp(130px,26vh,175px);min-height:105px}}
+
+/* Preset management is available in managed-app gates as well as the unlock screen. */
+.gate-info{position:relative}
+.gate-info .gate-edit{position:absolute;right:0;top:4px;min-width:40px;min-height:40px}
