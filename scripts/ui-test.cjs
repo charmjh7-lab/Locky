@@ -28,6 +28,23 @@ const server=http.createServer((req,res)=>{const name=req.url==='/'?'index.html'
  const fit=async()=>{await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));await page.waitForFunction(()=>Math.abs(parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--viewport'))-innerHeight)<1);const r=await page.evaluate(()=>{const red=document.querySelector('.dismiss').getBoundingClientRect(),p=document.querySelector('.start-purposes'),last=p?.lastElementChild?.getBoundingClientRect(),footer=document.querySelector('.start-footer').getBoundingClientRect();return {scroll:document.documentElement.scrollHeight,width:document.documentElement.scrollWidth,h:innerHeight,w:innerWidth,redBottom:red.bottom,redHeight:red.height,footerTop:footer.top,purposesBottom:last?.bottom};});assert(r.scroll<=r.h+1,JSON.stringify(r));assert(r.width<=r.w,JSON.stringify(r));assert(r.redBottom<=r.h,JSON.stringify(r));assert(r.redHeight>=50);assert(!r.purposesBottom||r.purposesBottom<=r.footerTop+1,JSON.stringify(r));};
  for(const viewport of [{width:360,height:600},{width:390,height:780},{width:700,height:900}]){await page.setViewportSize(viewport);await page.waitForTimeout(70);await fit();}
  await page.setViewportSize({width:390,height:780});await fit();
+ // With only a few purposes, spare height must appear on both sides of the content instead of stretching editors.
+ const balanced=await page.evaluate(async()=>{
+   const previous=state.allPurposes;
+   let phoneCount=0;
+   state.allPurposes=previous.filter(p=>p.scope!=='phone'||++phoneCount<=3);
+   render();await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+   const header=document.querySelector('.start-page .top').getBoundingClientRect();
+   const tools=document.querySelector('.quick-tools').getBoundingClientRect();
+   const purposes=document.querySelector('.start-purposes').getBoundingClientRect();
+   const footer=document.querySelector('.start-footer').getBoundingClientRect();
+   const result={toolHeight:tools.height,topGap:tools.top-header.bottom,bottomGap:footer.top-purposes.bottom};
+   state.allPurposes=previous;render();return result;
+ });
+ assert(balanced.toolHeight<=195,JSON.stringify(balanced));
+ assert(balanced.topGap>18&&balanced.bottomGap>18,JSON.stringify(balanced));
+ assert(Math.abs(balanced.topGap-balanced.bottomGap)<18,JSON.stringify(balanced));
+
  const initial=await page.locator('.quick-tools').boundingBox();await page.locator('#noteBody').fill('길어도 고정 크기\n'.repeat(80));await page.waitForTimeout(450);assert(demo.notes.some(n=>n.body.includes('길어도')));assert.equal(Math.round((await page.locator('.quick-tools').boundingBox()).height),Math.round(initial.height));await fit();
  await page.locator('.note-heading').click();await page.locator('#noteTitle').fill('내 메모');await page.waitForTimeout(400);assert.equal(demo.notes[0].title,'내 메모');
  assert.equal(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight),true);assert(await page.locator('.note-content').evaluate(el=>el.scrollHeight>el.clientHeight));
