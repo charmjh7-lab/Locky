@@ -6,6 +6,8 @@ let seq=0,requests=new Map(),state=null,screen='home',selected='',minutes=5,chat
 let reshufflePurposeOnRender=true,purposePositions=new Map(),previousPurposePositions=new Map();
 let normalHeight=0,normalWidth=0;
 let nativeKeyboard=false,purposeScope='phone',restored=false,briefSeq=0,settingsTimer=null;
+let purposeStarting=false,briefData=null;const briefSort={apps:'desc',events:'desc',timeline:'desc'};
+Object.assign(shapes,{sortDown:'M4 5h12 M4 10h8 M4 15h4 M19 4v16 M15 16l4 4 4-4',sortUp:'M4 5h4 M4 10h8 M4 15h12 M19 20V4 M15 8l4-4 4 4'});
 const gated=['app','renew','blocked'],starts=['home','unlock',...gated];
 function api(action,args={}){return new Promise((resolve,reject)=>{const id=String(++seq),timeout=setTimeout(()=>{requests.delete(id);reject(Error('응답을 기다리는 중이에요. 다시 시도해 주세요.'));},25000);requests.set(id,{resolve,reject,timeout});Native.request(id,action,JSON.stringify(args));});}
 function receive(id,value,error){const r=requests.get(id);if(!r)return;clearTimeout(r.timeout);requests.delete(id);error?r.reject(Error(error)):r.resolve(value);}
@@ -51,7 +53,18 @@ function purposeGrid(isApp,all=false){const ps=visiblePurposes(isApp);
 function currentNote(){if(!state.notes.some(n=>n.id===noteId))noteId=state.notes[0]?.id||'';return state.notes.find(n=>n.id===noteId)||{id:'',title:'메모',body:'',checks:'[]',mode:'text'};}
 function memoHTML(full){let n=currentNote(),checks=[];try{checks=JSON.parse(n.checks||'[]');}catch{}const check=n.mode==='check';return `<div class="note-panel ${full?'full-note':'compact-note'}"><div class="mini-head">${full?`<input class="note-title" id="noteTitle" maxlength="100" value="${esc(n.title)}" aria-label="메모 제목">`:`<button class="note-heading" data-nav="notes">${icon('note')} ${esc(n.title||'메모')}</button>${state.notes.length>1?`<button class="iconbtn" data-note-step="-1" aria-label="이전 메모">${icon('back')}</button><button class="iconbtn" data-note-step="1" aria-label="다음 메모">${icon('arrow')}</button>`:'' }<button class="iconbtn" data-nav="notes" aria-label="메모 크게 보기">${icon('expand')}</button>`}</div>${full?`<div class="note-tabs">${state.notes.map(n=>`<button class="${n.id===noteId?'selected':''}" data-note="${esc(n.id)}">${esc(n.title||'메모')}</button>`).join('')}</div>`:''}<div class="note-content">${check?`<div id="checks">${checks.map((c,i)=>`<div class="checkrow ${c.done?'done':''}"><input type="checkbox" data-check="${i}" ${c.done?'checked':''} aria-label="완료"><textarea data-checktext="${i}" rows="1" aria-label="할 일">${esc(c.text)}</textarea><button data-delcheck="${i}" aria-label="할 일 삭제">${icon('close')}</button></div>`).join('')}</div>`:`<textarea id="noteBody" placeholder="메모를 바로 적으세요" aria-label="메모 내용">${esc(n.body)}</textarea>`}</div><div class="note-actions"><span id="saveState" class="small muted">자동 저장</span>${check?`<button class="iconbtn" data-act="addCheck" aria-label="체크 항목 추가">${icon('plus')}</button>`:''}${full?`<select id="noteMode" aria-label="메모 종류"><option value="text" ${!check?'selected':''}>글 메모</option><option value="check" ${check?'selected':''}>체크 메모</option></select>`:''}<button class="iconbtn" data-act="newNote" aria-label="새 메모">${icon('newnote')}</button>${full&&n.id?`<button class="iconbtn danger" data-act="deleteNote" aria-label="메모 삭제">${icon('trash')}</button>`:''}</div></div>`;}
 function notesPage(){return `<main class="page notes-page ${state.overlay?'overlay-note':''}">${header(true,'메모')}${memoHTML(true)}</main>`;}
-function gate(){let g=state.gate,locked=screen==='blocked',renew=screen==='renew';return `<main class="start-page gate-page overlay-start">${header(false,g.label||'앱 사용')}<div class="gate-info"><h2>${locked?'지금은 쉬어갈 시간이에요':renew?'조금 더 머물고 싶나요?':'무엇을 하러 들어가나요?'}</h2>${!locked&&!renew?`<button class="iconbtn gate-edit" data-act="managePurposes" aria-label="앱 사용 목적 편집" title="목적 편집">${icon('more')}</button>`:''}<span>오늘 남은 <strong id="dailyLeft">${fmt(g.daily)}</strong></span></div>${locked?`<p class="muted">자유 시간이 시작되면 다시 열 수 있어요.<br>${time(state.prefs.start)}–${time(state.prefs.end)} 집중 시간</p>`:`${renew?`<div class="gate-note"><span>처음 정한 목적</span><strong>${esc(g.purpose||'선택한 목적')}</strong></div>`:`<section class="start-purposes">${purposeGrid(true)}</section>`}<section class="duration"><h3>${renew?'더 사용할 시간':'이번에 사용할 시간'} · 분</h3><div class="minutes">${[5,6,7,8,9,10].map(m=>`<button data-min="${m}" class="${minutes===m?'selected':''}">${m}</button>`).join('')}</div></section>`}<footer class="start-footer">${locked?'':`<button id="startApp" class="primary" data-act="${renew?'extend':'grant'}" ${!renew&&!selected?'disabled':''}>${renew?'같은 목적으로 연장':'사용 시작'} ${icon('arrow')}</button>`}${dismissButton()}</footer></main>`;}
+function gate(){
+ const g=state.gate,locked=screen==='blocked',renew=screen==='renew';
+ const duration=`<section class="duration"><h3>${renew?'더 사용할 시간':'이번에 사용할 시간'} · 분</h3><div class="minutes">${[5,6,7,8,9,10].map(m=>`<button data-min="${m}" class="${minutes===m?'selected':''}" aria-pressed="${minutes===m}">${m}</button>`).join('')}</div></section>`;
+ return `<main class="start-page gate-page overlay-start">${header(false,g.label||'앱 사용')}<div class="gate-info"><h2>${locked?'지금은 쉬어갈 시간이에요':renew?'조금 더 머물고 싶나요?':'무엇을 하러 들어가나요?'}</h2>${!locked&&!renew?`<button class="iconbtn gate-edit" data-act="managePurposes" aria-label="앱 사용 목적 편집">${icon('more')}</button>`:''}<span>오늘 남은 <strong id="dailyLeft">${fmt(g.daily)}</strong></span></div>${locked?`<p class="muted">자유 시간이 시작되면 다시 열 수 있어요.<br>${time(state.prefs.start)}–${time(state.prefs.end)} 집중 시간</p>`:renew?`<div class="gate-note"><span>처음 정한 목적</span><strong>${esc(g.purpose||'선택한 목적 없음')}</strong></div>${duration}`:`<div class="app-decision">${duration}<section class="start-purposes"><p class="small muted">목적을 선택하면 바로 시작합니다.</p>${purposeGrid(true)}</section></div>`}<footer class="start-footer">${renew?`<button id="startApp" class="primary" data-act="extend">같은 목적으로 연장 ${icon('arrow')}</button>`:''}${dismissButton()}</footer></main>`;
+}
+async function choosePurpose(id){
+ if(purposeStarting)return;purposeStarting=true;const target=screen,chosenMinutes=minutes;
+ const controls=[...document.querySelectorAll('[data-purpose],[data-min],[data-act=direct]')];controls.forEach(el=>el.disabled=true);
+ try{await flushMemo();await api(target==='app'?'grant':'choose',target==='app'?{id,minutes:chosenMinutes}:{id});closeSheet();}
+ finally{purposeStarting=false;controls.forEach(el=>{if(el.isConnected)el.disabled=false;});}
+}
+
 function timer(){let g=state.gate;return `<main class="page">${header(true,'남은 시간')}<h2>${esc(g.label||'사용 중인 관리 앱 없음')}</h2><div class="timer-ring"><div class="small">오늘 남은 시간</div><div id="dailyLeft" class="bigtime">${fmt(g.daily)}</div><div class="divider"></div><div class="small">이번 사용의 남은 시간</div><h2 id="sessionLeft">${fmt(g.session)}</h2><p class="small muted">이 화면을 보는 동안에는 잠시 멈춰요.</p></div><div class="gate-note"><span>이번 목적</span><strong>${esc(g.purpose||'선택한 목적 없음')}</strong></div><button class="secondary" data-act="exit">사용하던 앱으로 돌아가기</button>${!state.status.notifications?'<div class="notice"><button data-permission="notification">타이머 알림 허용하기</button></div>':''}</main>`;}
 function updateTimers(){if($('#dailyLeft'))$('#dailyLeft').textContent=fmt(state.gate.daily);if($('#sessionLeft'))$('#sessionLeft').textContent=fmt(state.gate.session);}
 function liveTimerSettings(){
@@ -81,10 +94,31 @@ function chats(){return `<main class="page">${header(state.overlay,'ChatGPT')}<s
 function chat(){const c=state.chats.find(c=>c.id===chatId);return `<main class="page chat-page">${header(true,c?.title||'새 대화')}<div id="messages"></div></main><div class="composer"><div class="row"><textarea class="field" id="chatInput" placeholder="메시지 입력" aria-label="메시지" maxlength="20000"></textarea><button data-act="${state.busy?'cancelResponse':'send'}" aria-label="${state.busy?'답변 중지':'전송'}">${icon(state.busy?'close':'send')}</button></div></div>`;}
 function sourceUrl(value){try{const u=new URL(String(value));return u.protocol==='https:'||u.protocol==='http:'?u.href:'';}catch{return '';}}
 
-function chatSourceGroup(refs,id,label){
+function chatSourceGroup(refs,id,label='',extra=''){
  const valid=[...new Map(refs.filter(r=>sourceUrl(r.url)).map(r=>[r.url,r])).values()];
  if(!valid.length)return '';
- return `<span class="chat-source-group"><button type="button" class="chat-source-toggle" data-source-toggle="${esc(id)}" aria-controls="${esc(id)}" aria-expanded="false">${esc(label||'출처')} ${valid.length}</button><span class="chat-source-list" id="${esc(id)}" hidden>${valid.map((r,i)=>`<button class="chat-source-item" type="button" data-url="${esc(r.url)}"><span>${i+1}</span><span>${esc(r.title||new URL(r.url).hostname)}</span></button>`).join('')}</span></span>`;
+ const numbers=valid.map((r,i)=>r.number||i+1),name=label?`${label} ${valid.length}개`:`참고 자료 ${numbers.join(', ')}번 보기`;
+ return `<span class="chat-source-group"><button type="button" class="chat-source-toggle ${label?'':'inline-reference'}" data-source-toggle="${esc(id)}" aria-label="${esc(name)}" aria-controls="${esc(id)}" aria-expanded="false">${icon('link')}<span>${label?`${esc(label)} ${valid.length}`:numbers.join(', ')}</span></button><span class="chat-source-list" id="${esc(id)}" hidden>${valid.map((r,i)=>`<button class="chat-source-item" type="button" data-url="${esc(r.url)}"><span>${r.number||i+1}</span><span>${esc(r.title||new URL(r.url).hostname)}</span></button>`).join('')}${extra}</span></span>`;
+}
+function citationLabel(label,links){
+ const value=String(label).trim().toLowerCase().replace(/^www\./,'');
+ return links.some(ref=>{const host=new URL(ref.url).hostname.toLowerCase().replace(/^www\./,'');return value===host||host.endsWith('.'+value);});
+}
+function citationOnly(text,links){
+ let value=text.trim();if(/^[（(][\s\S]*[)）]$/.test(value))value=value.slice(1,-1).trim();
+ if(/^(?:【[^】]+】|\[\d+\]|cite[\s\S]*|〔[^〕]+〕)$/.test(value))return true;
+ const md=value.match(/^\[([^\]]+)\]\((https?:\/\/[^\s]+)\)$/),auto=value.match(/^<(https?:\/\/[^>]+)>$/);
+ if(md)return links.some(ref=>sourceUrl(md[2])===ref.url);
+ const url=sourceUrl(auto?auto[1]:value);return url?links.some(ref=>ref.url===url):citationLabel(value,links);
+}
+function precedingCitation(prefix,links){
+ // Remove only a citation-only domain/link adjacent to this annotation, never a prose link elsewhere.
+ const match=prefix.match(/(?:[（(]\s*)?(?:\[([^\]\n]+)\]\((https?:\/\/[^\s]+?)\)|(https?:\/\/[^\s()]+)|([a-z0-9.-]+\.[a-z]{2,}))\s*[)）]?\s*$/i);
+ if(!match)return prefix.length;
+ const linked=match[2]||match[3],label=match[1]||match[4];
+ const same=linked&&links.some(ref=>sourceUrl(linked)===ref.url);
+ if(!(same&&(!label||citationLabel(label,links)))&&!(match[4]&&citationLabel(match[4],links)))return prefix.length;
+ return match.index;
 }
 
 function chatInline(text){
@@ -137,41 +171,74 @@ function chatMarkdown(text){
 
 function chatBody(text,rawRefs,id){
  let all=[];try{all=typeof rawRefs==='string'?JSON.parse(rawRefs||'[]'):Array.isArray(rawRefs)?rawRefs:[];}catch{}
+ if(!Array.isArray(all))all=[];
  const refs=all.map(r=>({url:sourceUrl(r?.url),title:String(r?.title||''),start_index:r?.start_index,end_index:r?.end_index})).filter(r=>r.url);
  let body=String(text||''),ending='';
  const heads=[...body.matchAll(/(?:^|\n)\s*(?:#{1,4}\s*)?(?:Sources|References|출처|참고 자료)\s*:?\s*\n/gi)];
- if(heads.length){const h=heads[heads.length-1],trailer=body.slice(h.index+h[0].length);if(/https?:\/\/|\[[^\]]+\]\(/.test(trailer)){body=body.slice(0,h.index).trimEnd();ending=trailer;}}
+ if(heads.length){const h=heads[heads.length-1],trailer=body.slice(h.index+h[0].length);if(/https?:\/\//.test(trailer)){body=body.slice(0,h.index).trimEnd();ending=trailer;}}
+ const unique=new Map();
+ const add=ref=>{const old=unique.get(ref.url);if(old){if(!old.title&&ref.title)old.title=ref.title;return old;}const entry={...ref,number:unique.size+1};unique.set(ref.url,entry);return entry;};
+ refs.forEach(add);
+ // Fold the model's trailing list into the same disclosure, deduplicating metadata citations.
+ const extraLinks=[];
+ let remainder=ending.replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g,(_,title,url)=>{const u=sourceUrl(url);if(u)extraLinks.push({url:u,title});return '';});
+ remainder=remainder.replace(/https?:\/\/[^\s<>()]+/g,url=>{const u=sourceUrl(url.replace(/[.,;]+$/,''));if(u)extraLinks.push({url:u,title:''});return '';});
+ extraLinks.forEach(add);
+ const extra=remainder.replace(/^[\s\d.*+_()\[\]<>:#-]+$/gm,'').trim();
  const cps=Array.from(body),groups=new Map();
  for(const ref of refs){const start=Number(ref.start_index),end=Number(ref.end_index);
   if(!Number.isInteger(start)||!Number.isInteger(end)||start<0||end<=start||end>cps.length)continue;
-  const key=start+':'+end,rows=groups.get(key)||[];if(!rows.some(r=>r.url===ref.url))rows.push(ref);groups.set(key,rows);
+  const key=start+':'+end,rows=groups.get(key)||[];if(!rows.some(r=>r.url===ref.url))rows.push(unique.get(ref.url));groups.set(key,rows);
+ }
+ // Compute edits against the original code points before applying any replacements.
+ // A marker's adjacent domain can itself have an annotation; merge those edits first.
+ const edits=[...groups].map(([key,links])=>{
+  const [from,to]=key.split(':').map(Number),original=cps.slice(from,to).join(''),only=citationOnly(original,links);
+  let start=only?from:to,end=to;
+  const prefix=cps.slice(0,start).join(''),clean=precedingCitation(prefix,links);
+  if(clean<prefix.length)start=Array.from(prefix.slice(0,clean)).length;
+  if(only){const left=cps.slice(0,start).join('').match(/[（(]\s*$/),right=cps.slice(end).join('').match(/^\s*[)）]/);if(left&&right){start-=Array.from(left[0]).length;end+=Array.from(right[0]).length;}}
+  return {start,end,links:[...links],anchor:from};
+ }).sort((a,b)=>a.start-b.start||a.end-b.end);
+ const merged=[];
+ for(const edit of edits){
+  const last=merged.at(-1);
+  if(last&&edit.start<=last.end){last.end=Math.max(last.end,edit.end);last.anchor=Math.min(last.anchor,edit.anchor);for(const ref of edit.links)if(!last.links.some(r=>r.url===ref.url))last.links.push(ref);}
+  else merged.push(edit);
  }
  const widgets=[];
- const spans=[...groups].map(([key,links])=>{const [start,end]=key.split(':').map(Number);return {start,end,links};}).sort((a,b)=>b.start-a.start);
- for(const span of spans){
-  const original=cps.slice(span.start,span.end).join('').trim();
-  const isMarker=/^(?:【[^】]+】|\[\d+\]|cite[\s\S]*|〔[^〕]+〕)$/.test(original);
-  const placeholder='LOCKYCITE'+widgets.length+'BUTTON';
-  widgets.push(chatSourceGroup(span.links,'cite-'+id+'-'+widgets.length,'출처'));
-  cps.splice(isMarker?span.start:span.end,isMarker?span.end-span.start:0,placeholder);
+ for(const edit of merged.reverse()){
+  const placeholder='LOCKYCITE'+widgets.length+'BUTTON';widgets.push(chatSourceGroup(edit.links,'cite-'+id+'-'+edit.anchor));
+  cps.splice(edit.start,edit.end-edit.start,placeholder);
  }
  let html=chatMarkdown(cps.join('')).replace(/LOCKYCITE(\d+)BUTTON/g,(_,n)=>widgets[Number(n)]||'');
- const unique=[...new Map(refs.map(r=>[r.url,r])).values()];
- if(unique.length)html+='<div class="chat-source-footer">'+chatSourceGroup(unique,'cites-'+id,'전체 출처')+'</div>';
- if(ending)html+='<div class="chat-source-footer"><button type="button" class="chat-source-toggle" data-source-toggle="ending-'+esc(id)+'" aria-controls="ending-'+esc(id)+'" aria-expanded="false">답변 끝 출처</button><div class="chat-source-list" id="ending-'+esc(id)+'" hidden>'+chatMarkdown(ending)+'</div></div>';
+ if(unique.size)html+='<div class="chat-source-footer">'+chatSourceGroup([...unique.values()],'cites-'+id,'참고 자료',extra?chatMarkdown(extra):'')+'</div>';
  return html;
 }
+
 async function renderMessages(force){let box=$('#messages');if(!box)return;const id=chatId,messages=await api('messages',{id});if(id!==chatId||screen!=='chat')return;const atBottom=window.innerHeight+window.scrollY>=document.body.scrollHeight-150;
  const html=messages.map((m,i)=>`<div class="message ${esc(m.role)}">${m.role==='assistant'?'<div class="chat-markdown">'+chatBody(m.body||(m.status==='streaming'?'답변을 생각하고 있어요…':''),m.citations,m.id||i)+'</div>':'<div class="chat-plain">'+esc(m.body||'')+'</div>'}${m.status==='interrupted'?'<span class="small danger">완료하지 못한 답변</span>':''}</div>`).join('')||'<p class="empty">무엇이 궁금한가요?</p>';
  if(box.innerHTML!==html){const expanded=new Set([...box.querySelectorAll('[data-source-toggle][aria-expanded="true"]')].map(el=>el.dataset.sourceToggle));box.innerHTML=html;bind(box);for(const sourceId of expanded){const trigger=[...box.querySelectorAll('[data-source-toggle]')].find(el=>el.dataset.sourceToggle===sourceId),panel=document.getElementById(sourceId);if(trigger&&panel){trigger.setAttribute('aria-expanded','true');panel.hidden=false;}}if(atBottom||force)window.scrollTo(0,document.body.scrollHeight);}const button=$('.composer button');if(button){button.dataset.act=state.busy?'cancelResponse':'send';button.innerHTML=icon(state.busy?'close':'send');button.setAttribute('aria-label',state.busy?'답변 중지':'전송');}
  if(state.chatError&&state.chatError!==renderMessages.lastError){renderMessages.lastError=state.chatError;toast(state.chatError);}}
 function brief(){return `<main class="page">${header(state.overlay,'브리핑')}<div class="segmented"><button data-days="1" class="${briefDays===1?'active':''}">하루</button><button data-days="7" class="${briefDays===7?'active':''}">일주일</button></div><div class="row"><button class="iconbtn" data-act="previousBrief" aria-label="이전 날짜">${icon('back')}</button><span id="briefDate" class="small muted"></span><button class="iconbtn" data-act="nextBrief" ${briefOffset===0?'disabled':''} aria-label="다음 날짜">${icon('arrow')}</button></div><div class="brief-export"><div><strong>하루 원본 기록</strong><p class="small muted">선택한 날짜의 사용 구간·목적 기록 JSON</p></div><div class="brief-export-actions"><button class="secondary" data-act="copyDay">복사</button><button class="secondary" data-act="saveDay">파일 저장</button></div></div><div id="briefContent"><p class="empty">기록을 모으는 중</p></div></main>`;}
 function collapsible(rows,renderRow,count=4){return rows.slice(0,count).map(renderRow).join('')+(rows.length>count?`<details class="more-list"><summary>나머지 ${rows.length-count}개 펼치기</summary>${rows.slice(count).map(renderRow).join('')}</details>`:'');}
-async function loadBrief(){const sequence=++briefSeq;await safe(async()=>{const b=await api('brief',{days:briefDays,offset:briefOffset});let area=$('#briefContent');if(!area||sequence!==briefSeq)return;$('#briefDate').textContent=b.days===7?`${new Date(b.start).toLocaleDateString('ko-KR')} – ${b.date}`:b.date;
- const ascendingApps=[...b.apps].sort((a,b)=>a.ms-b.ms||a.label.localeCompare(b.label,'ko'));
-  const ascendingEvents=[...b.events].filter(e=>['unlock','app','utility','extend'].includes(e.kind)).sort((a,b)=>a.time-b.time);
-  const ascendingTimeline=[...b.timeline].sort((a,b)=>a.start-b.start);
-  area.innerHTML=`<div class="leaf"><p>${esc(b.summary)}</p></div><div class="statgrid"><div class="stat"><b>${mins(b.total)}</b><span>사용 · 분</span></div><div class="stat"><b>${b.unlocks}</b><span>시작</span></div><div class="stat"><b>${b.aimless}</b><span>무목적</span></div></div><div class="card"><h3>목적과 실제 사용</h3><p class="small muted">${esc(b.insight)}</p></div>${!b.usageAccess?'<div class="notice">사용 정보 접근을 켜면 중단 구간도 보완해요.</div>':''}${b.recovered?`<p class="small muted">Android 기록으로 ${mins(b.recovered)}분 보완 · 해당 구간은 목적 미확인</p>`:''}<section class="section"><h3>사용한 앱 · 사용시간 적은 순</h3><div class="card">${collapsible(ascendingApps,a=>`<div class="usage-row"><div class="row"><strong>${esc(a.label)}</strong><span>${mins(a.ms)}분</span></div><div class="meter"><span style="width:${b.total?Math.max(1,a.ms/b.total*100):0}%"></span></div></div>` )||'<p class="empty">기록 없음</p>'}</div></section><section class="section"><h3>시작의 이유 · 오래된 기록부터</h3><div class="card">${collapsible(ascendingEvents,e=>`<div class="event-row"><time>${b.days===7?new Date(e.time).toLocaleDateString('ko-KR')+' · ':''}${dateTime(e.time)}</time><div><strong>${esc(e.purpose)}</strong><span>${e.kind==='unlock'?'휴대폰':e.kind==='extend'?'연장':e.kind==='utility'?'도구 사용':esc(state.rules.find(r=>r.pkg===e.pkg)?.label||appsCache?.find(a=>a.pkg===e.pkg)?.label||e.pkg)}</span></div></div>`)||'<p class="empty">기록 없음</p>'}</div></section><details class="card"><summary>앱 사용 시간선 · 오래된 기록부터</summary>${collapsible(ascendingTimeline,t=>`<div class="app-row"><div class="info"><strong>${esc(t.label)}</strong><p>${dateTime(t.start)}–${dateTime(t.end)} · ${esc(t.purpose)}</p>${t.initialPurpose&&t.initialPurpose!==t.purpose?`<p>처음 목적 · ${esc(t.initialPurpose)}</p>`:''}</div><span class="small">${mins(t.end-t.start)}분</span></div>`,10)}</details>`;});}
+async function loadBrief(){const sequence=++briefSeq;await safe(async()=>{const b=await api('brief',{days:briefDays,offset:briefOffset});if(!$('#briefContent')||sequence!==briefSeq)return;briefData=b;$('#briefDate').textContent=b.days===7?`${new Date(b.start).toLocaleDateString('ko-KR')} – ${b.date}`:b.date;renderBrief(b);});}
+function briefSortButton(key){
+ const desc=briefSort[key]==='desc',name=key==='apps'?'사용한 앱':key==='events'?'시작의 이유':'앱 사용 시간선';
+ const order=key==='apps'?(desc?'사용시간 많은 순':'사용시간 적은 순'):(desc?'최근 기록부터':'오래된 기록부터');
+ return `<button type="button" class="iconbtn brief-sort" data-brief-sort="${key}" aria-label="${name}: ${order}, 정렬 전환" title="${order}">${icon(desc?'sortDown':'sortUp')}</button>`;
+}
+function renderBrief(b){
+ const area=$('#briefContent');if(!area)return;
+ const opened=[...area.querySelectorAll('details')].map(d=>d.open),position=window.scrollY;
+ const direction=key=>briefSort[key]==='desc'?-1:1;
+ const apps=[...b.apps].sort((a,b)=>direction('apps')*(a.ms-b.ms)||a.label.localeCompare(b.label,'ko'));
+ const events=[...b.events].filter(e=>['unlock','app','utility','extend'].includes(e.kind)).sort((a,b)=>direction('events')*(a.time-b.time));
+ const timeline=[...b.timeline].sort((a,b)=>direction('timeline')*(a.start-b.start));
+ area.innerHTML=`<div class="leaf"><p>${esc(b.summary)}</p></div><div class="statgrid"><div class="stat"><b>${mins(b.total)}</b><span>사용 · 분</span></div><div class="stat"><b>${b.unlocks}</b><span>시작</span></div><div class="stat"><b>${b.aimless}</b><span>무목적</span></div></div><div class="card"><h3>목적과 실제 사용</h3><p class="small muted">${esc(b.insight)}</p></div>${!b.usageAccess?'<div class="notice">사용 정보 접근을 켜면 중단 구간도 보완해요.</div>':''}${b.recovered?`<p class="small muted">Android 기록으로 ${mins(b.recovered)}분 보완 · 해당 구간은 목적 미확인</p>`:''}<section class="section"><div class="sectionhead"><h3>사용한 앱</h3>${briefSortButton('apps')}</div><div class="card">${collapsible(apps,a=>`<div class="usage-row"><div class="row"><strong>${esc(a.label)}</strong><span>${mins(a.ms)}분</span></div><div class="meter"><span style="width:${b.total?Math.max(1,a.ms/b.total*100):0}%"></span></div></div>`)||'<p class="empty">기록 없음</p>'}</div></section><section class="section"><div class="sectionhead"><h3>시작의 이유</h3>${briefSortButton('events')}</div><div class="card">${collapsible(events,e=>`<div class="event-row"><time>${b.days===7?new Date(e.time).toLocaleDateString('ko-KR')+' · ':''}${dateTime(e.time)}</time><div><strong>${esc(e.purpose)}</strong><span>${e.kind==='unlock'?'휴대폰':e.kind==='extend'?'연장':e.kind==='utility'?'도구 사용':esc(state.rules.find(r=>r.pkg===e.pkg)?.label||appsCache?.find(a=>a.pkg===e.pkg)?.label||e.pkg)}</span></div></div>`)||'<p class="empty">기록 없음</p>'}</div></section><details class="card brief-timeline"><summary><span>앱 사용 시간선</span>${briefSortButton('timeline')}</summary>${collapsible(timeline,t=>`<div class="app-row"><div class="info"><strong>${esc(t.label)}</strong><p>${dateTime(t.start)}–${dateTime(t.end)} · ${esc(t.purpose)}</p>${t.initialPurpose&&t.initialPurpose!==t.purpose?`<p>처음 목적 · ${esc(t.initialPurpose)}</p>`:''}</div><span class="small">${mins(t.end-t.start)}분</span></div>`,10)}</details>`;
+ [...area.querySelectorAll('details')].forEach((d,i)=>d.open=!!opened[i]);bind(area);window.scrollTo(0,position);
+}
+
 function sheet(content){$('#sheet').innerHTML=`<section class="sheet" role="dialog" aria-modal="true">${content}</section>`;$('#sheet').onclick=e=>{if(e.target===$('#sheet'))closeSheet();};bind($('#sheet'));viewportChanged();}
 function sheetHead(title){return `<div class="sectionhead"><h2>${esc(title)}</h2><button class="iconbtn" data-act="closeSheet" aria-label="닫기">${icon('close')}</button></div>`;}
 function closeSheet(){if($('#sheet'))$('#sheet').innerHTML='';}
@@ -202,7 +269,7 @@ function renderPurposeAppResults(){
 }
 function purposeSheet(id=null,direct=false){
  const p=state.allPurposes.find(x=>x.id===id)||{label:'',pkg:'',uri:'',scope:gated.includes(screen)?(state.gate.pkg||'app'):direct?'phone':purposeScope};
- sheet(`${sheetHead(direct?'이번에 할 일':'사용 목적')}<div class="formrow"><label for="purposeLabel">목적</label><input class="field" id="purposeLabel" maxlength="100" value="${esc(p.label)}" placeholder="예: 친구에게 답장"></div><label class="link-toggle"><input id="purposeLink" type="checkbox" ${p.pkg||p.uri?'checked':''}> 목적 선택 시 앱이나 동작 열기</label><div id="purposeConnection" ${p.pkg||p.uri?'':'hidden'}><div class="formrow"><label for="purposeAppSearch">앱 아이콘에서 찾기</label><input class="field" id="purposeAppSearch" type="search" placeholder="앱 이름으로 검색" autocomplete="off"><div id="purposeAppPreview" class="purpose-app-preview"></div><div id="purposeAppResults" class="purpose-app-results"></div><p class="small muted" id="purposeAppCount">앱 목록 준비 중</p><label for="purposeApp" class="small muted">전체 앱 목록에서 선택</label><select class="field" id="purposeApp" disabled><option value="${esc(p.pkg)}">${esc(p.pkg?`기존 연결 · ${p.pkg}`:'목록 준비 중')}</option></select></div><div class="formrow"><label for="purposeUri">앱 동작 주소 · 선택</label><input class="field" id="purposeUri" value="${esc(p.uri)}" placeholder="앱이 지원하는 딥링크"><button class="textbtn" data-act="testPurposeLink">연결 시험 ${icon('arrow')}</button></div></div>${!direct?`<div class="formrow"><label for="purposeScope">표시할 화면</label><select class="field" id="purposeScope"><option value="phone" ${p.scope==='phone'?'selected':''}>휴대폰 시작</option><option value="app" ${p.scope==='app'?'selected':''}>모든 관리 앱</option>${p.scope!=='phone'&&p.scope!=='app'?`<option value="${esc(p.scope)}" selected>선택한 앱</option>`:''}</select></div>`:''}<div class="sheet-actions"><button class="primary" id="savePurpose" data-act="savePurpose" data-id="${esc(id||'')}" data-scope="${esc(p.scope)}" data-direct="${direct}" data-aimless="${p.aimless?1:0}">${direct?(screen==='app'?'목적 선택':'저장하고 시작'):'저장'} ${icon('check')}</button>${id&&!direct?`<button class="iconbtn danger" data-act="deletePurpose" data-id="${esc(id)}" aria-label="목적 삭제">${icon('trash')}</button>`:''}</div>`);
+ sheet(`${sheetHead(direct?'이번에 할 일':'사용 목적')}<div class="formrow"><label for="purposeLabel">목적</label><input class="field" id="purposeLabel" maxlength="100" value="${esc(p.label)}" placeholder="예: 친구에게 답장"></div><label class="link-toggle"><input id="purposeLink" type="checkbox" ${p.pkg||p.uri?'checked':''}> 목적 선택 시 앱이나 동작 열기</label><div id="purposeConnection" ${p.pkg||p.uri?'':'hidden'}><div class="formrow"><label for="purposeAppSearch">앱 아이콘에서 찾기</label><input class="field" id="purposeAppSearch" type="search" placeholder="앱 이름으로 검색" autocomplete="off"><div id="purposeAppPreview" class="purpose-app-preview"></div><div id="purposeAppResults" class="purpose-app-results"></div><p class="small muted" id="purposeAppCount">앱 목록 준비 중</p><label for="purposeApp" class="small muted">전체 앱 목록에서 선택</label><select class="field" id="purposeApp" disabled><option value="${esc(p.pkg)}">${esc(p.pkg?`기존 연결 · ${p.pkg}`:'목록 준비 중')}</option></select></div><div class="formrow"><label for="purposeUri">앱 동작 주소 · 선택</label><input class="field" id="purposeUri" value="${esc(p.uri)}" placeholder="앱이 지원하는 딥링크"><button class="textbtn" data-act="testPurposeLink">연결 시험 ${icon('arrow')}</button></div></div>${!direct?`<div class="formrow"><label for="purposeScope">표시할 화면</label><select class="field" id="purposeScope"><option value="phone" ${p.scope==='phone'?'selected':''}>휴대폰 시작</option><option value="app" ${p.scope==='app'?'selected':''}>모든 관리 앱</option>${p.scope!=='phone'&&p.scope!=='app'?`<option value="${esc(p.scope)}" selected>선택한 앱</option>`:''}</select></div>`:''}<div class="sheet-actions"><button class="primary" id="savePurpose" data-act="savePurpose" data-id="${esc(id||'')}" data-scope="${esc(p.scope)}" data-direct="${direct}" data-aimless="${p.aimless?1:0}">${direct?'저장하고 시작':'저장'} ${icon('check')}</button>${id&&!direct?`<button class="iconbtn danger" data-act="deletePurpose" data-id="${esc(id)}" aria-label="목적 삭제">${icon('trash')}</button>`:''}</div>`);
  const link=$('#purposeLink');link.onchange=()=>{const enabled=link.checked;$('#purposeConnection').hidden=!enabled;if(enabled)safe(()=>populatePurposeApps(p.pkg,p.scope));};
  if(!direct||link.checked)safe(()=>populatePurposeApps(p.pkg,p.scope));
  if($('#purposeAppSearch'))$('#purposeAppSearch').oninput=renderPurposeAppResults;
@@ -239,30 +306,37 @@ function scheduleMemo(){memoPending=captureMemo();if($('#saveState'))$('#saveSta
 async function flushMemo(){clearTimeout(memoTimer);if(memoSaving)await memoSaving;if(!memoPending)return;const note=memoPending;memoPending=null;memoSaving=(async()=>{try{await api('saveNote',note);let n=state?.notes.find(n=>n.id===note.id);let value={...note,checks:JSON.stringify(note.checks),updated:Date.now()};if(n)Object.assign(n,value);else state?.notes.unshift(value);if($('#saveState'))$('#saveState').textContent='자동 저장';}catch(e){if(!memoPending)memoPending=note;throw e;}})();try{await memoSaving;}finally{memoSaving=null;}if(memoPending)await flushMemo();}
 function autoNoteHeight(){const scroller=$('.full-note .note-content');if(!scroller)return;const top=scroller.scrollTop;scroller.querySelectorAll('textarea').forEach(el=>{const key=el.value+'|'+el.clientWidth;if(el._measureKey===key)return;el._measureKey=key;el.style.height='auto';el.style.height=Math.max(el.id==='noteBody'?scroller.clientHeight-8:32,el.scrollHeight)+'px';});scroller.scrollTop=top;}
 function insetsChanged(visible){nativeKeyboard=visible;viewportChanged(visible);}
-function layoutStart(){const page=$('.start-page');if(!page||document.body.classList.contains('keyboard'))return;const area=page.querySelector('.start-purposes'),tools=page.querySelector('.quick-tools');if(!area)return;
- const grid=area.querySelector('.reason-grid');if(!grid)return;const items=[...grid.querySelectorAll('.purpose-item')],more=grid.querySelector('.more-reasons'),css=getComputedStyle(page),gap=parseFloat(css.gap)||0,areaMarginTop=parseFloat(getComputedStyle(area).marginTop)||0;
- // Keep utilities compact above the nearby purpose chooser; spare height stays below it.
+function layoutStart(){
+ const page=$('.start-page');if(!page||document.body.classList.contains('keyboard'))return;
+ const area=page.querySelector('.start-purposes'),tools=page.querySelector('.quick-tools');if(!area)return;
+ const grid=area.querySelector('.reason-grid');if(!grid)return;
+ const footer=page.querySelector('.start-footer');if(footer)footer.style.marginTop='0px';
+ const region=page.querySelector('.app-decision')||area,items=[...grid.querySelectorAll('.purpose-item')],more=grid.querySelector('.more-reasons');
+ region.style.marginTop='';region.style.marginBottom='';area.style.flex='0 0 auto';
  if(tools){tools.style.height='';tools.style.flex='0 0 auto';}
- const preferredTools=tools?tools.getBoundingClientRect().height:0,minimumTools=tools?Math.min(206,Math.max(128,Math.floor(page.clientHeight*.29))):0;
- const children=[...page.children];let available=page.clientHeight-parseFloat(css.paddingTop)-parseFloat(css.paddingBottom)-gap*(children.length-1)-areaMarginTop;
- for(const child of children)if(child!==area&&child!==tools)available-=child.getBoundingClientRect().height;
- const intro=area.querySelector('.purpose-intro');
- if(intro){
-   const frame=getComputedStyle(area),introStyle=getComputedStyle(intro);
-   const size=name=>parseFloat(frame.getPropertyValue(name))||0;
-   available-=size('padding-top')+size('padding-bottom')+size('border-top-width')+size('border-bottom-width')+intro.getBoundingClientRect().height+(parseFloat(introStyle.marginBottom)||0);
- }else{const heading=area.querySelector('.sectionhead');if(heading)available-=heading.getBoundingClientRect().height+5;}
- const row=44,rowGap=6,direct=44;let count=items.length;
- const required=n=>direct+(n?rowGap+Math.ceil(n/2)*row+(Math.ceil(n/2)-1)*rowGap:0);
- while(count>0&&required(count)+(count<items.length?rowGap+34:0)+minimumTools>available)count--;
+ const vertical=el=>{const c=getComputedStyle(el);return (parseFloat(c.marginTop)||0)+(parseFloat(c.marginBottom)||0);};
+ const padding=el=>{const c=getComputedStyle(el);return ['paddingTop','paddingBottom','borderTopWidth','borderBottomWidth'].reduce((n,k)=>n+(parseFloat(c[k])||0),0);};
+ const gap=el=>parseFloat(getComputedStyle(el).rowGap)||0;
+ const fixed=parent=>[...parent.children].filter(el=>el!==region&&el!==area&&el!==tools).reduce((n,el)=>n+el.getBoundingClientRect().height+vertical(el),0)+gap(parent)*(parent.children.length-1);
+ let available=page.clientHeight-padding(page)-fixed(page)-vertical(region);
+ if(region!==area)available-=padding(region)+fixed(region)+vertical(area);
+ const intro=area.querySelector('.purpose-intro'),description=area.querySelector(':scope > p');
+ const heading=intro||description||area.querySelector('.sectionhead');
+ available-=padding(area)+(heading?heading.getBoundingClientRect().height+vertical(heading):0);
+ const preferred=tools?tools.getBoundingClientRect().height:0;
+ const minimum=tools?Math.min(preferred,Math.max(105,Math.min(206,Math.floor(page.clientHeight*.29)))):0;
+ const required=n=>44+(n?6+Math.ceil(n/2)*44+(Math.ceil(n/2)-1)*6:0);
+ let count=items.length;
+ while(count>0&&required(count)+(count<items.length?40:0)+minimum>available)count--;
  if(count<items.length&&count%2===1)count--;
- const chosen=items.findIndex(el=>el.querySelector('.selected'));const shown=new Set(items.slice(0,count));
- if(chosen>=count&&count>0){shown.delete(items[count-1]);shown.add(items[chosen]);}
- items.forEach(el=>el.hidden=!shown.has(el));if(more)more.hidden=count===items.length;
- const content=required(count)+(count<items.length?rowGap+34:0);
- if(tools){const height=Math.max(minimumTools,Math.min(preferredTools,available-content));tools.style.height=height+'px';tools.style.flex='0 0 '+height+'px';}
- area.style.flex='0 0 auto';
+ items.forEach((el,i)=>el.hidden=i>=count);if(more)more.hidden=count===items.length;
+ const content=required(count)+(count<items.length?40:0);
+ const height=tools?Math.max(0,Math.min(preferred,available-content)):0;
+ if(tools){tools.style.height=height+'px';tools.style.flex='0 0 '+height+'px';}
+ const spare=Math.max(0,available-content-height),base=parseFloat(getComputedStyle(region).marginTop)||0;
+ region.style.marginTop=(base+spare/2)+'px';if(footer)footer.style.marginTop='';
 }
+
 function viewportChanged(reveal=false){requestAnimationFrame(()=>{const v=window.visualViewport,h=v?.height||innerHeight,top=v?.offsetTop||0,editing=document.activeElement?.matches('input,textarea,select');const keyboard=nativeKeyboard||innerHeight-h>100||(editing&&normalWidth===innerWidth&&normalHeight-h>100);
  if(!normalHeight||normalWidth!==innerWidth||(!keyboard&&!editing)){normalHeight=h;normalWidth=innerWidth;}
  document.documentElement.style.setProperty('--viewport',h+'px');document.documentElement.style.setProperty('--rest-height',normalHeight+'px');document.documentElement.style.setProperty('--vtop',top+'px');document.body.classList.toggle('keyboard',!!keyboard);layoutStart();autoNoteHeight();const active=document.activeElement;if(reveal===true&&active?.matches('input,textarea,select'))active.scrollIntoView({block:'nearest',inline:'nearest'});});}
@@ -271,7 +345,7 @@ async function lookup(){const word=$('#word')?.value.trim();if(!word)throw Error
 async function action(name,el){switch(name){case 'back':back();break;case 'closeSheet':closeSheet();break;case 'exit':await flushMemo();await api('exit');break;case 'dismiss':await flushMemo();await api('dismiss');break;
  case 'direct':await purposeSheet(null,true);break;case 'addPurpose':await purposeSheet();break;case 'managePurposes':managePurposes(screen==='app'?'app':screen==='home'||screen==='unlock'?'phone':purposeScope);break;
  case 'morePurposes':sheet(`${sheetHead('사용 목적')}${purposeGrid(screen==='app',true)}`);break;
- case 'savePurpose':{if($('#purposeLink').checked&&$('#purposeApp').disabled)throw Error('앱 목록을 불러오는 중입니다.');if($('#purposeLink').checked&&!$('#purposeApp').value&&!$('#purposeUri').value.trim())throw Error('연결할 앱이나 동작 주소를 선택해 주세요.');const p={label:$('#purposeLabel').value,pkg:$('#purposeLink').checked?$('#purposeApp').value:'',uri:$('#purposeLink').checked?$('#purposeUri').value:'',scope:$('#purposeScope')?.value||el.dataset.scope,aimless:el.dataset.aimless==='1'};if(el.dataset.id)p.id=el.dataset.id;const saved=await api('purpose',p);closeSheet();state=await api('state');if(el.dataset.direct==='true'){if(screen==='app'){selected=saved.id;render();}else {await flushMemo();await api('choose',{id:saved.id});render();}}else {render();if(screen==='settings')managePurposes();}break;}
+ case 'savePurpose':{if(el.disabled)return;el.disabled=true;try{if($('#purposeLink').checked&&$('#purposeApp').disabled)throw Error('앱 목록을 불러오는 중입니다.');if($('#purposeLink').checked&&!$('#purposeApp').value&&!$('#purposeUri').value.trim())throw Error('연결할 앱이나 동작 주소를 선택해 주세요.');const p={label:$('#purposeLabel').value,pkg:$('#purposeLink').checked?$('#purposeApp').value:'',uri:$('#purposeLink').checked?$('#purposeUri').value:'',scope:$('#purposeScope')?.value||el.dataset.scope,aimless:el.dataset.aimless==='1'};if(el.dataset.id)p.id=el.dataset.id;const saved=await api('purpose',p);closeSheet();state=await api('state');if(el.dataset.direct==='true'){await choosePurpose(saved.id);render();}else {render();if(screen==='settings')managePurposes();}}finally{if(el.isConnected)el.disabled=false;}break;}
  case 'deletePurpose':await api('removePurpose',{id:el.dataset.id});closeSheet();await refresh(true);break;
  case 'testPurposeLink':await api('linkTest',{pkg:$('#purposeApp').value,uri:$('#purposeUri').value});break;
  case 'grant':await flushMemo();await api('grant',{id:selected,minutes});break;case 'extend':await api('extend',{minutes});break;case 'stop':await api('stop');break;
@@ -294,7 +368,7 @@ async function action(name,el){switch(name){case 'back':back();break;case 'close
 function bind(root=$('#app')){
  root.querySelectorAll('[data-act]').forEach(el=>el.onclick=()=>safe(()=>action(el.dataset.act,el)));
  root.querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>safe(()=>navigate(el.dataset.nav)));
- root.querySelectorAll('[data-purpose]').forEach(el=>el.onclick=()=>safe(async()=>{if(screen==='app'){selected=el.dataset.purpose;closeSheet();render();}else {await flushMemo();await api('choose',{id:el.dataset.purpose});}}));
+ root.querySelectorAll('[data-purpose]').forEach(el=>el.onclick=()=>safe(()=>choosePurpose(el.dataset.purpose)));
  root.querySelectorAll('[data-min]').forEach(el=>el.onclick=()=>{minutes=Number(el.dataset.min);render();});
  root.querySelectorAll('[data-note]').forEach(el=>el.onclick=()=>safe(async()=>{await flushMemo();noteId=el.dataset.note;render();remember();}));
  root.querySelectorAll('[data-note-step]').forEach(el=>el.onclick=()=>safe(async()=>{await flushMemo();const notes=state.notes;if(notes.length<2)return;const index=notes.findIndex(n=>n.id===noteId);noteId=notes[(index+Number(el.dataset.noteStep)+notes.length)%notes.length].id;render();remember();}));
@@ -310,7 +384,8 @@ function bind(root=$('#app')){
  root.querySelectorAll('[data-dictionary]').forEach(el=>el.onclick=()=>safe(async()=>{await api('dictionaryChoice',{id:el.dataset.dictionary});state.dictionary=el.dataset.dictionary;closeSheet();if(el.dataset.word)await api('dictionary',{word:el.dataset.word});}));
  root.querySelectorAll('[data-pickapp]').forEach(el=>el.onclick=()=>{const selected=$('#purposeApp');if(!selected||selected.disabled)return;selected.value=el.dataset.pickapp;renderPurposeAppResults();});
   root.querySelectorAll('[data-url]').forEach(el=>el.onclick=()=>safe(()=>api('linkTest',{uri:el.dataset.url})));
-  root.querySelectorAll('[data-source-toggle]').forEach(el=>el.onclick=()=>{const panel=document.getElementById(el.dataset.sourceToggle);if(panel){panel.hidden=!panel.hidden;el.setAttribute('aria-expanded',String(!panel.hidden));}});
+  root.querySelectorAll('[data-brief-sort]').forEach(el=>el.onclick=e=>{e.preventDefault();e.stopPropagation();const key=el.dataset.briefSort;briefSort[key]=briefSort[key]==='desc'?'asc':'desc';if(briefData){renderBrief(briefData);$(`[data-brief-sort="${key}"]`)?.focus({preventScroll:true});}});
+ root.querySelectorAll('[data-source-toggle]').forEach(el=>el.onclick=()=>{const panel=document.getElementById(el.dataset.sourceToggle);if(panel){panel.hidden=!panel.hidden;el.setAttribute('aria-expanded',String(!panel.hidden));}});
  root.querySelectorAll('[data-permission]').forEach(el=>el.onclick=()=>safe(()=>api('permission',{name:el.dataset.permission})));
  root.querySelectorAll('[data-account]').forEach(el=>el.onclick=()=>safe(async()=>{await api('account',{client:el.dataset.account});await api('models');closeSheet();await refresh(true);}));
  root.querySelectorAll('[data-days]').forEach(el=>el.onclick=()=>{briefDays=Number(el.dataset.days);briefOffset=0;refresh(true);});

@@ -7,7 +7,7 @@ const demo={overlay:false,prefs:{enabled:true,start:540,end:1260,reminders:[30,2
 const calls=[],messages=[],errors=[];
 const apps=Array.from({length:8},(_,i)=>({pkg:i===0?'app.video':'app.'+i,label:i===0?'Video':'App '+i,icon:'data:image/svg+xml;base64,'+Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect width="48" height="48" rx="12" fill="#416a56"/></svg>').toString('base64')}));
 const server=http.createServer((req,res)=>{const name=req.url==='/'?'index.html':req.url.slice(1);if(!['index.html','app.js','style.css'].includes(name)){res.writeHead(404);res.end();return;}res.setHeader('Content-Type',name.endsWith('.js')?'application/javascript':name.endsWith('.css')?'text/css':'text/html');res.end(fs.readFileSync(path.join(root,name)));});
-(async()=>{await new Promise(r=>server.listen(0,'127.0.0.1',r));const browser=await chromium.launch({headless:true});try {
+(async()=>{await new Promise(r=>server.listen(0,'127.0.0.1',r));const browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,args:['--no-sandbox','--no-zygote','--single-process']}:{})});try {
  const page=await browser.newPage({viewport:{width:390,height:780}});page.on('pageerror',e=>errors.push(e.message));
  await page.exposeFunction('nativeRequest',async(id,action,raw)=>{const a=JSON.parse(raw);calls.push({action,a});let out={};switch(action){
  case 'state':out=demo;break;case 'tick':out={gate:demo.gate,free:demo.free,busy:false,connection:{}};break;case 'apps':out=apps;break;case 'usageApps':out=apps.map((a,i)=>({...a,excluded:i===0,system:i===0}));break;
@@ -78,8 +78,8 @@ const server=http.createServer((req,res)=>{const name=req.url==='/'?'index.html'
  assert(balanced.toolHeight<=254,JSON.stringify(balanced));
  assert(balanced.topGap>=0&&balanced.topGap<=16,JSON.stringify(balanced)); // Utilities stay directly below the header.
  assert(balanced.toolsToDictionary>=0&&balanced.toolsToDictionary<=16,JSON.stringify(balanced));
- assert(balanced.dictionaryToPurposes>=8&&balanced.dictionaryToPurposes<=28,JSON.stringify(balanced)); // Nearby, but distinct.
- assert(balanced.bottomGap>balanced.dictionaryToPurposes,JSON.stringify(balanced));
+ assert(balanced.dictionaryToPurposes>=8,JSON.stringify(balanced));
+ assert(Math.abs(balanced.bottomGap-balanced.dictionaryToPurposes)<=10,JSON.stringify(balanced)); // Center the decision independently of the utility anchors.
  assert.equal(balanced.heading,'무엇을 하려고 열었나요?');
  assert.equal(balanced.helper,'목적을 선택하면 휴대폰 사용을 시작합니다.');
  assert.equal(balanced.panelBorder,'0px');
@@ -120,12 +120,12 @@ const server=http.createServer((req,res)=>{const name=req.url==='/'?'index.html'
  await page.locator('#quickQuestion').fill('오늘 날씨는?');await page.locator('[data-act=quickSend]').click();
  await page.locator('.message.assistant .chat-markdown strong').waitFor();assert.equal(await page.locator('.message.assistant .chat-markdown strong').innerText(),'웹 검색 테스트 답변');
  assert.equal(await page.locator('.message.assistant').innerText().then(s=>s.includes('**웹')),false);
- assert((await page.locator('.chat-source-toggle').count())>=3);
+ assert.equal(await page.locator('.chat-source-toggle').count(),2);
  assert.equal(await page.locator('.chat-source-list[hidden]').count(),await page.locator('.chat-source-list').count());
  await page.locator('.chat-source-toggle').first().click();assert.equal(await page.locator('.chat-source-list:not([hidden])').count(),1);
  await page.locator('.chat-source-item:visible').first().click();assert(calls.some(c=>c.action==='linkTest'&&c.a.uri==='https://example.com/source'));
  await page.locator('.chat-source-toggle').first().click();assert.equal(await page.locator('.chat-source-list:not([hidden])').count(),0);
- await page.locator('.chat-source-toggle').last().click();assert((await page.locator('.chat-md-link:visible').count())>0);
+ await page.locator('.chat-source-toggle').last().click();assert.equal(await page.locator('.chat-source-item:visible').count(),1);
  await page.evaluate(()=>navigate('home'));await page.evaluate(()=>{state.overlay=true;render();});
  await page.locator('#quickQuestion').fill('오버레이에서 보낸 질문');await page.locator('[data-act=quickSend]').click();
  await page.waitForTimeout(300);
@@ -135,17 +135,18 @@ const server=http.createServer((req,res)=>{const name=req.url==='/'?'index.html'
  await page.evaluate(id=>{state.overlay=false;return openChatById(id);},recentOpen.a.chat);
  await page.locator('.message.assistant .chat-markdown strong').waitFor();
  assert.equal(await page.locator('.chat-plain').last().innerText(),'오버레이에서 보낸 질문');
- await page.evaluate(()=>navigate('app'));assert.equal(await page.locator('[data-purpose=phone1]').count(),0);await page.locator('[data-min="10"]').click();await page.locator('[data-purpose=app-rest]').click();await page.locator('#startApp').click();assert(calls.some(c=>c.action==='grant'&&c.a.minutes===10));
+ await page.evaluate(()=>navigate('app'));assert.equal(await page.locator('[data-purpose=phone1]').count(),0);await page.locator('[data-min="10"]').click();await page.locator('[data-purpose=app-rest]').click();assert.equal(await page.locator('#startApp').count(),0);assert(calls.some(c=>c.action==='grant'&&c.a.minutes===10));
  for(const name of ['app','renew','blocked']){await page.evaluate(n=>navigate(n),name);await page.setViewportSize({width:360,height:600});await fit();}await page.locator('[data-act=dismiss]').click();assert(calls.some(c=>c.action==='dismiss'));
  await page.setViewportSize({width:390,height:780});await page.evaluate(()=>navigate('settings'));assert.equal(await page.locator('#appList').count(),0);await page.locator('#startTime').fill('22:00');await page.locator('#endTime').fill('07:00');await page.locator('#endTime').blur();await page.waitForTimeout(100);assert.equal(demo.prefs.start,1320);assert.equal(demo.prefs.end,420);
  await page.locator('[data-reminder="30"]').click();assert(!demo.prefs.reminders.includes(30));await page.locator('[data-nav=apps]').click();await page.locator('[data-manage="app.video"]').check();await page.waitForTimeout(100);assert.equal(await page.locator('[data-manage]').first().getAttribute('data-manage'),'app.video');await page.locator('[data-rule="app.video"]').click();await page.locator('#ruleMode').selectOption('locked');await page.waitForTimeout(100);assert.equal(demo.rules[0].mode,'locked');await page.locator('[data-act=closeSheet]').click();await page.locator('[data-manage="app.video"]').uncheck();await page.waitForTimeout(100);assert.equal(await page.locator('[data-manage]').first().getAttribute('data-manage'),'app.video');
  await page.evaluate(()=>navigate('brief'));await page.locator('#briefContent .stat').first().waitFor();assert.equal(await page.locator('.more-list').count(),2);await page.locator('[data-days="7"]').click();await page.waitForTimeout(100);assert(calls.some(c=>c.action==='brief'&&c.a.days===7));
- assert((await page.locator('.usage-row').first().innerText()).includes('App 7'));
- assert((await page.locator('.event-row').first().innerText()).includes('그냥 열었어요'));
+ assert((await page.locator('.usage-row').first().innerText()).includes('Video'));
+ assert((await page.locator('.event-row').first().innerText()).includes('휴대폰 목적 0'));
  await page.locator('[data-act=copyDay]').click();await page.locator('[data-act=saveDay]').click();
  assert(calls.some(c=>c.action==='copyDay'&&c.a.offset===0)&&calls.some(c=>c.action==='saveDay'&&c.a.offset===0));
  await page.evaluate(()=>navigate('home'));await fit();const beforeKeyboard=await page.locator('.quick-tools').boundingBox();await page.locator('#word').focus();await page.evaluate(()=>insetsChanged(true));await page.waitForFunction(()=>document.body.classList.contains('keyboard'));assert.equal(await page.locator('.start-footer').isVisible(),false);assert.equal(Math.round((await page.locator('.quick-tools').boundingBox()).height),Math.round(beforeKeyboard.height));assert.equal(await page.locator('.start-purposes').isVisible(),true);await page.evaluate(()=>insetsChanged(false));await page.waitForFunction(()=>!document.body.classList.contains('keyboard'));await page.locator('#word').blur();await fit();
  assert.equal(await page.locator('#noteBody,[data-checktext]').first().evaluate(el=>parseFloat(getComputedStyle(el).fontSize)),14);assert((await page.locator('[data-purpose]:visible').count())>=3);await page.locator('[data-act=managePurposes]').click();await page.locator('#sheet [data-act=closeSheet]').click();assert.equal(await page.locator('#sheet .sheet').count(),0);await page.evaluate(()=>navigate('usageApps'));await page.locator('[data-exclude]').first().waitFor();assert.equal(await page.locator('[data-exclude="app.video"]').isDisabled(),true);await page.locator('[data-exclude="app.1"]').check();assert(calls.some(c=>c.action==='excludeUsage'&&c.a.pkg==='app.1'&&c.a.excluded));await page.evaluate(()=>navigate('home'));await page.screenshot({path:'home.png'});await page.evaluate(()=>navigate('apps'));await page.locator('[data-manage]').first().waitFor();await page.screenshot({path:'settings.png'});
- for(const name of ['home','settings']){const data=fs.readFileSync(name+'.png').toString('base64');console.log('LOCKY_IMAGE_BEGIN '+name);for(let i=0;i<data.length;i+=6000)console.log('LOCKY_IMAGE_DATA '+data.slice(i,i+6000));console.log('LOCKY_IMAGE_END '+name);}
+ for(const name of (process.env.LOCKY_PRINT_SCREENSHOTS==='1'?['home','settings']:[])){const data=fs.readFileSync(name+'.png').toString('base64');console.log('LOCKY_IMAGE_BEGIN '+name);for(let i=0;i<data.length;i+=6000)console.log('LOCKY_IMAGE_DATA '+data.slice(i,i+6000));console.log('LOCKY_IMAGE_END '+name);}
  assert.deepEqual(errors,[]);console.log('UI checks passed: no-scroll starts, fixed dismissal, independent presets/deletion, bounded memo, single editor scrolling, quick questions/citations, remembered dictionary, immediate settings and stable checked-app ordering.');
  }finally{await browser.close();server.close();}})().catch(e=>{console.error(e);process.exit(1);});
+

@@ -78,3 +78,15 @@
 .brief-export{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:13px 14px;margin:8px 0;background:var(--white);border:1px solid var(--line);border-radius:12px}
 .brief-export strong{font-size:15px}.brief-export p{margin-top:3px;font-size:12px}
 .brief-export-actions{display:flex;gap:7px}.brief-export-actions button{font-size:13px;padding:8px 12px}
+
+
+/* Center only the decision region; the utility editors and bottom exit retain their anchors. */
+.app-decision{display:flex;flex-direction:column;gap:12px;flex:0 0 auto;min-height:0}
+.app-decision .duration{margin:0}.app-decision .start-purposes{flex:0 0 auto}
+.app-decision .start-purposes>p{margin:0 0 9px}
+.chat-source-toggle{gap:4px;min-height:30px;min-width:32px}.chat-source-toggle svg{width:13px;height:13px}
+.chat-source-toggle.inline-reference{padding:1px 5px;font-size:11px;vertical-align:baseline;border-radius:6px}
+.brief-sort{width:44px;height:44px;color:var(--green)}
+.brief-timeline>summary{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.brief-timeline>summary>span:before{content:'›';display:inline-block;margin-right:8px}
+.brief-timeline[open]>summary>span:before{transform:rotate(90deg)}

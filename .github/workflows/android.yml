@@ -25,6 +25,7 @@ jobs:
           npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright
           npx playwright install --with-deps chromium
           node scripts/ui-test.cjs
+          node scripts/ui-revisions-test.cjs
   preflight:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
