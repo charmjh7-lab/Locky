@@ -118,10 +118,10 @@ final class WebHost {
                 JSONArray seen=new JSONArray(store.settings.getString("rule-seen","[]"));boolean found=false;for(int j=0;j<seen.length();j++)if(seen.getString(j).equals(pkg))found=true;if(!found){seen.put(pkg);store.settings.edit().putString("rule-seen",seen.toString()).apply();}if(g!=null)g.policyChanged();break;
             case "brief":out=Briefing.build(context,a.optInt("days",1)==7?7:1,Math.max(0,Math.min(179,a.optLong("offset",0))));break;
             case "copyDay":{
-                String raw=Briefing.rawDay(context,Math.max(0,Math.min(179,a.optInt("offset",0)))).toString(2);
+                String exportText=Briefing.rawDay(context,Math.max(0,Math.min(179,a.optInt("offset",0)))).toString(2);
                 main.post(()->{try{
                     android.content.ClipboardManager clipboard=context.getSystemService(android.content.ClipboardManager.class);
-                    clipboard.setPrimaryClip(ClipData.newPlainText("Locky 하루 기록",raw));
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Locky 하루 기록",exportText));
                     answer(id,new JSONObject().put("ok",true),null);
                 }catch(Exception e){answer(id,null,ChatGPT.safeError(e));}});
                 return;
