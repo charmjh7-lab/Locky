@@ -31,6 +31,12 @@ final class Links {
         JSONArray choices=dictionaries(c);String id=choice;
         if(choice.startsWith("launch:")){String pkg=choice.substring(7);id="";for(int j=0;j<choices.length();j++){String candidate=choices.getJSONObject(j).getString("id");if(!candidate.startsWith("web:")&&ComponentName.unflattenFromString(choices.getJSONObject(j).getString("component")).getPackageName().equals(pkg)){id=candidate;break;}}}
         if(!id.startsWith("process:")&&!id.startsWith("search:")&&!id.startsWith("web:"))id="process:"+id;
+        // Daum's miniature dictionary is registered as PROCESS_TEXT.
+        // Prefer it over an older selection pointing at the full dictionary.
+        ComponentName requested=ComponentName.unflattenFromString(id.substring(id.indexOf(':')+1));
+        if(requested!=null&&"net.daum.android.dictionary".equals(requested.getPackageName()))
+            for(int j=0;j<choices.length();j++){String candidate=choices.getJSONObject(j).getString("id");
+                if(candidate.startsWith("process:")&&candidate.contains("net.daum.android.dictionary")){id=candidate;break;}}
         boolean valid=false;for(int j=0;j<choices.length();j++)if(choices.getJSONObject(j).getString("id").equals(id))valid=true;
         if(!valid)return null;
         Intent i=id.startsWith("process:")?process(word):id.startsWith("search:")?search(word):web(word);
@@ -45,10 +51,18 @@ final class Links {
         Intent chooser=Intent.createChooser(primary,"기본 사전 선택 · 다음부터 바로 검색",picked.getIntentSender());if(!types.isEmpty())chooser.putExtra(Intent.EXTRA_ALTERNATE_INTENTS,types.toArray(new Intent[0]));
         c.startActivity(chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     }
+    static int dictionaryFlags(Intent i) {
+        int flags=Intent.FLAG_ACTIVITY_NEW_TASK;
+        if(Intent.ACTION_PROCESS_TEXT.equals(i.getAction())) {
+            // Isolate Daum's small popup instead of reactivating its existing home task.
+            if(i.getComponent()!=null&&"net.daum.android.dictionary".equals(i.getComponent().getPackageName()))
+                flags|=Intent.FLAG_ACTIVITY_MULTIPLE_TASK|Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS;
+        }else if(!Intent.ACTION_VIEW.equals(i.getAction()))flags|=Intent.FLAG_ACTIVITY_CLEAR_TOP;
+        return flags;
+    }
     static void dictionary(Context c,String word) throws Exception {
         String choice=Store.get(c).settings.getString("dictionary","");Intent i=choice.isEmpty()?null:dictionaryIntent(c,choice,word);
         if(i==null){Store.get(c).settings.edit().remove("dictionary").apply();dictionaryPicker(c,word);return;}
-        int flags=Intent.FLAG_ACTIVITY_NEW_TASK;if(!Intent.ACTION_VIEW.equals(i.getAction()))flags|=Intent.FLAG_ACTIVITY_CLEAR_TOP;
-        c.startActivity(i.addFlags(flags));
+        c.startActivity(i.addFlags(dictionaryFlags(i)));
     }
 }
