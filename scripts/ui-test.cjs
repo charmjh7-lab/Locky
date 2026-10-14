@@ -46,7 +46,7 @@ const server=http.createServer((req,res)=>{const name=req.url==='/'?'index.html'
  }
  await page.setViewportSize({width:390,height:780});await fit();
 
- // With only a few purposes, spare height must appear on both sides of the content instead of stretching editors.
+ // With only a few purposes, keep the chooser near the tools without stretching editors.
  const balanced=await page.evaluate(async()=>{
    const previous=state.allPurposes;
    let phoneCount=0;
@@ -64,11 +64,11 @@ const server=http.createServer((req,res)=>{const name=req.url==='/'?'index.html'
  assert(balanced.toolHeight<=195,JSON.stringify(balanced));
  assert(balanced.topGap>=0&&balanced.topGap<=16,JSON.stringify(balanced)); // Utilities stay directly below the header.
  assert(balanced.toolsToDictionary>=0&&balanced.toolsToDictionary<=16,JSON.stringify(balanced));
- assert(balanced.dictionaryToPurposes>24&&balanced.bottomGap>24,JSON.stringify(balanced)); // The chooser floats independently below the tools.
- assert(Math.abs(balanced.dictionaryToPurposes-balanced.bottomGap)<22,JSON.stringify(balanced));
+ assert(balanced.dictionaryToPurposes>=8&&balanced.dictionaryToPurposes<=28,JSON.stringify(balanced)); // Nearby, but distinct.
+ assert(balanced.bottomGap>balanced.dictionaryToPurposes,JSON.stringify(balanced));
  assert.equal(balanced.heading,'무엇을 하려고 열었나요?');
  assert.equal(balanced.helper,'목적을 선택하면 휴대폰 사용을 시작합니다.');
- assert.equal(balanced.panelBorder,'1px');
+ assert.equal(balanced.panelBorder,'0px');
  assert.notEqual(balanced.panelBackground,'rgba(0, 0, 0, 0)');
 
  const initial=await page.locator('.quick-tools').boundingBox();await page.locator('#noteBody').fill('길어도 고정 크기\n'.repeat(80));await page.waitForTimeout(450);assert(demo.notes.some(n=>n.body.includes('길어도')));assert.equal(Math.round((await page.locator('.quick-tools').boundingBox()).height),Math.round(initial.height));await fit();

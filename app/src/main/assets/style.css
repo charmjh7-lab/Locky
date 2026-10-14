@@ -2,16 +2,17 @@
 
 .checkrow textarea[data-checktext]{height:32px;min-height:32px;resize:none;line-height:1.5;overflow:auto}.full-note .checkrow textarea[data-checktext]{min-height:32px;height:auto;overflow:hidden}.compact-note .checkrow textarea[data-checktext]{width:0}
 
-/* Keep the utility editors and dictionary at the top. The purpose chooser is a separate decision below. */
+/* Keep utilities at the top; a nearby, softly distinguished chooser is the main decision. */
 .start-page:not(.gate-page)>.quick-tools{margin-top:0}
-.start-page:not(.gate-page)>.start-purposes{margin-top:auto;padding:14px 12px 12px;background:var(--white);border:1px solid #d2dcd0;border-radius:18px;box-shadow:0 4px 18px rgba(35,55,46,.05)}
+.start-page:not(.gate-page)>.start-purposes{margin-top:7px;padding:12px 11px 11px;background:#ecf2e9;border:0;border-radius:14px;box-shadow:none}
 .start-page:not(.gate-page)>.start-purposes .sectionhead{height:auto;min-height:32px;margin:0;gap:7px}
 .start-page:not(.gate-page)>.start-purposes .sectionhead h2{font-size:19px;line-height:1.25;letter-spacing:-.4px;display:flex;align-items:center}
 .start-page:not(.gate-page)>.start-purposes .sectionhead h2:before{content:"";display:inline-block;flex:0 0 4px;height:19px;border-radius:3px;background:var(--green);margin-right:9px}
-.start-page:not(.gate-page)>.start-purposes .purpose-intro{margin-bottom:12px}
+.start-page:not(.gate-page)>.start-purposes .purpose-intro{margin-bottom:9px}
 .start-page:not(.gate-page)>.start-purposes .purpose-helper{font-size:13px;line-height:1.45;margin:2px 0 0 13px;color:var(--muted)}
-.start-page:not(.gate-page)>.start-purposes .purpose-item .reason{background:#f5f7f3;border-color:#dce3db}
-.start-page:not(.gate-page)>.start-purposes .reason.direct{background:var(--pale);border-color:#d4dfd1;color:var(--green);font-weight:650}
+.start-page:not(.gate-page)>.start-purposes .purpose-item .reason{background:var(--white);border-color:#dce3db}
+.start-page:not(.gate-page)>.start-purposes .reason.direct{background:#dce9d8;border-color:#d4dfd1;color:var(--green);font-weight:650}
+.start-page:not(.gate-page)>.start-purposes .reason.selected{background:var(--green);border-color:var(--green);color:white}
 .start-page:not(.gate-page)>.start-purposes .reason:focus-visible{outline:2px solid var(--green);outline-offset:2px}
 @media(max-height:640px){
  .start-page:not(.gate-page)>.start-purposes{padding:9px 10px 10px}

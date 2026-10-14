@@ -85,11 +85,11 @@ async function flushMemo(){clearTimeout(memoTimer);if(memoSaving)await memoSavin
 function autoNoteHeight(){const scroller=$('.full-note .note-content');if(!scroller)return;const top=scroller.scrollTop;scroller.querySelectorAll('textarea').forEach(el=>{const key=el.value+'|'+el.clientWidth;if(el._measureKey===key)return;el._measureKey=key;el.style.height='auto';el.style.height=Math.max(el.id==='noteBody'?scroller.clientHeight-8:32,el.scrollHeight)+'px';});scroller.scrollTop=top;}
 function insetsChanged(visible){nativeKeyboard=visible;viewportChanged(visible);}
 function layoutStart(){const page=$('.start-page');if(!page||document.body.classList.contains('keyboard'))return;const area=page.querySelector('.start-purposes'),tools=page.querySelector('.quick-tools');if(!area)return;
- const grid=area.querySelector('.reason-grid');if(!grid)return;const items=[...grid.querySelectorAll('.purpose-item')],more=grid.querySelector('.more-reasons'),css=getComputedStyle(page),gap=parseFloat(css.gap)||0;
- // Utilities stay at the top at their compact size; only the purpose section uses flexible whitespace.
+ const grid=area.querySelector('.reason-grid');if(!grid)return;const items=[...grid.querySelectorAll('.purpose-item')],more=grid.querySelector('.more-reasons'),css=getComputedStyle(page),gap=parseFloat(css.gap)||0,areaMarginTop=parseFloat(getComputedStyle(area).marginTop)||0;
+ // Keep utilities compact above the nearby purpose chooser; spare height stays below it.
  if(tools){tools.style.height='';tools.style.flex='';}
  const preferredTools=tools?tools.getBoundingClientRect().height:0,minimumTools=tools?96:0;
- const children=[...page.children];let available=page.clientHeight-parseFloat(css.paddingTop)-parseFloat(css.paddingBottom)-gap*(children.length-1);
+ const children=[...page.children];let available=page.clientHeight-parseFloat(css.paddingTop)-parseFloat(css.paddingBottom)-gap*(children.length-1)-areaMarginTop;
  for(const child of children)if(child!==area&&child!==tools)available-=child.getBoundingClientRect().height;
  const intro=area.querySelector('.purpose-intro');
  if(intro){
