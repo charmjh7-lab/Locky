@@ -36,6 +36,21 @@ final class WebHost {
         view.addJavascriptInterface(new Bridge(),"Native");view.setOnKeyListener((v,key,e)->{if(key==KeyEvent.KEYCODE_BACK&&e.getAction()==KeyEvent.ACTION_UP){evaluate("back()");return true;}return false;});
         view.loadUrl("https://appassets.androidplatform.net/assets/index.html");
     }
+    void pause(){++foregroundProbe;}
+    int foregroundProbe;long lastForegroundRecovery;
+    void resume(){
+        if(closed||isOverlay||view==null)return;
+        view.onResume();view.resumeTimers();
+        if(!ready)return;
+        final WebView candidate=view;final int probe=++foregroundProbe;final boolean[] answered={false};
+        candidate.evaluateJavascript("typeof window.refresh==='function' && document.getElementById('app')?.childElementCount>0",result->{if("true".equals(result))answered[0]=true;});
+        candidate.postDelayed(()->{
+            if(closed||probe!=foregroundProbe||candidate!=view||!ready||answered[0]||SystemClock.uptimeMillis()-lastForegroundRecovery<5000)return;
+            lastForegroundRecovery=SystemClock.uptimeMillis();
+            android.util.Log.w("LockyLifecycle","unresponsive-WebView-recovery");
+            ready=false;root.removeView(candidate);candidate.removeJavascriptInterface("Native");candidate.destroy();createView();
+        },2200);
+    }
     void screen(String name){pendingScreen=name;if(ready)evaluate("navigate("+JSONObject.quote(name)+")");}
     void evaluate(String js){main.post(()->{if(!closed&&ready&&(view.getParent()!=null||!isOverlay))view.evaluateJavascript(js,null);});}
     void close(){closed=true;ready=false;main.removeCallbacksAndMessages(null);root.removeView(view);view.removeJavascriptInterface("Native");view.destroy();hosts.removeIf(r->r.get()==null||r.get()==this);}
