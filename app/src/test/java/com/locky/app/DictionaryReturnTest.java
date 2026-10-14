@@ -42,9 +42,21 @@ public class DictionaryReturnTest {
         Shadows.shadowOf(g.getPackageManager()).addResolveInfoForIntent(Links.process(""),info);
         g.store.settings.edit().putString("dictionary","process:"+target.flattenToString()).commit();
         g.gateLayout();
+        g.overlay.root.layout(0,0,480,840);
+        android.view.View original=g.overlay.root;
         g.openDictionary("다음 검색어",false);
         assertTrue(g.daumPopupActive);assertNull(g.dictionaryHost);
-        assertEquals(0,detached);assertEquals(0f,g.overlayLayout.alpha,0.001f);
+        assertEquals(0,detached);assertEquals(1f,g.overlayLayout.alpha,0.001f);
+        Intent host=Shadows.shadowOf((Application)g.getApplicationContext()).getNextStartedActivity();
+        assertNotNull(host);assertEquals(new ComponentName(g,DaumBackdropActivity.class),host.getComponent());
+        assertNotNull(g.daumBackdrop);assertSame(original,g.overlay.root);
+        ActivityController<DaumBackdropActivity> controller=Robolectric.buildActivity(DaumBackdropActivity.class,host).create();
+        DaumBackdropActivity activity=controller.get();
+        assertSame(activity,g.daumBackdropHost);
+        // The overlay only becomes transparent after the backdrop is drawn.
+        assertEquals(1f,g.overlayLayout.alpha,0.001f);
+        g.showDaumPopup(activity);
+        assertEquals(0f,g.overlayLayout.alpha,0.001f);
         Intent launched=Shadows.shadowOf((Application)g.getApplicationContext()).getNextStartedActivity();
         assertNotNull(launched);assertEquals(target,launched.getComponent());
         assertEquals("다음 검색어",launched.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT));
@@ -53,8 +65,9 @@ public class DictionaryReturnTest {
         g.popupForeground(g.DAUM_DICTIONARY);assertTrue(g.daumPopupSeen);
         g.foreground=g.getPackageName();g.popupForeground(g.foreground);
         Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(850));
-        assertFalse(g.daumPopupActive);assertTrue(g.overlayVisible);
+        assertFalse(g.daumPopupActive);assertTrue(g.overlayVisible);assertSame(original,g.overlay.root);
         assertEquals(1f,g.overlayLayout.alpha,0.001f);
+        controller.destroy();
     }
     @Test public void miniDictionaryRetainsIsolatedPopupTaskFlags() throws Exception {
         ComponentName target=new ComponentName("net.daum.android.dictionary","net.daum.android.dictionary.MiniPopup");

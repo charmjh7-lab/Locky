@@ -30,7 +30,10 @@ public final class GuardService extends AccessibilityService {
     DictionaryActivity dictionaryHost;boolean dictionaryOpening;
     // The Daum PROCESS_TEXT popup needs the original service-to-popup launch path.
     static final String DAUM_DICTIONARY="net.daum.android.dictionary";
-    boolean daumPopupActive,daumPopupSeen;
+    boolean daumPopupActive,daumPopupSeen,daumPopupLaunched;
+    android.graphics.Bitmap daumBackdrop;
+    DaumBackdropActivity daumBackdropHost;
+    Intent pendingDaumPopup;
     final Runnable missingDaumPopup=()->{if(daumPopupActive&&!daumPopupSeen)finishDaumPopup();};
     final Runnable returnedFromDaumPopup=()->{
         if(daumPopupActive&&daumPopupSeen&&!DAUM_DICTIONARY.equals(foreground))finishDaumPopup();
@@ -46,19 +49,43 @@ public final class GuardService extends AccessibilityService {
     }
     void finishDaumPopup(){
         if(!daumPopupActive)return;
-        daumPopupActive=false;daumPopupSeen=false;
+        daumPopupActive=false;daumPopupSeen=false;daumPopupLaunched=false;
         main.removeCallbacks(missingDaumPopup);main.removeCallbacks(returnedFromDaumPopup);
+        DaumBackdropActivity activity=daumBackdropHost;
+        daumBackdropHost=null;pendingDaumPopup=null;daumBackdrop=null;
         utility="첫 화면";revealOverlay();
+        if(activity!=null&&!activity.isFinishing())activity.finish();
     }
     void launchDaumPopup(Intent intent){
-        daumPopupActive=true;daumPopupSeen=false;
+        // An accessibility overlay always sits above an ordinary app popup.
+        // Draw our *own* start view into an Activity backdrop, so the popup can
+        // appear over an identical-looking start screen instead of a blank app.
+        if(overlay==null||overlay.root.getWidth()<1||overlay.root.getHeight()<1)
+            throw new IllegalStateException("시작화면이 아직 준비되지 않았습니다.");
+        int width=overlay.root.getWidth(),height=overlay.root.getHeight();
+        final float scale=Math.min(1f,(float)Math.sqrt(2300000d/((double)width*height)));
+        android.graphics.Bitmap backdrop=android.graphics.Bitmap.createBitmap(
+            Math.max(1,Math.round(width*scale)),Math.max(1,Math.round(height*scale)),
+            android.graphics.Bitmap.Config.ARGB_8888);
+        android.graphics.Canvas canvas=new android.graphics.Canvas(backdrop);
+        canvas.scale(scale,scale);overlay.root.draw(canvas);
+        daumBackdrop=backdrop;pendingDaumPopup=intent;daumPopupActive=true;
+        daumPopupSeen=false;daumPopupLaunched=false;
         main.removeCallbacks(returnedFromDaumPopup);main.removeCallbacks(missingDaumPopup);
         useUtility("사전");
+        try{
+            startActivity(new Intent(this,DaumBackdropActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS|Intent.FLAG_ACTIVITY_NO_ANIMATION));
+        }catch(RuntimeException e){finishDaumPopup();throw e;}
+    }
+    void showDaumPopup(DaumBackdropActivity activity){
+        if(!daumPopupActive||daumPopupLaunched||pendingDaumPopup==null||!activity.equals(daumBackdropHost))return;
+        daumPopupLaunched=true;
         setOverlayExposure(false);
         try{
-            startActivity(intent.addFlags(Links.dictionaryFlags(intent)));
+            startActivity(pendingDaumPopup.addFlags(Links.dictionaryFlags(pendingDaumPopup)));
             main.postDelayed(missingDaumPopup,6000);
-        }catch(RuntimeException e){finishDaumPopup();throw e;}
+        }catch(RuntimeException e){finishDaumPopup();android.widget.Toast.makeText(this,"사전 팝업을 열지 못했습니다.",android.widget.Toast.LENGTH_LONG).show();}
     }
     WebHost overlay;WindowManager window;WindowManager.LayoutParams overlayLayout;final Set<String> systemPackages=new HashSet<>();
     String homePackage="";
@@ -141,7 +168,7 @@ public final class GuardService extends AccessibilityService {
     void pauseSystem(){
         hideFloatingTimer();
         boolean changed=!systemPaused;if(changed){checkpoint();systemPaused=true;lastNotice=-1;}
-        if(overlayVisible&&overlay!=null&&dictionaryHost==null)setOverlayExposure(false);
+        if(overlayVisible&&overlay!=null&&dictionaryHost==null&&!daumPopupActive)setOverlayExposure(false);
         if(changed&&!sessionPkg.isEmpty())Notices.paused(this,UsageReader.label(this,sessionPkg),dailyRemaining(sessionPkg),sessionRemaining);
         ensurePulse();
     }
