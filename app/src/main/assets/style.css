@@ -37,3 +37,27 @@
 /* Preset management is available in managed-app gates as well as the unlock screen. */
 .gate-info{position:relative}
 .gate-info .gate-edit{position:absolute;right:0;top:4px;min-width:40px;min-height:40px}
+
+/* Structured Markdown and on-demand citations in ChatGPT replies */
+.message.assistant{white-space:normal}.chat-plain{white-space:pre-wrap;overflow-wrap:anywhere}
+.chat-markdown{font-size:15px;line-height:1.7;overflow-wrap:anywhere}
+.chat-markdown p{margin:0 0 10px}.chat-markdown p:last-child{margin:0}
+.chat-markdown h2,.chat-markdown h3,.chat-markdown h4{font-size:17px;line-height:1.4;margin:15px 0 7px}
+.chat-markdown h3,.chat-markdown h4{font-size:15px}
+.chat-markdown ul,.chat-markdown ol{padding-left:22px;margin:7px 0 12px}.chat-markdown li{margin:4px 0}
+.chat-markdown blockquote{border-left:3px solid var(--green);background:var(--pale);padding:8px 12px;margin:8px 0}
+.chat-markdown pre{padding:12px;overflow:auto;border-radius:10px;background:#e8eee7;white-space:pre}
+.chat-markdown code{font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;background:#e8eee7;border-radius:4px;padding:1px 4px}
+.chat-markdown pre code{background:none;padding:0}.chat-markdown hr{border:0;border-top:1px solid var(--line);margin:12px 0}
+.chat-table-scroll{overflow-x:auto}.chat-markdown table{border-collapse:collapse;width:100%;font-size:14px}
+.chat-markdown td,.chat-markdown th{border:1px solid var(--line);text-align:left;padding:6px 9px}
+.chat-md-link{color:var(--green);padding:0;text-decoration:underline;text-underline-offset:3px;font-weight:650}
+.chat-source-group{display:inline;position:relative;margin:0 2px}
+.chat-source-toggle{display:inline-flex;align-items:center;justify-content:center;border:1px solid #c8d9c8;border-radius:7px;padding:2px 7px;margin:0 2px;background:#edf3eb;color:#315540;font-size:12px;font-weight:650;line-height:1.5}
+.chat-source-toggle[aria-expanded=true]{background:#dbe9da}
+.chat-source-list{display:block;padding:5px 10px;margin:7px 0 12px;background:#edf3e9;border-radius:9px;font-size:13px;overflow-wrap:anywhere}
+.chat-source-list[hidden]{display:none!important}
+.chat-source-item{display:flex;align-items:flex-start;gap:8px;width:100%;text-align:left;padding:8px 4px;color:var(--ink);border-bottom:1px solid #d4e1d3}
+.chat-source-item:last-child{border-bottom:0}.chat-source-item>span:first-child{font-size:11px;color:var(--green);font-weight:700}
+.chat-source-item>span:last-child{flex:1;min-width:0;overflow-wrap:anywhere;text-decoration:underline;text-decoration-color:#9fad9d}
+.chat-source-footer{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}

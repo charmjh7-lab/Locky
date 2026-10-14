@@ -66,11 +66,91 @@ function connectionHTML(){let c=state.connection,connected=state.accounts.find(a
 
 function chats(){return `<main class="page">${header(state.overlay,'ChatGPT')}<section id="connection" class="card">${connectionHTML()}</section>${state.accounts.some(a=>a.active&&a.connected)?`<section class="card"><label for="model">모델 · 웹 검색 활성화</label><div class="link-line"><select class="field" id="model">${state.models.map(m=>`<option value="${esc(m.slug)}" ${state.prefs.model===m.slug?'selected':''}>${esc(m.name)}</option>`).join('')}</select><button class="iconbtn" data-act="models" aria-label="모델 새로고침">↻</button></div></section>`:''}<div class="sectionhead"><h2>대화</h2><button class="iconbtn" data-act="newChat" aria-label="새 대화">${icon('plus')}</button></div><div class="card chat-list">${state.chats.map(c=>`<div class="row"><button data-chat="${esc(c.id)}"><strong>${esc(c.title)}</strong></button><button class="iconbtn danger" data-deletechat="${esc(c.id)}" aria-label="대화 삭제">${icon('trash')}</button></div>`).join('')||'<p class="empty">새 대화를 시작해 보세요</p>'}</div></main>`;}
 function chat(){const c=state.chats.find(c=>c.id===chatId);return `<main class="page chat-page">${header(true,c?.title||'새 대화')}<div id="messages"></div></main><div class="composer"><div class="row"><textarea class="field" id="chatInput" placeholder="메시지 입력" aria-label="메시지" maxlength="20000"></textarea><button data-act="${state.busy?'cancelResponse':'send'}" aria-label="${state.busy?'답변 중지':'전송'}">${icon(state.busy?'close':'send')}</button></div></div>`;}
-function citedText(text,refs){let links;try{links=JSON.parse(refs||'[]');}catch{links=[];}links=links.filter((v,i,a)=>/^https?:\/\//.test(v.url||'')&&a.findIndex(x=>x.url===v.url)===i);
- return esc(text)+ (links.length?`<div class="citations">${links.map((v,i)=>`<button class="textbtn" data-url="${esc(v.url)}">[${i+1}] ${esc(v.title||new URL(v.url).hostname)}</button>`).join('')}</div>`:'');}
+function sourceUrl(value){try{const u=new URL(String(value));return u.protocol==='https:'||u.protocol==='http:'?u.href:'';}catch{return '';}}
+
+function chatSourceGroup(refs,id,label){
+ const valid=[...new Map(refs.filter(r=>sourceUrl(r.url)).map(r=>[r.url,r])).values()];
+ if(!valid.length)return '';
+ return `<span class="chat-source-group"><button type="button" class="chat-source-toggle" data-source-toggle="${esc(id)}" aria-controls="${esc(id)}" aria-expanded="false">${esc(label||'출처')} ${valid.length}</button><span class="chat-source-list" id="${esc(id)}" hidden>${valid.map((r,i)=>`<button class="chat-source-item" type="button" data-url="${esc(r.url)}"><span>${i+1}</span><span>${esc(r.title||new URL(r.url).hostname)}</span></button>`).join('')}</span></span>`;
+}
+
+function chatInline(text){
+ const reserved=[],keep=html=>'LOCKYHOLD'+(reserved.push(html)-1)+'END';
+ let raw=String(text||'');
+ raw=raw.replace(/`([^`\n]+)`/g,(_,v)=>keep('<code>'+esc(v)+'</code>'));
+ raw=raw.replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g,(full,label,url)=>{const u=sourceUrl(url);return u?keep(`<button class="chat-md-link" type="button" data-url="${esc(u)}">${esc(label)}</button>`):full;});
+ raw=raw.replace(/<(https?:\/\/[^\s>]+)>/g,(full,url)=>{const u=sourceUrl(url);return u?keep(`<button class="chat-md-link" type="button" data-url="${esc(u)}">${esc(url)}</button>`):full;});
+ let out=esc(raw);
+ out=out.replace(/(\*\*|__)([^\n]+?)\1/g,'<strong>$2</strong>');
+ out=out.replace(/(^|[^\w*])\*([^*\n]+)\*(?!\*)/g,'$1<em>$2</em>');
+ out=out.replace(/(^|[^\w_])_([^_\n]+)_(?!_)/g,'$1<em>$2</em>');
+ out=out.replace(/~~([^\n]+?)~~/g,'<del>$1</del>');
+ return out.replace(/LOCKYHOLD(\d+)END/g,(_,i)=>reserved[Number(i)]||'');
+}
+
+function chatMarkdown(text){
+ const lines=String(text||'').replace(/\r\n?/g,'\n').split('\n');
+ let out='',para=[],kind='',quotes=[];
+ const flushPara=()=>{if(para.length){out+='<p>'+para.map(chatInline).join('<br>')+'</p>';para=[];}};
+ const flushList=()=>{if(kind){out+='</'+kind+'>';kind='';}};
+ const flushQuote=()=>{if(quotes.length){out+='<blockquote>'+quotes.map(q=>'<p>'+chatInline(q)+'</p>').join('')+'</blockquote>';quotes=[];}};
+ const flush=()=>{flushPara();flushList();flushQuote();};
+ const cells=line=>line.trim().replace(/^\||\|$/g,'').split('|').map(v=>v.trim());
+ for(let i=0;i<lines.length;i++){
+  const line=lines[i],v=line.trim();
+  if(/^(```|~~~)/.test(v)){
+   flush();const fence=v.slice(0,3),lang=v.slice(3).trim().split(/\s+/)[0],code=[];
+   while(++i<lines.length&&!lines[i].trim().startsWith(fence))code.push(lines[i]);
+   out+='<pre><code'+(lang&&/^[a-z0-9+#_-]+$/i.test(lang)?' class="language-'+esc(lang)+'"':'')+'>'+esc(code.join('\n'))+'</code></pre>';continue;
+  }
+  if(!v){flush();continue;}
+  if(i+1<lines.length&&v.includes('|')&&/^:?-{3,}:?(\s*\|\s*:?-{3,}:?)*$/.test(lines[i+1].trim().replace(/^\||\|$/g,''))){
+   flush();const header=cells(line);let rows=[];i++;
+   while(i+1<lines.length&&lines[i+1].includes('|'))rows.push(cells(lines[++i]));
+   out+='<div class="chat-table-scroll"><table><thead><tr>'+header.map(c=>'<th>'+chatInline(c)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(row=>'<tr>'+header.map((_,j)=>'<td>'+chatInline(row[j]||'')+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';continue;
+  }
+  const h=line.match(/^\s*(#{1,6})\s+(.+?)\s*#*\s*$/);
+  if(h){flush();const size=Math.min(4,h[1].length+1);out+='<h'+size+'>'+chatInline(h[2])+'</h'+size+'>';continue;}
+  if(/^([-*_]\s*){3,}$/.test(v)){flush();out+='<hr>';continue;}
+  const q=line.match(/^\s*>\s?(.*)$/);
+  if(q){flushPara();flushList();quotes.push(q[1]);continue;}
+  flushQuote();
+  const bullet=line.match(/^\s*[-*+]\s+(.+)$/),numbered=line.match(/^\s*\d+[.)]\s+(.+)$/);
+  if(bullet||numbered){flushPara();const next=numbered?'ol':'ul';if(kind!==next){flushList();kind=next;out+='<'+next+'>';}out+='<li>'+chatInline((bullet||numbered)[1])+'</li>';continue;}
+  flushList();para.push(v);
+ }
+ flush();return out;
+}
+
+function chatBody(text,rawRefs,id){
+ let all=[];try{all=typeof rawRefs==='string'?JSON.parse(rawRefs||'[]'):Array.isArray(rawRefs)?rawRefs:[];}catch{}
+ const refs=all.map(r=>({url:sourceUrl(r?.url),title:String(r?.title||''),start_index:r?.start_index,end_index:r?.end_index})).filter(r=>r.url);
+ let body=String(text||''),ending='';
+ const heads=[...body.matchAll(/(?:^|\n)\s*(?:#{1,4}\s*)?(?:Sources|References|출처|참고 자료)\s*:?\s*\n/gi)];
+ if(heads.length){const h=heads[heads.length-1],trailer=body.slice(h.index+h[0].length);if(/https?:\/\/|\[[^\]]+\]\(/.test(trailer)){body=body.slice(0,h.index).trimEnd();ending=trailer;}}
+ const cps=Array.from(body),groups=new Map();
+ for(const ref of refs){const start=Number(ref.start_index),end=Number(ref.end_index);
+  if(!Number.isInteger(start)||!Number.isInteger(end)||start<0||end<=start||end>cps.length)continue;
+  const key=start+':'+end,rows=groups.get(key)||[];if(!rows.some(r=>r.url===ref.url))rows.push(ref);groups.set(key,rows);
+ }
+ const widgets=[];
+ const spans=[...groups].map(([key,links])=>{const [start,end]=key.split(':').map(Number);return {start,end,links};}).sort((a,b)=>b.start-a.start);
+ for(const span of spans){
+  const original=cps.slice(span.start,span.end).join('').trim();
+  const isMarker=/^(?:【[^】]+】|\[\d+\]|cite[\s\S]*|〔[^〕]+〕)$/.test(original);
+  const placeholder='LOCKYCITE'+widgets.length+'BUTTON';
+  widgets.push(chatSourceGroup(span.links,'cite-'+id+'-'+widgets.length,'출처'));
+  cps.splice(isMarker?span.start:span.end,isMarker?span.end-span.start:0,placeholder);
+ }
+ let html=chatMarkdown(cps.join('')).replace(/LOCKYCITE(\d+)BUTTON/g,(_,n)=>widgets[Number(n)]||'');
+ const unique=[...new Map(refs.map(r=>[r.url,r])).values()];
+ if(unique.length)html+='<div class="chat-source-footer">'+chatSourceGroup(unique,'cites-'+id,'전체 출처')+'</div>';
+ if(ending)html+='<div class="chat-source-footer"><button type="button" class="chat-source-toggle" data-source-toggle="ending-'+esc(id)+'" aria-controls="ending-'+esc(id)+'" aria-expanded="false">답변 끝 출처</button><div class="chat-source-list" id="ending-'+esc(id)+'" hidden>'+chatMarkdown(ending)+'</div></div>';
+ return html;
+}
 async function renderMessages(force){let box=$('#messages');if(!box)return;const id=chatId,messages=await api('messages',{id});if(id!==chatId||screen!=='chat')return;const atBottom=window.innerHeight+window.scrollY>=document.body.scrollHeight-150;
- const html=messages.map(m=>`<div class="message ${esc(m.role)}">${citedText(m.body||(m.status==='streaming'?'답변을 생각하고 있어요…':''),m.citations)}${m.status==='interrupted'?'<span class="small danger">완료하지 못한 답변</span>':''}</div>`).join('')||'<p class="empty">무엇이 궁금한가요?</p>';
- if(box.innerHTML!==html){box.innerHTML=html;bind(box);if(atBottom||force)window.scrollTo(0,document.body.scrollHeight);}const button=$('.composer button');if(button){button.dataset.act=state.busy?'cancelResponse':'send';button.innerHTML=icon(state.busy?'close':'send');button.setAttribute('aria-label',state.busy?'답변 중지':'전송');}
+ const html=messages.map((m,i)=>`<div class="message ${esc(m.role)}">${m.role==='assistant'?'<div class="chat-markdown">'+chatBody(m.body||(m.status==='streaming'?'답변을 생각하고 있어요…':''),m.citations,m.id||i)+'</div>':'<div class="chat-plain">'+esc(m.body||'')+'</div>'}${m.status==='interrupted'?'<span class="small danger">완료하지 못한 답변</span>':''}</div>`).join('')||'<p class="empty">무엇이 궁금한가요?</p>';
+ if(box.innerHTML!==html){const expanded=new Set([...box.querySelectorAll('[data-source-toggle][aria-expanded="true"]')].map(el=>el.dataset.sourceToggle));box.innerHTML=html;bind(box);for(const sourceId of expanded){const trigger=[...box.querySelectorAll('[data-source-toggle]')].find(el=>el.dataset.sourceToggle===sourceId),panel=document.getElementById(sourceId);if(trigger&&panel){trigger.setAttribute('aria-expanded','true');panel.hidden=false;}}if(atBottom||force)window.scrollTo(0,document.body.scrollHeight);}const button=$('.composer button');if(button){button.dataset.act=state.busy?'cancelResponse':'send';button.innerHTML=icon(state.busy?'close':'send');button.setAttribute('aria-label',state.busy?'답변 중지':'전송');}
  if(state.chatError&&state.chatError!==renderMessages.lastError){renderMessages.lastError=state.chatError;toast(state.chatError);}}
 function brief(){return `<main class="page">${header(state.overlay,'브리핑')}<div class="segmented"><button data-days="1" class="${briefDays===1?'active':''}">하루</button><button data-days="7" class="${briefDays===7?'active':''}">일주일</button></div><div class="row"><button class="iconbtn" data-act="previousBrief" aria-label="이전 날짜">${icon('back')}</button><span id="briefDate" class="small muted"></span><button class="iconbtn" data-act="nextBrief" ${briefOffset===0?'disabled':''} aria-label="다음 날짜">${icon('arrow')}</button></div><div class="brief-export"><div><strong>하루 원본 기록</strong><p class="small muted">선택한 날짜의 사용 구간·목적 기록 JSON</p></div><div class="brief-export-actions"><button class="secondary" data-act="copyDay">복사</button><button class="secondary" data-act="saveDay">파일 저장</button></div></div><div id="briefContent"><p class="empty">기록을 모으는 중</p></div></main>`;}
 function collapsible(rows,renderRow,count=4){return rows.slice(0,count).map(renderRow).join('')+(rows.length>count?`<details class="more-list"><summary>나머지 ${rows.length-count}개 펼치기</summary>${rows.slice(count).map(renderRow).join('')}</details>`:'');}
@@ -200,6 +280,7 @@ function bind(root=$('#app')){
  root.querySelectorAll('[data-exclude]').forEach(el=>el.onchange=()=>safe(async()=>{await api('excludeUsage',{pkg:el.dataset.exclude,excluded:el.checked});const a=usageCache.find(a=>a.pkg===el.dataset.exclude);if(a)a.excluded=el.checked;}));
  root.querySelectorAll('[data-dictionary]').forEach(el=>el.onclick=()=>safe(async()=>{await api('dictionaryChoice',{id:el.dataset.dictionary});state.dictionary=el.dataset.dictionary;closeSheet();if(el.dataset.word)await api('dictionary',{word:el.dataset.word});}));
  root.querySelectorAll('[data-url]').forEach(el=>el.onclick=()=>safe(()=>api('linkTest',{uri:el.dataset.url})));
+  root.querySelectorAll('[data-source-toggle]').forEach(el=>el.onclick=()=>{const panel=document.getElementById(el.dataset.sourceToggle);if(panel){panel.hidden=!panel.hidden;el.setAttribute('aria-expanded',String(!panel.hidden));}});
  root.querySelectorAll('[data-permission]').forEach(el=>el.onclick=()=>safe(()=>api('permission',{name:el.dataset.permission})));
  root.querySelectorAll('[data-account]').forEach(el=>el.onclick=()=>safe(async()=>{await api('account',{client:el.dataset.account});await api('models');closeSheet();await refresh(true);}));
  root.querySelectorAll('[data-days]').forEach(el=>el.onclick=()=>{briefDays=Number(el.dataset.days);briefOffset=0;refresh(true);});
