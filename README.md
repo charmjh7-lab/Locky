@@ -10,7 +10,7 @@ A lightweight personal Android app for intentional phone use. Android 8+; design
 - Remembered dictionary selection: explicit Android word processing activity, Samsung dictionary or Naver dictionary. Samsung's external search intent is not a stable API: the app may open at its home rather than prefill the word.
 - Separate phone/app purpose presets, deletable defaults and persistent custom purposes, with a daily deterministic shuffle; direct input is always first. Aimless starts are counted separately.
 - Per-app daily budget (default 60 min, max 120), foreground-only sessions (5–10 min), purpose reminder and extension, or a complete block during focus hours.
-- System countdown notification for the daily budget. Tap to view daily/session remaining time. Android's status bar presentation differs by One UI version; a third-party app cannot guarantee Samsung Clock's exact timer chip.
+- System countdown notification for the current session, with the daily budget alongside it. Android 16+ requests Live Updates using the promotion contract accepted by the device; a paused session shows a static remaining time. Tap to view daily/session remaining time. 권한·배터리 설정 shows notification/channel/promotion status and opens the relevant system settings. Samsung controls actual Now Bar placement separately, so system promotion does not prove a Now Bar chip is visible.
 - Recurring focus/free schedule including overnight focus periods; configurable 30/20/10/5/1-minute reminders and custom offsets; daily and weekly local narrative briefings with all observed apps, timestamps and purpose-linked detours.
 
 ## First launch
@@ -29,7 +29,7 @@ ChatGPT integration follows the official personal/local-client OAuth documentati
 
 Version 1.1.0 (`versionCode 2`) upgrades the original signed installation without deleting records, notes, chats or purposes.
 
-JDK 17, Gradle 8.11.1, Android SDK 35. `gradle :app:testDebugUnitTest :app:lintDebug :app:assembleRelease`.
+JDK 21 (required by Android 16 JVM tests), Gradle 8.11.1, Android SDK 36. Java source/target compatibility and targetSdk remain 17 and 35 respectively. `gradle :app:testDebugUnitTest :app:lintDebug :app:assembleRelease`.
 
 GitHub Actions runs JVM policy tests, browser interaction checks, Android integration tests and APK/signature verification before publishing `Locky.apk` directly to Releases. No APK Actions artifacts are uploaded. Latest **three successful `locky-build-*` releases** are kept; cleanup happens only after the new APK is verified and uploaded. Unrelated/manual releases are not touched. The fixed personal signing key is committed for reproducible personal builds; it is not a Play production signing key. Keep the key unchanged for future updates.
 

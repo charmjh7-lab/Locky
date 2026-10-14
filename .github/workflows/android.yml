@@ -21,6 +21,7 @@ jobs:
           node-version: '22'
       - name: Browser interaction checks
         run: |
+          node scripts/nowbar-ui-test.cjs
           npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright
           npx playwright install --with-deps chromium
           node scripts/ui-test.cjs
@@ -33,10 +34,10 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
       - uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          packages: 'platform-tools platforms;android-36 build-tools;35.0.0'
           log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@v4
         with:
@@ -54,10 +55,10 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
       - uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          packages: 'platform-tools platforms;android-36 build-tools;35.0.0'
           log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@v4
         with:
@@ -109,3 +110,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/prune-releases.py
+
