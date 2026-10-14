@@ -80,7 +80,7 @@
 .brief-export-actions{display:flex;gap:7px}.brief-export-actions button{font-size:13px;padding:8px 12px}
 
 
-/* Center only the decision region; the utility editors and bottom exit retain their anchors. */
+/* Group managed-app duration and purpose controls without shifting the start-screen layout. */
 .app-decision{display:flex;flex-direction:column;gap:12px;flex:0 0 auto;min-height:0}
 .app-decision .duration{margin:0}.app-decision .start-purposes{flex:0 0 auto}
 .app-decision .start-purposes>p{margin:0 0 9px}

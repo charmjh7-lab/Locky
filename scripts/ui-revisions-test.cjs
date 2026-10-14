@@ -22,7 +22,7 @@ const briefing={days:1,date:'2026-10-14',start:1,total:660000,unlocks:2,aimless:
    setTimeout(()=>receive(id,out,error),30);
   }};state=fixture;noteId='n';render();
  },{fixture,briefing});
- // Decision centering must not move the utility editors or cover the exit control.
+ // Keep the restored chooser next to the utility editors; spare space remains below it.
  for(const viewport of [{width:320,height:560},{width:360,height:600},{width:390,height:780},{width:700,height:900}]){
   await page.setViewportSize(viewport);
   for(const count of [0,3,9,30]){
@@ -32,7 +32,7 @@ const briefing={days:1,date:'2026-10-14',start:1,total:660000,unlocks:2,aimless:
    assert(result.areaBottom<=result.footerTop+1,JSON.stringify({viewport,count,...result}));
    assert(result.footerBottom<=result.height,JSON.stringify(result));assert(result.scroll<=result.height+1,JSON.stringify(result));
    assert(result.toolsTop<=55&&result.toolsHeight>=100,JSON.stringify(result));
-   if(count<=3)assert(Math.abs((result.areaTop-result.dictionaryBottom)-(result.footerTop-result.areaBottom))<=10,JSON.stringify(result));
+   assert(result.areaTop-result.dictionaryBottom>=7&&result.areaTop-result.dictionaryBottom<=17,JSON.stringify(result));
   }
  }
  await page.setViewportSize({width:320,height:560});

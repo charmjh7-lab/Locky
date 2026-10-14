@@ -306,37 +306,32 @@ function scheduleMemo(){memoPending=captureMemo();if($('#saveState'))$('#saveSta
 async function flushMemo(){clearTimeout(memoTimer);if(memoSaving)await memoSaving;if(!memoPending)return;const note=memoPending;memoPending=null;memoSaving=(async()=>{try{await api('saveNote',note);let n=state?.notes.find(n=>n.id===note.id);let value={...note,checks:JSON.stringify(note.checks),updated:Date.now()};if(n)Object.assign(n,value);else state?.notes.unshift(value);if($('#saveState'))$('#saveState').textContent='자동 저장';}catch(e){if(!memoPending)memoPending=note;throw e;}})();try{await memoSaving;}finally{memoSaving=null;}if(memoPending)await flushMemo();}
 function autoNoteHeight(){const scroller=$('.full-note .note-content');if(!scroller)return;const top=scroller.scrollTop;scroller.querySelectorAll('textarea').forEach(el=>{const key=el.value+'|'+el.clientWidth;if(el._measureKey===key)return;el._measureKey=key;el.style.height='auto';el.style.height=Math.max(el.id==='noteBody'?scroller.clientHeight-8:32,el.scrollHeight)+'px';});scroller.scrollTop=top;}
 function insetsChanged(visible){nativeKeyboard=visible;viewportChanged(visible);}
-function layoutStart(){
- const page=$('.start-page');if(!page||document.body.classList.contains('keyboard'))return;
- const area=page.querySelector('.start-purposes'),tools=page.querySelector('.quick-tools');if(!area)return;
- const grid=area.querySelector('.reason-grid');if(!grid)return;
- const footer=page.querySelector('.start-footer');if(footer)footer.style.marginTop='0px';
- const region=page.querySelector('.app-decision')||area,items=[...grid.querySelectorAll('.purpose-item')],more=grid.querySelector('.more-reasons');
- region.style.marginTop='';region.style.marginBottom='';area.style.flex='0 0 auto';
+function layoutStart(){const page=$('.start-page');if(!page||document.body.classList.contains('keyboard'))return;const area=page.querySelector('.start-purposes'),tools=page.querySelector('.quick-tools');if(!area)return;
+ const grid=area.querySelector('.reason-grid');if(!grid)return;const items=[...grid.querySelectorAll('.purpose-item')],more=grid.querySelector('.more-reasons'),css=getComputedStyle(page),gap=parseFloat(css.gap)||0,areaMarginTop=parseFloat(getComputedStyle(area).marginTop)||0;
+ // Keep utilities compact above the nearby purpose chooser; spare height stays below it.
  if(tools){tools.style.height='';tools.style.flex='0 0 auto';}
- const vertical=el=>{const c=getComputedStyle(el);return (parseFloat(c.marginTop)||0)+(parseFloat(c.marginBottom)||0);};
- const padding=el=>{const c=getComputedStyle(el);return ['paddingTop','paddingBottom','borderTopWidth','borderBottomWidth'].reduce((n,k)=>n+(parseFloat(c[k])||0),0);};
- const gap=el=>parseFloat(getComputedStyle(el).rowGap)||0;
- const fixed=parent=>[...parent.children].filter(el=>el!==region&&el!==area&&el!==tools).reduce((n,el)=>n+el.getBoundingClientRect().height+vertical(el),0)+gap(parent)*(parent.children.length-1);
- let available=page.clientHeight-padding(page)-fixed(page)-vertical(region);
- if(region!==area)available-=padding(region)+fixed(region)+vertical(area);
- const intro=area.querySelector('.purpose-intro'),description=area.querySelector(':scope > p');
- const heading=intro||description||area.querySelector('.sectionhead');
- available-=padding(area)+(heading?heading.getBoundingClientRect().height+vertical(heading):0);
- const preferred=tools?tools.getBoundingClientRect().height:0;
- const minimum=tools?Math.min(preferred,Math.max(105,Math.min(206,Math.floor(page.clientHeight*.29)))):0;
- const required=n=>44+(n?6+Math.ceil(n/2)*44+(Math.ceil(n/2)-1)*6:0);
- let count=items.length;
- while(count>0&&required(count)+(count<items.length?40:0)+minimum>available)count--;
+ const preferredTools=tools?tools.getBoundingClientRect().height:0,minimumTools=tools?Math.min(206,Math.max(128,Math.floor(page.clientHeight*.29))):0;
+ const decision=page.querySelector('.app-decision');
+ const children=[...page.children];let available=page.clientHeight-parseFloat(css.paddingTop)-parseFloat(css.paddingBottom)-gap*(children.length-1)-areaMarginTop;
+ for(const child of children)if(child!==area&&child!==tools&&child!==decision)available-=child.getBoundingClientRect().height;
+ if(decision){const frame=getComputedStyle(decision);available-=(parseFloat(frame.rowGap)||0)*(decision.children.length-1);for(const child of decision.children)if(child!==area){const style=getComputedStyle(child);available-=child.getBoundingClientRect().height+(parseFloat(style.marginTop)||0)+(parseFloat(style.marginBottom)||0);}}
+ const intro=area.querySelector('.purpose-intro');
+ if(intro){
+   const frame=getComputedStyle(area),introStyle=getComputedStyle(intro);
+   const size=name=>parseFloat(frame.getPropertyValue(name))||0;
+   available-=size('padding-top')+size('padding-bottom')+size('border-top-width')+size('border-bottom-width')+intro.getBoundingClientRect().height+(parseFloat(introStyle.marginBottom)||0);
+ }else{const heading=area.querySelector(':scope > p')||area.querySelector('.sectionhead');if(heading){const style=getComputedStyle(heading);available-=heading.getBoundingClientRect().height+(parseFloat(style.marginTop)||0)+(parseFloat(style.marginBottom)||5);}}
+ const row=44,rowGap=6,direct=44;let count=items.length;
+ const required=n=>direct+(n?rowGap+Math.ceil(n/2)*row+(Math.ceil(n/2)-1)*rowGap:0);
+ while(count>0&&required(count)+(count<items.length?rowGap+34:0)+minimumTools>available)count--;
  if(count<items.length&&count%2===1)count--;
- items.forEach((el,i)=>el.hidden=i>=count);if(more)more.hidden=count===items.length;
- const content=required(count)+(count<items.length?40:0);
- const height=tools?Math.max(0,Math.min(preferred,available-content)):0;
- if(tools){tools.style.height=height+'px';tools.style.flex='0 0 '+height+'px';}
- const spare=Math.max(0,available-content-height),base=parseFloat(getComputedStyle(region).marginTop)||0;
- region.style.marginTop=(base+spare/2)+'px';if(footer)footer.style.marginTop='';
+ const chosen=items.findIndex(el=>el.querySelector('.selected'));const shown=new Set(items.slice(0,count));
+ if(chosen>=count&&count>0){shown.delete(items[count-1]);shown.add(items[chosen]);}
+ items.forEach(el=>el.hidden=!shown.has(el));if(more)more.hidden=count===items.length;
+ const content=required(count)+(count<items.length?rowGap+34:0);
+ if(tools){const height=Math.max(minimumTools,Math.min(preferredTools,available-content));tools.style.height=height+'px';tools.style.flex='0 0 '+height+'px';}
+ area.style.flex='0 0 auto';
 }
-
 function viewportChanged(reveal=false){requestAnimationFrame(()=>{const v=window.visualViewport,h=v?.height||innerHeight,top=v?.offsetTop||0,editing=document.activeElement?.matches('input,textarea,select');const keyboard=nativeKeyboard||innerHeight-h>100||(editing&&normalWidth===innerWidth&&normalHeight-h>100);
  if(!normalHeight||normalWidth!==innerWidth||(!keyboard&&!editing)){normalHeight=h;normalWidth=innerWidth;}
  document.documentElement.style.setProperty('--viewport',h+'px');document.documentElement.style.setProperty('--rest-height',normalHeight+'px');document.documentElement.style.setProperty('--vtop',top+'px');document.body.classList.toggle('keyboard',!!keyboard);layoutStart();autoNoteHeight();const active=document.activeElement;if(reveal===true&&active?.matches('input,textarea,select'))active.scrollIntoView({block:'nearest',inline:'nearest'});});}
