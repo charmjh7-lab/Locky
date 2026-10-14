@@ -24,7 +24,7 @@ public final class GuardService extends AccessibilityService {
     volatile boolean pulseScheduled;volatile long pulseCount;
     final Runnable pulse=new Runnable(){public void run(){pulseScheduled=false;if(live!=GuardService.this)return;pulseCount++;checkpoint();enforce();ensurePulse();}};
     final BroadcastReceiver screen=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){
-        String a=i.getAction();if(Intent.ACTION_SCREEN_OFF.equals(a)){checkpoint();interactive=false;sessionPkg="";sessionRemaining=0;foreground="";store.settings.edit().putBoolean("checkpoint-interactive",false).putString("last-package","").apply();waitingUnlock=true;prepareUnlock();Notices.cancelTimer(c);main.removeCallbacks(pulse);pulseScheduled=false;}
+        String a=i.getAction();if(Intent.ACTION_SCREEN_OFF.equals(a)){overview=false;overviewCandidate="";checkpoint();interactive=false;sessionPkg="";sessionRemaining=0;foreground="";store.settings.edit().putBoolean("checkpoint-interactive",false).putString("last-package","").apply();waitingUnlock=true;prepareUnlock();Notices.cancelTimer(c);main.removeCallbacks(pulse);pulseScheduled=false;}
         else if(Intent.ACTION_USER_PRESENT.equals(a)){interactive=true;waitingUnlock=false;observeForeground(null);prepareUnlock();ensurePulse();}
         else if(Intent.ACTION_SCREEN_ON.equals(a)){interactive=true;main.post(checkUnlock);}
         else if(Intent.ACTION_TIME_CHANGED.equals(a)||Intent.ACTION_TIMEZONE_CHANGED.equals(a)){checkpoint();policyChanged();Scheduler.schedule(c);}
