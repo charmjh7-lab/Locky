@@ -53,10 +53,9 @@ final class Links {
     }
     static int dictionaryFlags(Intent i) {
         int flags=Intent.FLAG_ACTIVITY_NEW_TASK;
-        if(Intent.ACTION_PROCESS_TEXT.equals(i.getAction())) {
-            // Isolate Daum's small popup instead of reactivating its existing home task.
-            if(i.getComponent()!=null&&"net.daum.android.dictionary".equals(i.getComponent().getPackageName()))
-                flags|=Intent.FLAG_ACTIVITY_MULTIPLE_TASK|Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS;
+        if(Intent.ACTION_PROCESS_TEXT.equals(i.getAction())&&i.getComponent()!=null&&"net.daum.android.dictionary".equals(i.getComponent().getPackageName())){
+            // Daum's popup should not restore the dictionary home screen.
+            flags|=Intent.FLAG_ACTIVITY_MULTIPLE_TASK|Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS;
         }else if(!Intent.ACTION_VIEW.equals(i.getAction()))flags|=Intent.FLAG_ACTIVITY_CLEAR_TOP;
         return flags;
     }

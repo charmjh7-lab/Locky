@@ -18,7 +18,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 final class WebHost {
     static final List<WeakReference<WebHost>> hosts=new CopyOnWriteArrayList<>();
-    final android.widget.FrameLayout root;final View loadingView;WebView view;final Context context;final Store store;final boolean isOverlay;final Handler main=new Handler(Looper.getMainLooper());volatile String pendingScreen="home",paintedScreen="";boolean ready=false,closed=false;
+    final android.widget.FrameLayout root;final View loadingView;WebView view;final Context context;final Store store;final boolean isOverlay;final Handler main=new Handler(Looper.getMainLooper());volatile String pendingScreen="home",paintedScreen="",pendingChat="";boolean ready=false,closed=false;
     WebHost(Context c,boolean overlay){context=c;store=Store.get(c);isOverlay=overlay;root=new android.widget.FrameLayout(c);root.setBackgroundColor(Color.rgb(244,243,237));hosts.add(new WeakReference<>(this));
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root,(v,insets)->{
             androidx.core.graphics.Insets bars=insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()|androidx.core.view.WindowInsetsCompat.Type.displayCutout());
@@ -67,7 +67,8 @@ final class WebHost {
             ready=false;root.removeView(candidate);candidate.removeJavascriptInterface("Native");candidate.destroy();createView();
         },2200);
     }
-    void screen(String name){pendingScreen=name;if(isOverlay&&!name.equals(paintedScreen))showLoading();if(ready)evaluate("navigate("+JSONObject.quote(name)+")");}
+    void openChat(String id){pendingChat=id;screen("chat");}
+    void screen(String name){pendingScreen=name;if(!"chat".equals(name))pendingChat="";if(isOverlay&&!name.equals(paintedScreen))showLoading();if(ready)evaluate("chat".equals(name)&&!pendingChat.isEmpty()?"openChatById("+JSONObject.quote(pendingChat)+")":"navigate("+JSONObject.quote(name)+")");}
     void evaluate(String js){main.post(()->{if(!closed&&ready&&(view.getParent()!=null||!isOverlay))view.evaluateJavascript(js,null);});}
     void close(){closed=true;ready=false;main.removeCallbacksAndMessages(null);root.removeView(view);view.removeJavascriptInterface("Native");view.destroy();hosts.removeIf(r->r.get()==null||r.get()==this);}
     static void refreshAll(){for(var r:hosts){WebHost h=r.get();if(h!=null)h.evaluate("refresh()");}}
@@ -95,7 +96,7 @@ final class WebHost {
             case "extend":if(g!=null)g.extend(a.optInt("minutes",5));break;
             case "stop":if(g!=null)g.stopApp();break;
             case "utility":if(g!=null)g.useUtility(a.getString("name"));else store.event("utility",a.getString("name"),context.getPackageName(),"",0);break;
-            case "open":if(isOverlay&&g!=null)g.openMain(a.getString("screen"));else screen(a.getString("screen"));break;
+            case "open":if(isOverlay&&g!=null)g.openMain(a.getString("screen"),a.optString("chat"));else if(a.optString("screen").equals("chat")&&!a.optString("chat").isEmpty())openChat(a.getString("chat"));else screen(a.getString("screen"));break;
             case "dismiss":if(isOverlay&&g!=null)g.dismissStart();else if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);break;
             case "remember":if(!isOverlay){pendingScreen=a.optString("screen","home");store.settings.edit().putString("last-screen",a.optString("screen","home")).putString("last-chat",a.optString("chat")).putString("last-note",a.optString("note")).apply();}break;
             case "dictionaries":out=Links.dictionaries(context);break;
@@ -116,6 +117,22 @@ final class WebHost {
                 }
                 JSONArray seen=new JSONArray(store.settings.getString("rule-seen","[]"));boolean found=false;for(int j=0;j<seen.length();j++)if(seen.getString(j).equals(pkg))found=true;if(!found){seen.put(pkg);store.settings.edit().putString("rule-seen",seen.toString()).apply();}if(g!=null)g.policyChanged();break;
             case "brief":out=Briefing.build(context,a.optInt("days",1)==7?7:1,Math.max(0,Math.min(179,a.optLong("offset",0))));break;
+            case "copyDay":{
+                String raw=Briefing.rawDay(context,Math.max(0,Math.min(179,a.optInt("offset",0)))).toString(2);
+                main.post(()->{try{
+                    android.content.ClipboardManager clipboard=context.getSystemService(android.content.ClipboardManager.class);
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Locky 하루 기록",raw));
+                    answer(id,new JSONObject().put("ok",true),null);
+                }catch(Exception e){answer(id,null,ChatGPT.safeError(e));}});
+                return;
+            }
+            case "saveDay":{
+                if(!(context instanceof MainActivity))throw new IllegalStateException("로키 앱에서 브리핑을 열어 주세요.");
+                JSONObject data=Briefing.rawDay(context,Math.max(0,Math.min(179,a.optInt("offset",0))));
+                String filename="Locky-"+data.getString("date")+"-raw.json",payload=data.toString(2);
+                main.post(()->((MainActivity)context).saveRawToDocument(filename,payload));
+                break;
+            }
             case "newChat":out=new JSONObject().put("id",store.newChat());break;
             case "messages":out=store.rows("SELECT * FROM messages WHERE chat=? ORDER BY id",a.getString("id"));break;
             case "deleteChat":if(LockyApp.app.chat.busy.get()&&LockyApp.app.chat.active.equals(a.getString("id")))throw new IllegalStateException("답변을 멈춘 후 삭제해 주세요.");store.deleteChat(a.getString("id"));break;

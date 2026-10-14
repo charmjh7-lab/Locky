@@ -42,5 +42,17 @@ final class Briefing {
         JSONArray driftRows=new JSONArray();for(var d:drift.entrySet())driftRows.put(new JSONObject().put("purpose",d.getKey()).put("ms",d.getValue()));
         return new JSONObject().put("days",days).put("date",date.toString()).put("start",start).put("end",end).put("total",total).put("unlocks",unlocks).put("aimless",aimless).put("initialDeviation",initialDeviation).put("deviation",deviation).put("linked",linked).put("summary",summary).put("insight",insight).put("apps",apps).put("events",events).put("timeline",timeline).put("drift",driftRows).put("recovered",recovered).put("usageAccess",UsageReader.allowed(c));
     }
+    static JSONObject rawDay(Context c,int dayOffset) throws Exception {
+        Store s=Store.get(c);
+        ZoneId zone=ZoneId.systemDefault();LocalDate date=LocalDate.now(zone).minusDays(Math.max(0,Math.min(179,dayOffset)));
+        long start=date.atStartOfDay(zone).toInstant().toEpochMilli();
+        long end=dayOffset==0?System.currentTimeMillis():date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli();
+        GuardService guard=GuardService.live;if(guard!=null)guard.flushOnMain();
+        return new JSONObject().put("schemaVersion",1).put("source","Locky 로컬 기록").put("date",date.toString())
+            .put("timeZone",zone.toString()).put("periodStart",start).put("periodEnd",end)
+            .put("exportedAt",System.currentTimeMillis())
+            .put("events",s.rows("SELECT * FROM events WHERE time>=? AND time<? ORDER BY time,id",""+start,""+end))
+            .put("usage",s.rows("SELECT * FROM usage WHERE end>? AND start<? ORDER BY start,id",""+start,""+end));
+    }
     static long minutes(long ms){return Math.round(ms/60000.0);}
 }
