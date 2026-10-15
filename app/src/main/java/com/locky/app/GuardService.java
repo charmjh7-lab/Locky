@@ -80,7 +80,7 @@ public final class GuardService extends AccessibilityService {
         else if(unlockChecks++<20)main.postDelayed(this,250);
     }};
     @Override protected void onServiceConnected(){
-        live=this;store=Store.get(this);window=getSystemService(WindowManager.class);floatingTimer=new FloatingTimer(this,window);interactive=getSystemService(PowerManager.class).isInteractive();wasManaged=store.managed(System.currentTimeMillis());
+        live=this;store=Store.get(this);window=getSystemService(WindowManager.class);floatingTimer=new FloatingTimer(this,window);interactive=getSystemService(PowerManager.class).isInteractive();wasManaged=store.managed(System.currentTimeMillis());store.observe("service-connected",interactive);
         getSystemService(AppOpsManager.class).startWatchingMode(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW,getPackageName(),overlayPermission);
         ResolveInfo home=getPackageManager().resolveActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),PackageManager.MATCH_DEFAULT_ONLY);if(home!=null)homePackage=home.activityInfo.packageName;
         systemPackages.add("com.android.systemui");systemPackages.add("com.android.permissioncontroller");systemPackages.add("com.google.android.permissioncontroller");
@@ -94,7 +94,7 @@ public final class GuardService extends AccessibilityService {
     }
     private void recover(long from,String old){long now=System.currentTimeMillis();
         if(now-from<2000)return;
-        LockyApp.app.work.execute(()->{try{JSONArray history=UsageReader.intervals(this,Math.max(from,now-180L*86400000),now,old);for(int i=0;i<history.length();i++){JSONObject u=history.getJSONObject(i);String pkg=u.getString("pkg");if(!UsageReader.recordable(this,pkg)||pkg.equals(getPackageName()))continue;JSONObject rule=store.rule(pkg);long a=u.getLong("start"),b=u.getLong("end");while(a<b){long boundary=Math.min(b,Math.min(Rules.nextDay(a,ZoneId.systemDefault()),Rules.nextBoundary(a,store.settings.getInt("start",540),store.settings.getInt("end",1260),ZoneId.systemDefault())));store.usage(a,boundary,pkg,UsageReader.label(this,pkg),rule!=null&&rule.optString("mode").equals("limited")&&store.managed(a),0);a=boundary;}}}catch(Exception ignored){}finally{main.post(this::policyChanged);}});
+        LockyApp.app.work.execute(()->{try{JSONArray history=UsageReader.intervals(this,Math.max(from,now-180L*86400000),now,old);for(int i=0;i<history.length();i++){JSONObject u=history.getJSONObject(i);String pkg=u.getString("pkg");if(!UsageReader.recordable(this,pkg)||pkg.equals(getPackageName()))continue;JSONObject rule=store.rule(pkg);long a=u.getLong("start"),b=u.getLong("end");while(a<b){long boundary=Math.min(b,Math.min(Rules.nextDay(a,ZoneId.systemDefault()),Rules.nextBoundary(a,store.settings.getInt("start",540),store.settings.getInt("end",1260),ZoneId.systemDefault())));store.usage(a,boundary,pkg,UsageReader.label(this,pkg),rule!=null&&rule.optString("mode").equals("limited")&&store.managed(a),0,"usage-access");a=boundary;}}}catch(Exception ignored){}finally{main.post(this::policyChanged);}});
     }
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
         if(store==null)return;
@@ -264,7 +264,7 @@ public final class GuardService extends AccessibilityService {
         sessionPkg=pkg;sessionRemaining=saved.remaining;sessionEvent=saved.event;purpose=saved.purpose;sessionPolicyEnd=saved.policyEnd;lastNotice=-1;
     }
     void checkpoint(){
-        if(store==null)return;long wall=System.currentTimeMillis(),elapsed=SystemClock.elapsedRealtime();long delta=Math.max(0,elapsed-segmentElapsed);
+        if(store==null)return;store.observe("checkpoint",interactive);long wall=System.currentTimeMillis(),elapsed=SystemClock.elapsedRealtime();long delta=Math.max(0,elapsed-segmentElapsed);
         // Time changes cannot manufacture usage: reconstruct the wall start from monotonic elapsed time.
         long from=Math.abs((wall-segmentWall)-delta)<2000?segmentWall:wall-delta;
         if(interactive&&!foreground.isEmpty()&&delta>0){
@@ -323,6 +323,7 @@ public final class GuardService extends AccessibilityService {
         if(!interactive||keyguardLocked())return false;
         WebHost.resumeUnlockTrace();WebHost.trace("unlock-confirmed");
         if(!unlockPrepared)prepareUnlock();
+        if(overlay!=null)overlay.ensurePurposeDay();
         waitingUnlock=false;setSystemPaused(false,"unlock-confirmed");beginUnlockTransition();UnlockDiagnostics.get(this).confirmed(overlayLayout==null?0:overlayLayout.type);main.removeCallbacks(checkUnlock);
         if(WebHost.tracing())WebHost.trace("complete-unlock ready="+overlay.frameReady+" pending="+overlay.preparingStart);
         // The caller reads the foreground once, retaining the actual event when available.
@@ -530,7 +531,7 @@ public final class GuardService extends AccessibilityService {
         pausedSessions.remove(gatePkg);sessionPolicyEnd=policyEnd(System.currentTimeMillis());sessionPkg=gatePkg;purpose=p.getString("label");sessionRemaining=Rules.grant(remaining,minutes);sessionEvent=store.event("app",purpose,gatePkg,p.optString("pkg"),phoneEvent,p.optInt("aimless",0)==1);hideOverlay();lastNotice=-1;Notices.timer(this,rule.optString("label"),remaining,sessionRemaining);launch(p);syncFloatingTimer();ensurePulse();
     }
     void extend(int minutes) {checkpoint();if(!sessionPkg.equals(gatePkg)||dailyRemaining(gatePkg)<=0){enforce();return;}sessionRemaining=Rules.grant(dailyRemaining(gatePkg),minutes);store.event("extend",purpose,sessionPkg,"",phoneEvent);hideOverlay();lastNotice=-1;enforce();ensurePulse();}
-    void stopApp(){hideFloatingTimer();checkpoint();pausedSessions.remove(sessionPkg.isEmpty()?gatePkg:sessionPkg);clearActiveSession();performGlobalAction(GLOBAL_ACTION_HOME);foreground="";hideOverlay();Notices.cancelTimer(this);main.removeCallbacks(pulse);pulseScheduled=false;}
+    void stopApp(){hideFloatingTimer();checkpoint();if(!gate.isEmpty())store.event("cancel","열지 않기",gatePkg,"",phoneEvent);pausedSessions.remove(sessionPkg.isEmpty()?gatePkg:sessionPkg);clearActiveSession();performGlobalAction(GLOBAL_ACTION_HOME);foreground="";hideOverlay();Notices.cancelTimer(this);main.removeCallbacks(pulse);pulseScheduled=false;}
     void useUtility(String name){checkpoint();boolean changed=!name.equals(utility);utility=name;if(changed&&!name.equals("첫 화면")&&!name.equals("Locky"))store.event("utility",name,getPackageName(),"",phoneEvent);}
     void pauseForActivity(){switchForeground(getPackageName());if(!sessionPkg.isEmpty())Notices.paused(this,UsageReader.label(this,sessionPkg),dailyRemaining(sessionPkg),sessionRemaining);}
     void openMain(String screen){openMain(screen,"");}
@@ -556,6 +557,6 @@ public final class GuardService extends AccessibilityService {
         main.postDelayed(lockCompletion,1500); // Failure recovery only; never delays exposure or locking.
     }
     @Override public void onInterrupt(){}
-    @Override public void onDestroy(){getSystemService(AppOpsManager.class).stopWatchingMode(overlayPermission);hideFloatingTimer();checkpoint();live=null;interactive=false;overlayVisible=false;if(dictionaryHost!=null)dictionaryHost.returnToStart();main.removeCallbacksAndMessages(null);try{unregisterReceiver(screen);}catch(Exception ignored){}if(overlay!=null){removeGateWindow("service-destroy");overlay.close();}Notices.cancelTimer(this);super.onDestroy();}
+    @Override public void onDestroy(){getSystemService(AppOpsManager.class).stopWatchingMode(overlayPermission);hideFloatingTimer();checkpoint();store.observe("service-destroyed",interactive);live=null;interactive=false;overlayVisible=false;if(dictionaryHost!=null)dictionaryHost.returnToStart();main.removeCallbacksAndMessages(null);try{unregisterReceiver(screen);}catch(Exception ignored){}if(overlay!=null){removeGateWindow("service-destroy");overlay.close();}Notices.cancelTimer(this);super.onDestroy();}
 }
 

@@ -20,7 +20,7 @@ final class WebHost {
     static final List<WeakReference<WebHost>> hosts=new CopyOnWriteArrayList<>();
     final android.widget.FrameLayout root;final View loadingView;WebView view;final Context context;final Store store;final boolean isOverlay;final Handler main=new Handler(Looper.getMainLooper());volatile String pendingScreen="home",paintedScreen="",pendingChat="";boolean ready=false,closed=false;
     // DOM completion, Chromium frame preparation and Android drawing are separate states.
-    String renderedScreen="",presentationUtility="";long navigationGeneration,renderedRevision=-1,visualGeneration,visualPending=-1,visualCompleted=-1;
+    String renderedScreen="",presentationUtility="",preparedPurposeDay="";long navigationGeneration,renderedRevision=-1,visualGeneration,visualPending=-1,visualCompleted=-1;
     // frameReady: drawable DOM revision, not a display fence. presentationActive: requested
     // presentation, not proof of composition. didDraw is an observation, never an exposure gate.
     boolean retainedFrame; // Valid pixels survive a DOM revision, never document loss or detach.
@@ -112,7 +112,16 @@ final class WebHost {
             if(closed||source!=view||navigation!=navigationGeneration||preparation!=startPreparation||!preparingStart)return;
             setPreparingStart(false);++startPreparation;resetVisualState("prepare-stalled");requestVisualState();
         };main.postDelayed(initialWatch,6000);
-        source.evaluateJavascript("prepareStart()",result->finishStartPreparation(source,navigation,preparation,result));
+        String order="null";try{preparedPurposeDay=java.time.LocalDate.now().toString();order=new JSONObject().put("date",preparedPurposeDay).put("scope","phone").put("purposes",store.purposes("phone")).toString();}catch(JSONException ignored){}
+        source.evaluateJavascript("prepareStart("+order+")",result->finishStartPreparation(source,navigation,preparation,result));
+    }
+    // Data-only entry refresh for a phone locked across midnight. No window, loading,
+    // readiness gate or WebView lifecycle changes; a visible page never runs this on a timer.
+    void ensurePurposeDay(){
+        String today=java.time.LocalDate.now().toString();if(closed||!ready||!Set.of("home","unlock","app").contains(renderedScreen)||today.equals(preparedPurposeDay))return;
+        try{String scope="app".equals(renderedScreen)&&GuardService.live!=null?GuardService.live.gatePkg:"phone";
+            JSONObject order=new JSONObject().put("date",today).put("scope",scope).put("purposes",store.purposes(scope));preparedPurposeDay=today;evaluate("prepareStart("+order+")");
+        }catch(JSONException e){android.util.Log.w("LockyBriefing","Daily purpose data unavailable");}
     }
     void finishStartPreparation(WebView source,long navigation,long preparation,String result){
         if(closed||!preparingStart||source!=view||navigation!=navigationGeneration||preparation!=startPreparation)return;
@@ -305,6 +314,7 @@ final class WebHost {
         main.post(()->{
             if(closed||!ready||candidate!=view||navigation!=navigationGeneration)return;
             String navJs="chat".equals(name)&&!chat.isEmpty()?"openChatById("+JSONObject.quote(chat)+","+navigation+")":"navigate("+JSONObject.quote(name)+","+navigation+")";
+            if(name.startsWith("brief|"))navJs="openBriefRoute("+JSONObject.quote(name)+","+navigation+")";
             candidate.evaluateJavascript(navJs,null);
         });
     }
@@ -353,7 +363,7 @@ final class WebHost {
             case "utility":if(g!=null)g.useUtility(a.getString("name"));else store.event("utility",a.getString("name"),context.getPackageName(),"",0);break;
             case "open":if(isOverlay&&g!=null)g.openMain(a.getString("screen"),a.optString("chat"));else if(a.optString("screen").equals("chat")&&!a.optString("chat").isEmpty())openChat(a.getString("chat"));else screen(a.getString("screen"));break;
             case "dismiss":if(isOverlay&&g!=null)g.dismissStart();else if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);break;
-            case "remember":if(!isOverlay){pendingScreen=a.optString("screen","home");store.settings.edit().putString("last-screen",a.optString("screen","home")).putString("last-chat",a.optString("chat")).putString("last-note",a.optString("note")).apply();}break;
+            case "remember":if(!isOverlay){if(a.has("briefTarget"))store.settings.edit().putString("last-brief",a.getJSONObject("briefTarget").toString()).apply();pendingScreen=a.optString("screen","home");store.settings.edit().putString("chat-return",a.optString("chatReturn","chats")).putString("chats-return",a.optString("chatsReturn","home")).putString("last-screen",a.optString("screen","home")).putString("last-chat",a.optString("chat")).putString("last-note",a.optString("note")).apply();}break;
             case "dictionaries":out=Links.dictionaries(context);break;
             case "dictionaryChoice":store.settings.edit().putString("dictionary",a.getString("id")).apply();break;
             case "exit":if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);break;
@@ -365,7 +375,7 @@ final class WebHost {
             case "linkTest":Intent link=Links.intent(context,a.optString("pkg"),a.optString("uri"));if(link==null)throw new IllegalArgumentException("이 앱에서 지원하는 연결인지 확인해 주세요. 딥링크는 앱마다 달라요.");if(isOverlay&&g!=null)g.hideOverlay();context.startActivity(link.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));break;
             case "saveNote":store.note(a);break;
             case "deleteNote":store.getWritableDatabase().delete("notes","id=?",new String[]{a.getString("id")});break;
-            case "settings":saveSettings(a);if(a.has("themeMode"))main.post(()->{for(var ref:hosts){WebHost h=ref.get();if(h!=null&&!h.closed)h.applyTheme();}});if(g!=null)g.policyChanged();Scheduler.schedule(context);break;
+            case "settings":if(g!=null)g.flushOnMain();saveSettings(a);if(a.has("themeMode"))main.post(()->{for(var ref:hosts){WebHost h=ref.get();if(h!=null&&!h.closed)h.applyTheme();}});if(g!=null)g.policyChanged();LockyApp.app.work.execute(()->Scheduler.fire(context));break;
             case "rule":String pkg=a.getString("pkg");if(pkg.equals(context.getPackageName()))throw new IllegalArgumentException("Locky는 관리 대상으로 지정할 수 없습니다.");String mode=a.optString("mode");JSONObject prior=store.rule(pkg);
                 String key="rule-memory:"+pkg;JSONObject memory=new JSONObject(store.settings.getString(key,"{}"));if(mode.equals("restore"))mode=memory.optString("mode","limited");
                 if(mode.equals("none")){if(prior!=null)memory=prior;store.getWritableDatabase().delete("rules","pkg=?",new String[]{pkg});store.settings.edit().remove("blocked-until:"+pkg).putString(key,memory.toString()).apply();}
@@ -374,7 +384,11 @@ final class WebHost {
                     if(prior==null||!prior.optString("mode").equals(mode)||limit>prior.optInt("minutes",60))editor.remove("blocked-until:"+pkg);editor.apply();
                 }
                 JSONArray seen=new JSONArray(store.settings.getString("rule-seen","[]"));boolean found=false;for(int j=0;j<seen.length();j++)if(seen.getString(j).equals(pkg))found=true;if(!found){seen.put(pkg);store.settings.edit().putString("rule-seen",seen.toString()).apply();}if(g!=null)g.policyChanged();break;
-            case "brief":out=Briefing.build(context,a.optInt("days",1)==7?7:1,Math.max(0,Math.min(179,a.optLong("offset",0))));break;
+            case "brief":{
+                if(a.optString("kind").equals("focus"))out=Briefing.focusResult(context,a.getString("key"));
+                else {long offset=a.has("date")?java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.parse(a.getString("date")),java.time.LocalDate.now()):a.optLong("offset",0);out=Briefing.build(context,a.optInt("days",1)==7?7:1,Math.max(0,Math.min(179,offset)));}break;
+            }
+            case "purposeOrder":{String scope=a.optString("scope","phone");out=new JSONObject().put("date",java.time.LocalDate.now().toString()).put("scope",scope).put("purposes",store.purposes(scope));break;}
             case "copyDay":{
                 String exportText=Briefing.rawDay(context,Math.max(0,Math.min(179,a.optInt("offset",0)))).toString(2);
                 main.post(()->{try{
@@ -415,18 +429,29 @@ final class WebHost {
     JSONObject resolvePurpose(JSONObject a) throws Exception {if(a.has("label"))return store.purpose(a,a.optString("scope","phone"));JSONArray p=store.rows("SELECT * FROM purposes WHERE id=?",a.getString("id"));if(p.length()==0)throw new IllegalStateException("사용 목적을 다시 선택해 주세요.");return p.getJSONObject(0);}
     void saveSettings(JSONObject a) throws Exception {
         if(a.has("unlockDiagnostics"))UnlockDiagnostics.get(context).setEnabled(a.getBoolean("unlockDiagnostics"));
-        var e=store.settings.edit();if(a.has("enabled"))e.putBoolean("enabled",a.getBoolean("enabled"));
+        var e=store.settings.edit();
         if(a.has("floatingTimer"))e.putBoolean("floatingTimer",a.getBoolean("floatingTimer"));
         if(a.has("startUnderKeyguard"))e.putBoolean("start-under-keyguard",a.getBoolean("startUnderKeyguard"));
         if(a.has("themeMode")){String value=a.getString("themeMode");if(!Set.of("system","light","dark").contains(value))throw new IllegalArgumentException("화면 테마를 다시 선택해 주세요.");e.putString("theme-mode",value);}
-        if(a.has("start")||a.has("end")){int start=a.optInt("start",store.settings.getInt("start",540)),end=a.optInt("end",store.settings.getInt("end",1260));if(start<0||start>1439||end<0||end>1439||start==end)throw new IllegalArgumentException("서로 다른 시작·종료 시간을 선택해 주세요.");e.putInt("start",start).putInt("end",end);}
+        if(a.has("start")||a.has("end")){int start=a.optInt("start",store.settings.getInt("start",540)),end=a.optInt("end",store.settings.getInt("end",1260));if(start<0||start>1439||end<0||end>1439||start==end)throw new IllegalArgumentException("서로 다른 시작·종료 시간을 선택해 주세요.");}
         if(a.has("reminders")){JSONArray input=a.getJSONArray("reminders"),values=new JSONArray();Set<Integer> seen=new HashSet<>();for(int i=0;i<input.length();i++){int m=input.getInt(i);if(m>=1&&m<=180&&seen.add(m))values.put(m);}e.putString("reminders",values.toString());}
         if(a.has("weeklyDay"))e.putInt("weeklyDay",Math.max(1,Math.min(7,a.getInt("weeklyDay"))));
-        if(a.has("model")){String model=a.getString("model");JSONArray models=new JSONArray(store.settings.getString("models","[]"));boolean valid=false;for(int i=0;i<models.length();i++)if(models.getJSONObject(i).getString("slug").equals(model))valid=true;if(!valid)throw new IllegalArgumentException("연결된 계정의 모델을 선택해 주세요.");e.putString("model",model);}e.apply();
+        if(a.has("dailyBrief"))e.putBoolean("dailyBrief",a.getBoolean("dailyBrief"));
+        if(a.has("focusBrief"))e.putBoolean("focusBrief",a.getBoolean("focusBrief"));
+        if(a.has("dailyBriefTime")){int minute=a.getInt("dailyBriefTime");if(minute<0||minute>1439)throw new IllegalArgumentException("알림 시각을 확인해 주세요.");e.putInt("dailyBriefTime",minute);}
+        if(a.has("model")){String model=a.getString("model");JSONArray models=new JSONArray(store.settings.getString("models","[]"));boolean valid=false;for(int i=0;i<models.length();i++)if(models.getJSONObject(i).getString("slug").equals(model))valid=true;if(!valid)throw new IllegalArgumentException("연결된 계정의 모델을 선택해 주세요.");e.putString("model",model);}
+        if(a.has("enabled")||a.has("start")||a.has("end"))store.saveFocus(a.optBoolean("enabled",store.settings.getBoolean("enabled",true)),a.optInt("start",store.settings.getInt("start",540)),a.optInt("end",store.settings.getInt("end",1260)),"user");
+        e.apply();
+    }
+    JSONObject purposeOrders() throws JSONException {
+        Set<String> scopes=new HashSet<>(Set.of("phone","app"));JSONArray purposes=store.rows("SELECT DISTINCT scope FROM purposes"),rules=store.rows("SELECT pkg FROM rules");
+        for(int i=0;i<purposes.length();i++)scopes.add(purposes.getJSONObject(i).getString("scope"));for(int i=0;i<rules.length();i++)scopes.add(rules.getJSONObject(i).getString("pkg"));
+        if(isOverlay&&GuardService.live!=null&&!GuardService.live.gatePkg.isEmpty())scopes.add(GuardService.live.gatePkg);
+        JSONObject orders=new JSONObject();for(String scope:scopes)orders.put(scope,store.purposes(scope));return orders;
     }
     JSONObject state() throws Exception {
-        JSONObject status=new JSONObject().put("accessibility",GuardService.live!=null).put("drawOverlays",Settings.canDrawOverlays(context)).put("startWindow",GuardService.live==null?UnlockDiagnostics.get(context).windowStatus().put("status","service-off"):GuardService.live.startWindowStatus()).put("unlockDiagnostics",UnlockDiagnostics.get(context).status()).put("usage",UsageReader.allowed(context)).put("notifications",context.getSystemService(NotificationManager.class).areNotificationsEnabled()).put("exact",Build.VERSION.SDK_INT<31||context.getSystemService(AlarmManager.class).canScheduleExactAlarms()).put("liveTimer",Notices.timerStatus(context));
-        return new JSONObject().put("overlay",isOverlay).put("prefs",store.preferences()).put("status",status).put("free",!store.managed(System.currentTimeMillis())).put("gate",GuardService.live==null?new JSONObject():GuardService.live.state()).put("purposes",store.purposes(isOverlay&&GuardService.live!=null&&!GuardService.live.gatePkg.isEmpty()?GuardService.live.gatePkg:"phone")).put("allPurposes",store.rows("SELECT * FROM purposes ORDER BY rowid")).put("notes",store.rows("SELECT * FROM notes ORDER BY updated DESC")).put("chats",store.rows("SELECT * FROM chats ORDER BY updated DESC")).put("rules",store.rows("SELECT * FROM rules ORDER BY label")).put("models",new JSONArray(store.settings.getString("models","[]"))).put("accounts",LockyApp.app.auth.accounts()).put("connection",LockyApp.app.auth.connection()).put("busy",LockyApp.app.chat.busy.get()).put("activeChat",LockyApp.app.chat.active).put("chatError",LockyApp.app.chat.error).put("ruleSeen",new JSONArray(store.settings.getString("rule-seen","[]"))).put("dictionary",store.settings.getString("dictionary","")).put("savedChat",store.settings.getString("last-chat","")).put("savedNote",store.settings.getString("last-note",""));
+        JSONObject status=new JSONObject().put("accessibility",GuardService.live!=null).put("drawOverlays",Settings.canDrawOverlays(context)).put("startWindow",GuardService.live==null?UnlockDiagnostics.get(context).windowStatus().put("status","service-off"):GuardService.live.startWindowStatus()).put("unlockDiagnostics",UnlockDiagnostics.get(context).status()).put("usage",UsageReader.allowed(context)).put("notifications",context.getSystemService(NotificationManager.class).areNotificationsEnabled()).put("exact",Build.VERSION.SDK_INT<31||context.getSystemService(AlarmManager.class).canScheduleExactAlarms()).put("briefing",Notices.briefingStatus(context)).put("liveTimer",Notices.timerStatus(context));
+        return new JSONObject().put("savedBrief",new JSONObject(store.settings.getString("last-brief","{}"))).put("purposeDate",java.time.LocalDate.now().toString()).put("purposeOrders",purposeOrders()).put("chatReturn",store.settings.getString("chat-return","chats")).put("chatsReturn",store.settings.getString("chats-return","home")).put("overlay",isOverlay).put("prefs",store.preferences()).put("status",status).put("free",!store.managed(System.currentTimeMillis())).put("gate",GuardService.live==null?new JSONObject():GuardService.live.state()).put("purposes",store.purposes(isOverlay&&GuardService.live!=null&&!GuardService.live.gatePkg.isEmpty()?GuardService.live.gatePkg:"phone")).put("allPurposes",store.rows("SELECT * FROM purposes ORDER BY rowid")).put("notes",store.rows("SELECT * FROM notes ORDER BY updated DESC")).put("chats",store.rows("SELECT * FROM chats ORDER BY updated DESC")).put("rules",store.rows("SELECT * FROM rules ORDER BY label")).put("models",new JSONArray(store.settings.getString("models","[]"))).put("accounts",LockyApp.app.auth.accounts()).put("connection",LockyApp.app.auth.connection()).put("busy",LockyApp.app.chat.busy.get()).put("activeChat",LockyApp.app.chat.active).put("chatError",LockyApp.app.chat.error).put("ruleSeen",new JSONArray(store.settings.getString("rule-seen","[]"))).put("dictionary",store.settings.getString("dictionary","")).put("savedChat",store.settings.getString("last-chat","")).put("savedNote",store.settings.getString("last-note",""));
     }
     JSONArray apps() throws Exception {
         Intent launcher=new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);List<ResolveInfo> list=context.getPackageManager().queryIntentActivities(launcher,0);Set<String> seen=new HashSet<>();JSONArray out=new JSONArray();list.sort(Comparator.comparing(x->x.loadLabel(context.getPackageManager()).toString()));
@@ -446,6 +471,7 @@ final class WebHost {
             context.startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:"+context.getPackageName())).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));return;
         }
         if(isOverlay&&GuardService.live!=null){GuardService.live.openMain("setup");return;}
+        if(name.equals("briefChannel")){context.startActivity(Notices.briefingSettings(context).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));return;}
         if(name.equals("liveTimer")||name.equals("timerChannel")){context.startActivity(Notices.timerSettings(context,name.equals("liveTimer")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));return;}
         if(name.equals("notification")&&Build.VERSION.SDK_INT>=33&&context instanceof Activity){((Activity)context).requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS},4);return;}
         Intent i=switch(name){case "accessibility"->new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);case "usage"->new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS);case "exact"->Build.VERSION.SDK_INT>=31?new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:"+context.getPackageName())):new Intent(Settings.ACTION_SETTINGS);case "battery"->new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);case "notification"->new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,context.getPackageName());default->throw new IllegalArgumentException("권한을 찾을 수 없습니다.");};context.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));

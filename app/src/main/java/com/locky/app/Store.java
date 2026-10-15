@@ -11,8 +11,8 @@ final class Store extends SQLiteOpenHelper {
     static volatile Store instance;
     static Store get(Context c) { if(instance==null)synchronized(Store.class){if(instance==null)instance=new Store(c.getApplicationContext());}return instance; }
     final android.content.SharedPreferences settings;
-    final Context context;
-    private Store(Context c) { super(c,"locky.db",null,3);context=c; settings=c.getSharedPreferences("locky-settings",0);if(!settings.contains("usage-excluded"))settings.edit().putStringSet("usage-excluded",new HashSet<>(Set.of("com.samsung.android.sidegesturepad"))).apply();setWriteAheadLoggingEnabled(true); }
+    final Context context;private long lastObservation;
+    private Store(Context c) { super(c,"locky.db",null,4);context=c; settings=c.getSharedPreferences("locky-settings",0);if(!settings.contains("usage-excluded"))settings.edit().putStringSet("usage-excluded",new HashSet<>(Set.of("com.samsung.android.sidegesturepad"))).apply();setWriteAheadLoggingEnabled(true); }
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE purposes(id TEXT PRIMARY KEY,label TEXT NOT NULL,pkg TEXT NOT NULL DEFAULT '',uri TEXT NOT NULL DEFAULT '',aimless INTEGER NOT NULL DEFAULT 0,scope TEXT NOT NULL DEFAULT '*')");
         db.execSQL("CREATE TABLE rules(pkg TEXT PRIMARY KEY,label TEXT NOT NULL,mode TEXT NOT NULL,minutes INTEGER NOT NULL)");
@@ -23,6 +23,10 @@ final class Store extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE chats(id TEXT PRIMARY KEY,title TEXT NOT NULL,updated INTEGER NOT NULL)");
         db.execSQL("CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT,chat TEXT NOT NULL,role TEXT NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL,time INTEGER NOT NULL,citations TEXT NOT NULL DEFAULT '[]')");
         createQuickRequests(db);
+        createBriefingTables(db);
+        db.execSQL("ALTER TABLE usage ADD COLUMN source TEXT NOT NULL DEFAULT 'accessibility'");
+        db.execSQL("ALTER TABLE usage ADD COLUMN rule_mode TEXT NOT NULL DEFAULT 'unknown'");
+        db.execSQL("ALTER TABLE usage ADD COLUMN surface TEXT NOT NULL DEFAULT 'unknown'");
         seedPurposes(db);
     }
     private void seedPurposes(SQLiteDatabase db) {
@@ -32,6 +36,7 @@ final class Store extends SQLiteOpenHelper {
         for(String[] p:apps)db.execSQL("INSERT OR IGNORE INTO purposes(id,label,aimless,scope) VALUES(?,?,?,'app')",new Object[]{p[0],p[1],Integer.parseInt(p[2])});
     }
     @Override public void onUpgrade(SQLiteDatabase db,int old,int next) {
+        if(old<4&&next>=4){createBriefingTables(db);db.execSQL("ALTER TABLE usage ADD COLUMN surface TEXT NOT NULL DEFAULT 'unknown'");db.execSQL("ALTER TABLE usage ADD COLUMN rule_mode TEXT NOT NULL DEFAULT 'unknown'");db.execSQL("ALTER TABLE usage ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy'");}
         if(old<3)createQuickRequests(db);
         if(old<2) {
             db.execSQL("UPDATE purposes SET scope='phone' WHERE scope='*'");
@@ -46,6 +51,49 @@ final class Store extends SQLiteOpenHelper {
             }}
         }
     }
+    private void createBriefingTables(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE focus_config_history(id INTEGER PRIMARY KEY AUTOINCREMENT,effective INTEGER NOT NULL,enabled INTEGER NOT NULL,start INTEGER NOT NULL,end INTEGER NOT NULL,zone TEXT NOT NULL,reason TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE service_observations(id INTEGER PRIMARY KEY AUTOINCREMENT,time INTEGER NOT NULL,kind TEXT NOT NULL,interactive INTEGER NOT NULL)");
+        db.execSQL("CREATE INDEX observation_time ON service_observations(time)");
+        db.execSQL("CREATE INDEX focus_effective ON focus_config_history(effective,id)");
+        db.execSQL("CREATE TABLE briefing_results(key TEXT PRIMARY KEY,start INTEGER NOT NULL,end INTEGER NOT NULL,body TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE briefing_delivery(key TEXT PRIMARY KEY,state TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL)");
+    }
+    @Override public void onOpen(SQLiteDatabase db) {
+        super.onOpen(db);
+        // SQLite is authoritative. Preferences are a projection for existing enforcement code.
+        // A crash after the DB commit is repaired here before any policy is read.
+        try(Cursor c=db.rawQuery("SELECT enabled,start,end FROM focus_config_history ORDER BY effective DESC,id DESC LIMIT 1",null)) {
+            if(c.moveToFirst())settings.edit().putBoolean("enabled",c.getInt(0)==1).putInt("start",c.getInt(1)).putInt("end",c.getInt(2)).commit();
+            else insertFocus(db,System.currentTimeMillis(),settings.getBoolean("enabled",true),settings.getInt("start",540),settings.getInt("end",1260),ZoneId.systemDefault().getId(),"initial");
+        }
+    }
+    private long insertFocus(SQLiteDatabase db,long at,boolean enabled,int start,int end,String zone,String reason){
+        ContentValues v=new ContentValues();v.put("effective",at);v.put("enabled",enabled?1:0);v.put("start",start);v.put("end",end);v.put("zone",zone);v.put("reason",reason);
+        return db.insertOrThrow("focus_config_history",null,v);
+    }
+    synchronized void saveFocus(boolean enabled,int start,int end,String reason) throws JSONException {
+        if(start<0||start>1439||end<0||end>1439||start==end)throw new IllegalArgumentException("서로 다른 시작·종료 시간을 선택해 주세요.");
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            JSONObject last=rows("SELECT * FROM focus_config_history ORDER BY effective DESC,id DESC LIMIT 1").getJSONObject(0);
+            String zone=ZoneId.systemDefault().getId();
+            if(last.optInt("enabled")== (enabled?1:0)&&last.optInt("start")==start&&last.optInt("end")==end&&zone.equals(last.optString("zone"))){db.setTransactionSuccessful();return;}
+            long at=System.currentTimeMillis();
+            // A backwards clock cannot silently overwrite an already-effective configuration.
+            if(at<last.getLong("effective"))throw new IllegalStateException("기기 시각을 확인한 뒤 집중시간을 변경해 주세요.");
+            insertFocus(db,at,enabled,start,end,zone,reason);db.setTransactionSuccessful();
+        } finally {db.endTransaction();}
+        settings.edit().putBoolean("enabled",enabled).putInt("start",start).putInt("end",end).commit();
+    }
+    synchronized void syncFocusZone() {
+        try {getWritableDatabase();saveFocus(settings.getBoolean("enabled",true),settings.getInt("start",540),settings.getInt("end",1260),"timezone");}
+        catch(JSONException e){throw new IllegalStateException(e);}
+    }
+    synchronized void observe(String kind,boolean interactive){
+        long now=System.currentTimeMillis();if(kind.equals("checkpoint")&&now>=lastObservation&&now-lastObservation<60000)return;lastObservation=now;
+        ContentValues v=new ContentValues();v.put("time",now);v.put("kind",kind);v.put("interactive",interactive?1:0);getWritableDatabase().insertOrThrow("service_observations",null,v);
+    }
     synchronized JSONArray rows(String sql,String...args) throws JSONException {
         JSONArray out=new JSONArray();try(Cursor c=getReadableDatabase().rawQuery(sql,args)) {while(c.moveToNext()){JSONObject o=new JSONObject();for(int i=0;i<c.getColumnCount();i++){int type=c.getType(i);o.put(c.getColumnName(i),type==Cursor.FIELD_TYPE_INTEGER?c.getLong(i):type==Cursor.FIELD_TYPE_NULL?JSONObject.NULL:c.getString(i));}out.put(o);}}return out;
     }
@@ -56,7 +104,8 @@ final class Store extends SQLiteOpenHelper {
     synchronized long event(String kind,String purpose,String pkg,String target,long parent,boolean aimless) {
         ContentValues v=new ContentValues();v.put("aimless",aimless?1:0);v.put("time",System.currentTimeMillis());v.put("kind",kind);v.put("purpose",purpose);v.put("pkg",pkg);v.put("target",target);v.put("parent",parent);return getWritableDatabase().insertOrThrow("events",null,v);
     }
-    synchronized void usage(long from,long to,String pkg,String label,boolean managed,long parent) {
+    synchronized void usage(long from,long to,String pkg,String label,boolean managed,long parent) {usage(from,to,pkg,label,managed,parent,"accessibility");}
+    synchronized void usage(long from,long to,String pkg,String label,boolean managed,long parent,String source) {
         if(to<=from||pkg.isEmpty()||UsageReader.excluded(context,pkg))return;
         // Accessibility observation owns a span. Recovery fills only uncovered gaps,
         // even when an overlay/system pause was recorded under another package.
@@ -65,14 +114,16 @@ final class Store extends SQLiteOpenHelper {
             while(c.moveToNext()){long a=c.getLong(0),b=c.getLong(1);if(a>cursor)gaps.add(new long[]{cursor,Math.min(a,to)});cursor=Math.max(cursor,b);if(cursor>=to)break;}
         }
         if(cursor<to)gaps.add(new long[]{cursor,to});
-        for(long[] gap:gaps)appendUsage(gap[0],gap[1],pkg,label,managed,parent);
+        GuardService guard=GuardService.live;String surface=pkg.equals(context.getPackageName())?"internal":"external";
+        if(source.equals("accessibility")&&guard!=null&&guard.dictionaryHost!=null&&guard.utility.equals("사전")&&guard.dictionaryHost.packages.contains(pkg))surface="dictionary-tool";
+        for(long[] gap:gaps)appendUsage(gap[0],gap[1],pkg,label,managed,parent,source,surface);
     }
-    private void appendUsage(long from,long to,String pkg,String label,boolean managed,long parent) {
-        SQLiteDatabase d=getWritableDatabase();
-        try(Cursor c=d.rawQuery("SELECT id,end,pkg,label,managed,parent FROM usage ORDER BY id DESC LIMIT 1",null)) {
-            if(c.moveToFirst()&&c.getLong(1)==from&&pkg.equals(c.getString(2))&&label.equals(c.getString(3))&&c.getInt(4)==(managed?1:0)&&c.getLong(5)==parent){ContentValues update=new ContentValues();update.put("end",to);d.update("usage",update,"id=?",new String[]{""+c.getLong(0)});return;}
+    private void appendUsage(long from,long to,String pkg,String label,boolean managed,long parent,String source,String surface) {
+        SQLiteDatabase d=getWritableDatabase();JSONObject policy=rule(pkg);String mode=source.equals("accessibility")?(policy==null?"none":policy.optString("mode")):"unknown";
+        try(Cursor c=d.rawQuery("SELECT id,end,pkg,label,managed,parent,source,rule_mode,surface FROM usage ORDER BY id DESC LIMIT 1",null)) {
+            if(c.moveToFirst()&&c.getLong(1)==from&&pkg.equals(c.getString(2))&&label.equals(c.getString(3))&&c.getInt(4)==(managed?1:0)&&c.getLong(5)==parent&&source.equals(c.getString(6))&&mode.equals(c.getString(7))&&surface.equals(c.getString(8))){ContentValues update=new ContentValues();update.put("end",to);d.update("usage",update,"id=?",new String[]{""+c.getLong(0)});return;}
         }
-        ContentValues v=new ContentValues();v.put("start",from);v.put("end",to);v.put("pkg",pkg);v.put("label",label);v.put("managed",managed?1:0);v.put("parent",parent);d.insertOrThrow("usage",null,v);
+        ContentValues v=new ContentValues();v.put("surface",surface);v.put("rule_mode",mode);v.put("source",source);v.put("start",from);v.put("end",to);v.put("pkg",pkg);v.put("label",label);v.put("managed",managed?1:0);v.put("parent",parent);d.insertOrThrow("usage",null,v);
     }
     synchronized long used(String pkg,long now) {
         if(UsageReader.excluded(context,pkg))return 0;
@@ -91,7 +142,7 @@ final class Store extends SQLiteOpenHelper {
     }
     JSONObject rule(String pkg) {try{JSONArray a=rows("SELECT * FROM rules WHERE pkg=?",pkg);return a.length()==0?null:a.getJSONObject(0);}catch(JSONException e){throw new IllegalStateException(e);} }
     synchronized JSONArray purposes(String scope) throws JSONException {
-        JSONArray rows=rows("SELECT * FROM purposes WHERE scope=? OR scope=? ORDER BY rowid",scope,scope.equals("phone")?"phone":"app");Map<String,JSONObject> byId=new LinkedHashMap<>();for(int i=0;i<rows.length();i++)byId.put(rows.getJSONObject(i).getString("id"),rows.getJSONObject(i));
+        JSONArray rows=rows("SELECT * FROM purposes WHERE scope=? OR scope=? OR (scope='*' AND ?='phone') ORDER BY rowid",scope,scope.equals("phone")?"phone":"app",scope);Map<String,JSONObject> byId=new LinkedHashMap<>();for(int i=0;i<rows.length();i++)byId.put(rows.getJSONObject(i).getString("id"),rows.getJSONObject(i));
         JSONArray out=new JSONArray();for(String id:Rules.shuffle(new ArrayList<>(byId.keySet()),LocalDate.now().toString(),scope))out.put(byId.get(id));return out;
     }
     synchronized JSONObject purpose(JSONObject input,String scope) throws JSONException {
@@ -136,6 +187,6 @@ final class Store extends SQLiteOpenHelper {
     synchronized void citations(long id,JSONArray links){ContentValues v=new ContentValues();v.put("citations",links.toString());getWritableDatabase().update("messages",v,"id=?",new String[]{""+id});}
     synchronized void deleteChat(String id) {SQLiteDatabase d=getWritableDatabase();d.beginTransaction();try {d.delete("messages","chat=?",new String[]{id});d.delete("chats","id=?",new String[]{id});d.setTransactionSuccessful();}finally{d.endTransaction();}}
     boolean managed(long time) {return settings.getBoolean("enabled",true)&&Rules.managed(Rules.minute(time,ZoneId.systemDefault()),settings.getInt("start",540),settings.getInt("end",1260));}
-    JSONObject preferences() throws JSONException {return new JSONObject().put("enabled",settings.getBoolean("enabled",true)).put("startUnderKeyguard",settings.getBoolean("start-under-keyguard",true)).put("floatingTimer",settings.getBoolean("floatingTimer",true)).put("start",settings.getInt("start",540)).put("end",settings.getInt("end",1260)).put("reminders",new JSONArray(settings.getString("reminders","[30,20,10,5,1]"))).put("weeklyDay",settings.getInt("weeklyDay",7)).put("model",settings.getString("model","")).put("themeMode",UiTheme.mode(context));}
-    synchronized void cleanOldUsage() {long cutoff=System.currentTimeMillis()-180L*86400000;getWritableDatabase().delete("usage","end<?",new String[]{""+cutoff});getWritableDatabase().delete("events","time<?",new String[]{""+cutoff});}
+    JSONObject preferences() throws JSONException {return new JSONObject().put("enabled",settings.getBoolean("enabled",true)).put("startUnderKeyguard",settings.getBoolean("start-under-keyguard",true)).put("floatingTimer",settings.getBoolean("floatingTimer",true)).put("start",settings.getInt("start",540)).put("end",settings.getInt("end",1260)).put("reminders",new JSONArray(settings.getString("reminders","[30,20,10,5,1]"))).put("dailyBrief",settings.getBoolean("dailyBrief",true)).put("dailyBriefTime",settings.getInt("dailyBriefTime",540)).put("focusBrief",settings.getBoolean("focusBrief",true)).put("weeklyDay",settings.getInt("weeklyDay",7)).put("model",settings.getString("model","")).put("themeMode",UiTheme.mode(context));}
+    synchronized void cleanOldUsage() {long cutoff=System.currentTimeMillis()-180L*86400000;getWritableDatabase().delete("service_observations","time<?",new String[]{""+cutoff});getWritableDatabase().delete("usage","end<?",new String[]{""+cutoff});getWritableDatabase().delete("events","time<?",new String[]{""+cutoff});}
 }

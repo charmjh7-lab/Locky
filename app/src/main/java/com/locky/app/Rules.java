@@ -25,7 +25,11 @@ final class Rules {
     static int dailyMinutes(int value) { return Math.max(5,Math.min(120,value)); }
     static int sessionMinutes(int value) { return Math.max(5,Math.min(10,value)); }
     static long grant(long dailyRemaining,int minutes) { return Math.max(0,Math.min(dailyRemaining,sessionMinutes(minutes)*60000L)); }
+    static long dailyRank(String date,String scope,String id){long h=0xcbf29ce484222325L;for(char c:(date+"|"+scope+"|"+id).toCharArray()){h^=c;h*=0x100000001b3L;}h^=h>>>33;h*=0xff51afd7ed558ccdL;h^=h>>>33;return h;}
     static List<String> shuffle(List<String> values,String date,String scope) {
-        List<String> out=new ArrayList<>(values);Collections.shuffle(out,new Random(scope.hashCode()));if(!out.isEmpty())Collections.rotate(out,(int)Math.floorMod(LocalDate.parse(date).toEpochDay(),out.size()));return out;
+        // A per-ID rank preserves all existing relative positions when a preset is edited,
+        // added or removed. Date and scope independently seed the daily permutation.
+        List<String> out=new ArrayList<>(values);
+        out.sort(Comparator.<String>comparingLong(id->dailyRank(date,scope,id)).thenComparing(id->id));return out;
     }
 }
