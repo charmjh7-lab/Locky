@@ -22,14 +22,14 @@ final class WebHost {
     static final List<WeakReference<WebHost>> hosts=new CopyOnWriteArrayList<>();
     final android.widget.FrameLayout root;final View loadingView;WebView view;final Context context;final Store store;final boolean isOverlay;final Handler main=new Handler(Looper.getMainLooper());volatile String pendingScreen="home",paintedScreen="",pendingChat="";boolean ready=false,closed=false;
     // DOM completion, Chromium frame preparation and Android drawing are separate states.
-    String renderedScreen="",presentationUtility="",preparedPurposeDay="";long navigationGeneration,renderedRevision=-1,visualGeneration,visualPending=-1,visualCompleted=-1;
+    String renderedScreen="",preparedPurposeDay="";long navigationGeneration,renderedRevision=-1,visualGeneration,visualPending=-1,visualCompleted=-1;
     // frameReady: drawable DOM revision, not a display fence. presentationActive: requested
     // presentation, not proof of composition. didDraw is an observation, never an exposure gate.
     boolean retainedFrame; // Valid pixels survive a DOM revision, never document loss or detach.
     boolean frameReady,presentationActive,everRendered,loadFailed,renderingActive;int initialRetries;
     long observedDrawGeneration=-1,commitRequestedGeneration=-1;Boolean insetKeyboard;
     private Runnable initialWatch,visualWatch;int visualRetryCount;
-    Runnable firstFrameCallback,frameAvailableCallback;
+    Runnable frameAvailableCallback;
     // Bounded Logcat plus opt-in private recording. Never log user content or package names.
     private static int traceBudget,traceCycle;private static long traceUntil;
     static boolean tracing(){return (UnlockDiagnostics.live!=null&&UnlockDiagnostics.live.enabled())||BuildConfig.DEBUG||android.util.Log.isLoggable("LockyUnlock",android.util.Log.DEBUG);}
@@ -90,7 +90,7 @@ final class WebHost {
         if(ready)evaluate("themeChanged("+UiTheme.dark(context)+");viewportChanged()");
     }
     void resetVisualState(String reason){if(role==Role.PHONE_START)return;if(!"dom".equals(reason))retainedFrame=false;if(tracing())hostTrace("frameReady="+frameReady+"->false reason="+reason+" generation="+(visualGeneration+1));if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}++visualGeneration;visualPending=-1;visualCompleted=-1;frameReady=false;paintedScreen="";visualRetryCount=0;}
-    void showLoading(){if(role==Role.PHONE_START){cancelInitialWatch();return;}presentationUtility="";cancelInitialWatch();resetVisualState("document");renderedRevision=-1;renderedScreen="";if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);if(isOverlay&&view!=null)view.setVisibility(View.INVISIBLE);}
+    void showLoading(){if(role==Role.PHONE_START){cancelInitialWatch();return;}cancelInitialWatch();resetVisualState("document");renderedRevision=-1;renderedScreen="";if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);if(isOverlay&&view!=null)view.setVisibility(View.INVISIBLE);}
     void rendered(WebView source,String screen,long navigation,long revision){
         if(closed||source!=view||!ready||navigation!=navigationGeneration||revision<0||revision<renderedRevision)return;
         if(isOverlay&&!pendingScreen.equals(screen))return;
@@ -209,10 +209,7 @@ final class WebHost {
         long generation=visualGeneration;String screen=renderedScreen;
         main.post(()->{if(!closed&&source==view&&presentationActive&&frameReady&&generation==visualGeneration&&visualCompleted!=generation&&root.isShown()){
             visualCompleted=generation;paintedScreen=screen;if(tracing())hostTrace("view-draw observed generation="+generation);
-            // Recording may write SQLite. Keep it out of immediate navigation and do it
-            // only after this presentation actually drew, independently of request storage.
-            if(!presentationUtility.isEmpty()){String name=presentationUtility;presentationUtility="";GuardService g=GuardService.live;if(g!=null&&g.overlay==this)g.useUtility(name);}
-            if(firstFrameCallback!=null){Runnable r=firstFrameCallback;firstFrameCallback=null;r.run();}
+
         }});
     }
     private void cancelInitialWatch(){if(initialWatch!=null){main.removeCallbacks(initialWatch);initialWatch=null;}}
@@ -283,7 +280,6 @@ final class WebHost {
     void presented(WebView source,String screen,long previous,long navigation,String chat){
         if(closed||source!=view||!ready||previous!=navigationGeneration||navigation!=previous+1
             ||!Set.of("chat","chats","unlock").contains(screen))return;
-        GuardService g=GuardService.live;
         if(role==Role.APP_GATE)return;
         // JS has already built the next screen in this document. Do not navigate/load,
         // hide the WebView or show the native loading surface. rendered(revision) owns validation.

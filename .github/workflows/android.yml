@@ -60,10 +60,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - uses: android-actions/setup-android@v3
-        with:
-          packages: 'platform-tools platforms;android-36 build-tools;35.0.0'
-          log-accepted-android-sdk-licenses: false
+      - name: Use installed Android SDK
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          missing=()
+          test -f "$ANDROID_HOME/platforms/android-36/android.jar" || missing+=("platforms;android-36")
+          test -x "$ANDROID_HOME/build-tools/35.0.0/apksigner" || missing+=("build-tools;35.0.0")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            yes | "$sdkmanager" --licenses > /dev/null || true
+            "$sdkmanager" --install "${missing[@]}"
+          fi
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
@@ -74,7 +80,7 @@ jobs:
       - name: Phone start and quick chat interactions
         run: |
           npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright
-          npx playwright install --with-deps chromium --only-shell
+          export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="$(command -v google-chrome || command -v chromium)"
           node scripts/phone-start-ui-test.cjs
           node scripts/quick-chat-ui-test.cjs
       - name: Focused UI platform regressions, lint and signed release APK
