@@ -184,7 +184,7 @@ public final class GuardService extends AccessibilityService {
         floatingTimer.update(visible,foreground,sessionEvent,rule==null?"":rule.optString("label"),purpose,sessionRemaining,dailyRemaining(foreground));
     }
     void hideFloatingTimer(){if(floatingTimer!=null)floatingTimer.hide();}
-    @Override public void onConfigurationChanged(android.content.res.Configuration config){super.onConfigurationChanged(config);if(overlay!=null)overlay.syncTheme();hideFloatingTimer();syncFloatingTimer();if(overlayVisible&&overlay!=null)revealOverlay();}
+    @Override public void onConfigurationChanged(android.content.res.Configuration config){super.onConfigurationChanged(config);if(overlay!=null)overlay.applyTheme();hideFloatingTimer();syncFloatingTimer();if(overlayVisible&&overlay!=null)revealOverlay();}
     long lastNotice=-1;
     void prepareUnlock(){boolean reused=overlay!=null&&gate.equals("unlock")&&overlay.pendingScreen.equals("unlock")&&!interactive;showGate("unlock","");if(reused&&overlay!=null)overlay.evaluate("Promise.resolve(flushMemo()).then(()=>reshufflePurposesForStart())");utility="첫 화면";unlockChecks=0;}
     void showGate(String type,String pkg){

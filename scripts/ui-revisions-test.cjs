@@ -22,7 +22,7 @@ const briefing={days:1,date:'2026-10-14',start:1,total:660000,unlocks:2,aimless:
    setTimeout(()=>receive(id,out,error),30);
   }};state=fixture;noteId='n';render();
  },{fixture,briefing});
- // Keep the restored chooser next to the utility editors; spare space remains below it.
+ // Separate upper utilities from lower selection; keep exit within the viewport.
  for(const viewport of [{width:320,height:560},{width:360,height:600},{width:390,height:780},{width:700,height:900}]){
   await page.setViewportSize(viewport);
   for(const count of [0,3,9,30]){
@@ -31,10 +31,31 @@ const briefing={days:1,date:'2026-10-14',start:1,total:660000,unlocks:2,aimless:
    const result=await page.evaluate(()=>{const box=s=>document.querySelector(s).getBoundingClientRect(),tools=box('.quick-tools'),dictionary=box('.dictionary-bar'),area=box('.start-purposes'),footer=box('.start-footer');return {toolsTop:tools.top,toolsHeight:tools.height,dictionaryBottom:dictionary.bottom,areaTop:area.top,areaBottom:area.bottom,footerTop:footer.top,footerBottom:footer.bottom,height:innerHeight,scroll:document.documentElement.scrollHeight};});
    assert(result.areaBottom<=result.footerTop+1,JSON.stringify({viewport,count,...result}));
    assert(result.footerBottom<=result.height,JSON.stringify(result));assert(result.scroll<=result.height+1,JSON.stringify(result));
-   assert(result.toolsTop<=55&&result.toolsHeight>=100,JSON.stringify(result));
-   assert(result.areaTop-result.dictionaryBottom>=7,JSON.stringify(result)); // Purpose remains below tools, anchored toward the bottom.
+   assert(result.toolsHeight>=100&&result.toolsHeight<=220,JSON.stringify(result));
+   assert(result.areaTop>=result.dictionaryBottom,JSON.stringify(result));assert(result.footerTop-result.areaBottom<=20,JSON.stringify(result));
   }
  }
+ // Representative new risks: dark contrast, large type and an IME-sized window.
+ await page.setViewportSize({width:360,height:600});
+ await page.emulateMedia({colorScheme:'dark'});
+ await page.evaluate(()=>{document.documentElement.style.fontSize='22px';state.allPurposes=Array.from({length:30},(_,i)=>({id:'large'+i,label:'긴 문구의 목적을 선택하는 경우 '+i,scope:'phone'}));screen='home';render();});
+ await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
+ const large=await page.evaluate(()=>{const direct=document.querySelector('[data-act=direct]').getBoundingClientRect(),footer=document.querySelector('.start-footer').getBoundingClientRect(),more=document.querySelector('.more-reasons').getBoundingClientRect();return {directBottom:direct.bottom,moreBottom:more.bottom,footerTop:footer.top,footerBottom:footer.bottom,height:innerHeight,scroll:document.documentElement.scrollHeight,background:getComputedStyle(document.documentElement).backgroundColor};});
+ assert(large.directBottom<=large.footerTop&&large.moreBottom<=large.footerTop&&large.footerBottom<=large.height&&large.scroll<=large.height,JSON.stringify(large));
+ assert.equal(large.background,'rgb(16, 23, 20)');
+ await page.evaluate(()=>{document.documentElement.style.fontSize='';});
+ await page.setViewportSize({width:390,height:380});
+ await page.evaluate(()=>{screen='home';state.overlay=true;render();insetsChanged(true);});
+ await page.waitForTimeout(50);
+ await page.locator('#quickQuestion').fill('키보드 중 질문 초안');
+ await page.evaluate(()=>themeChanged(false));
+ assert.equal(await page.locator('#quickQuestion').inputValue(),'키보드 중 질문 초안');
+ const ime=await page.locator('.dismiss').boundingBox();assert(ime.y>=0&&ime.y+ime.height<=380,JSON.stringify(ime));
+ await page.locator('[data-act=direct]').click();await page.locator('#purposeLabel').fill('짧은 창에서 직접 입력');
+ const save=await page.locator('#savePurpose').boundingBox();assert(save.y>=0&&save.y+save.height<=380,JSON.stringify(save));
+ await page.locator('[data-act=closeSheet]').click();
+ await page.evaluate(()=>{insetsChanged(false);delete document.documentElement.dataset.theme;});
+ await page.emulateMedia({colorScheme:'light'});
  await page.setViewportSize({width:320,height:560});
  await page.evaluate(()=>{state.allPurposes=Array.from({length:30},(_,i)=>({id:'long'+i,label:'긴 목적 '+i,scope:'app'}));screen='app';render();});
  await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));

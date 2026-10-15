@@ -135,18 +135,18 @@ final class FloatingTimer {
         service.checkpoint();service.enforce(); // Fresh values, including a possible expiry since the last tick.
         if(root==null||!pkg.equals(expectedPkg)||event!=expectedEvent)return;
         LinearLayout view=new Details();view.setOrientation(LinearLayout.VERTICAL);
-        view.setPadding(dp(16),dp(8),dp(16),dp(12));view.setBackground(background(Color.rgb(247,248,242),18));view.setElevation(dp(6));
+        view.setPadding(dp(16),dp(8),dp(16),dp(12));view.setBackground(background(UiTheme.surface(service),18));view.setElevation(dp(6));
         LinearLayout header=new LinearLayout(service);header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView app=text(17,GREEN);app.setTypeface(Typeface.DEFAULT,Typeface.BOLD);app.setText(label);app.setSingleLine();app.setEllipsize(TextUtils.TruncateAt.END);
+        TextView app=text(17,UiTheme.ink(service));app.setTypeface(Typeface.DEFAULT,Typeface.BOLD);app.setText(label);app.setSingleLine();app.setEllipsize(TextUtils.TruncateAt.END);
         header.addView(app,new LinearLayout.LayoutParams(0,-2,1));
-        close=new Button(service);close.setText("×");close.setTextSize(22);close.setTextColor(GREEN);close.setBackgroundColor(Color.TRANSPARENT);
+        close=new Button(service);close.setText("×");close.setTextSize(22);close.setTextColor(UiTheme.muted(service));close.setBackgroundColor(Color.TRANSPARENT);
         close.setPadding(0,0,0,0);close.setContentDescription("상세 정보 접기");close.setOnClickListener(v->collapse());header.addView(close,new LinearLayout.LayoutParams(dp(48),dp(48)));view.addView(header);
         LinearLayout content=new LinearLayout(service);content.setOrientation(LinearLayout.VERTICAL);
-        content.addView(textLabel("이번 사용 남은 시간"));sessionTime=text(30,GREEN);sessionTime.setTypeface(Typeface.MONOSPACE,Typeface.BOLD);content.addView(sessionTime);
+        content.addView(textLabel("이번 사용 남은 시간"));sessionTime=text(30,UiTheme.accent(service));sessionTime.setTypeface(Typeface.MONOSPACE,Typeface.BOLD);content.addView(sessionTime);
         TextView today=textLabel("오늘 남은 시간");today.setPadding(0,dp(12),0,0);content.addView(today);
-        dailyTime=text(20,GREEN);dailyTime.setTypeface(Typeface.MONOSPACE,Typeface.NORMAL);content.addView(dailyTime);
+        dailyTime=text(20,UiTheme.ink(service));dailyTime.setTypeface(Typeface.MONOSPACE,Typeface.NORMAL);content.addView(dailyTime);
         TextView reason=textLabel("사용 목적");reason.setPadding(0,dp(12),0,0);content.addView(reason);
-        purposeText=text(16,Color.rgb(35,55,46));purposeText.setPadding(0,dp(4),0,dp(12));content.addView(purposeText);
+        purposeText=text(16,UiTheme.ink(service));purposeText.setPadding(0,dp(4),0,dp(12));content.addView(purposeText);
         ScrollView scroll=new ScrollView(service);scroll.setFillViewport(false);scroll.addView(content);view.addView(scroll,new LinearLayout.LayoutParams(-1,-2));
         stop=new Button(service);stop.setText("사용 종료");stop.setTextSize(16);stop.setTextColor(Color.WHITE);stop.setBackground(background(GREEN,12));stop.setMinHeight(dp(48));
         stop.setOnClickListener(v->{
@@ -168,7 +168,7 @@ final class FloatingTimer {
 
     private void refreshPanel(){
         if(panel==null)return;
-        sessionTime.setText(format(milliseconds));sessionTime.setTextColor(milliseconds<=60_000?AMBER:GREEN);
+        sessionTime.setText(format(milliseconds));sessionTime.setTextColor(milliseconds<=60_000?(UiTheme.dark(service)?Color.rgb(240,197,129):AMBER):UiTheme.accent(service));
         dailyTime.setText(format(daily));purposeText.setText(purpose.isEmpty()?"선택한 목적 없음":purpose);
     }
 
@@ -256,7 +256,7 @@ final class FloatingTimer {
         try{window.updateViewLayout(view,params);}catch(IllegalArgumentException ignored){}
     }
     private TextView text(float size,int color){TextView v=new TextView(service);v.setTextSize(size);v.setTextColor(color);return v;}
-    private TextView textLabel(String value){TextView v=text(12,Color.rgb(104,118,106));v.setText(value);return v;}
+    private TextView textLabel(String value){TextView v=text(12,UiTheme.muted(service));v.setText(value);return v;}
     private GradientDrawable background(int color,int radius){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
     static String format(long value){long seconds=Math.max(0,(value+999)/1000);return String.format(Locale.ROOT,"%02d:%02d",seconds/60,seconds%60);}
     private int dp(int value){return Math.round(value*service.getResources().getDisplayMetrics().density);}

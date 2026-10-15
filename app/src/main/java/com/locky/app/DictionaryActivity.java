@@ -29,6 +29,7 @@ public final class DictionaryActivity extends Activity {
     }
     @Override public void onCreate(Bundle saved){
         super.onCreate(saved);
+        UiTheme.window(this);
         getWindow().setWindowAnimations(0);
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(),false);
         guard=GuardService.live;
@@ -50,6 +51,7 @@ public final class DictionaryActivity extends Activity {
         super.onResume();
         if(host!=null)host.resumeOverlay();
     }
+    @Override public void onConfigurationChanged(android.content.res.Configuration config){super.onConfigurationChanged(config);if(host!=null)host.applyTheme();}
     void readyForDictionary(){
         if(returning||launched||isFinishing()||isDestroyed()||guard==null)return;
         if(!guard.dictionaryReady(this)){returnToStart();return;}
