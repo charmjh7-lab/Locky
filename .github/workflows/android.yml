@@ -62,6 +62,27 @@ jobs:
           (cd distribution && sha256sum Locky.apk > SHA256SUMS.txt)
           gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.2.0 · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
           python3 scripts/prune-releases.py
+  visual-evidence:
+    # Capture-only publication. The already verified APK release is not rebuilt.
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[ui-captures]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Render original and revised Locky asset screens
+        run: |
+          npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright
+          npx playwright install --with-deps chromium
+          node scripts/capture-ui.cjs
+      - name: Attach comparison images to verified Locky release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload locky-build-78 distribution/ui-*.png --clobber
   android:
     needs: ui
     if: ${{ github.event_name == 'workflow_dispatch' && needs.ui.result == 'success' }}
