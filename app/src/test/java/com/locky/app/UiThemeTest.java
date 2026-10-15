@@ -43,4 +43,23 @@ public class UiThemeTest {
         assertEquals(140,host.view.getSettings().getTextZoom());
         assertEquals(UiTheme.background(activity),((ColorDrawable)host.root.getBackground()).getColor());
     }
+    @Test public void userThemeOverridePersistsWithoutRecreatingWebView() throws Exception {
+        Activity activity=Robolectric.buildActivity(Activity.class).setup().get();
+        host=new WebHost(activity,true);
+        WebView original=host.view;
+        host.saveSettings(new org.json.JSONObject().put("themeMode","light"));
+        host.applyTheme();
+        assertEquals("light",UiTheme.mode(activity));
+        assertFalse(UiTheme.dark(activity));
+        assertEquals(UiTheme.background(activity),((ColorDrawable)host.root.getBackground()).getColor());
+        host.saveSettings(new org.json.JSONObject().put("themeMode","dark"));
+        host.applyTheme();
+        assertEquals("dark",UiTheme.mode(activity));
+        assertTrue(UiTheme.dark(activity));
+        assertEquals(UiTheme.background(activity),((ColorDrawable)host.root.getBackground()).getColor());
+        assertSame(original,host.view);
+        host.saveSettings(new org.json.JSONObject().put("themeMode","system"));
+        assertEquals("system",UiTheme.mode(activity));
+        assertTrue(UiTheme.dark(activity));
+    }
 }

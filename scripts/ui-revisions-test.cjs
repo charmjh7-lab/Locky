@@ -18,30 +18,40 @@ const briefing={days:1,date:'2026-10-14',start:1,total:660000,unlocks:2,aimless:
    if(action==='tick')out={gate:fixture.gate,free:false};
    if(action==='brief')out=briefing;
    if(action==='purpose'){out={...args,id:'custom'+calls.length};fixture.allPurposes.push(out);}
+   if(action==='settings')Object.assign(fixture.prefs,args);
    if(action==='grant'&&window.failGrant){error='앱이 바뀌었습니다. 다시 열어 주세요.';window.failGrant=false;}
    setTimeout(()=>receive(id,out,error),30);
   }};state=fixture;noteId='n';render();
  },{fixture,briefing});
- // Separate upper utilities from lower selection; keep exit within the viewport.
+ // Preset count does not change the stable title, direct entry, memo, or exit.
  for(const viewport of [{width:320,height:560},{width:360,height:600},{width:390,height:780},{width:700,height:900}]){
-  await page.setViewportSize(viewport);
+  await page.setViewportSize(viewport);const samples=[];
   for(const count of [0,3,9,30]){
    await page.evaluate(({purposes,app})=>{state.allPurposes=[...purposes,...app];screen='home';render();},{purposes:phone.slice(0,count),app});
    await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
-   const result=await page.evaluate(()=>{const box=s=>document.querySelector(s).getBoundingClientRect(),tools=box('.quick-tools'),dictionary=box('.dictionary-bar'),area=box('.start-purposes'),footer=box('.start-footer');return {toolsTop:tools.top,toolsHeight:tools.height,dictionaryBottom:dictionary.bottom,areaTop:area.top,areaBottom:area.bottom,footerTop:footer.top,footerBottom:footer.bottom,height:innerHeight,scroll:document.documentElement.scrollHeight};});
-   assert(result.areaBottom<=result.footerTop+1,JSON.stringify({viewport,count,...result}));
-   assert(result.footerBottom<=result.height,JSON.stringify(result));assert(result.scroll<=result.height+1,JSON.stringify(result));
-   assert(result.toolsHeight>=100&&result.toolsHeight<=220,JSON.stringify(result));
-   assert(result.areaTop>=result.dictionaryBottom,JSON.stringify(result));assert(result.footerTop-result.areaBottom<=20,JSON.stringify(result));
+   const m=await page.evaluate(()=>{const rect=q=>document.querySelector(q).getBoundingClientRect(),sc=document.querySelector('.preset-scroll');return {
+    title:rect('.purpose-intro').top,direct:rect('[data-act=direct]').top,
+    area:rect('.start-purposes').top,dict:rect('.dictionary-bar').bottom,
+    exit:rect('.start-footer').bottom,footer:rect('.start-footer').top,tools:rect('.quick-tools').height,
+    note:rect('.mini-note .note-content').height,inner:sc.clientHeight,content:sc.scrollHeight,
+    h:innerHeight,document:document.documentElement.scrollHeight};});
+   assert(m.area>=m.dict&&m.area-m.dict<=20,JSON.stringify(m));
+   assert(m.direct<m.footer&&m.exit<=m.h+1&&m.document<=m.h+1,JSON.stringify(m));
+   assert(m.tools>=140,JSON.stringify(m));
+   if(count===30)assert(m.content>m.inner,'Presets must scroll within their own list');
+   samples.push(m);
   }
+  assert(samples.every(m=>Math.abs(m.title-samples[0].title)<2&&Math.abs(m.direct-samples[0].direct)<2&&Math.abs(m.note-samples[0].note)<2),'Fixed elements moved: '+JSON.stringify(samples));
+  await page.evaluate(()=>{let list=document.querySelector('.preset-scroll');list.scrollTop=list.scrollHeight;});
+  assert(await page.locator('.preset-scroll').evaluate(el=>el.scrollTop>0));
  }
  // Representative new risks: dark contrast, large type and an IME-sized window.
  await page.setViewportSize({width:360,height:600});
  await page.emulateMedia({colorScheme:'dark'});
  await page.evaluate(()=>{document.documentElement.style.fontSize='22px';state.allPurposes=Array.from({length:30},(_,i)=>({id:'large'+i,label:'긴 문구의 목적을 선택하는 경우 '+i,scope:'phone'}));screen='home';render();});
  await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
- const large=await page.evaluate(()=>{const direct=document.querySelector('[data-act=direct]').getBoundingClientRect(),footer=document.querySelector('.start-footer').getBoundingClientRect(),more=document.querySelector('.more-reasons').getBoundingClientRect();return {directBottom:direct.bottom,moreBottom:more.bottom,footerTop:footer.top,footerBottom:footer.bottom,height:innerHeight,scroll:document.documentElement.scrollHeight,background:getComputedStyle(document.documentElement).backgroundColor};});
- assert(large.directBottom<=large.footerTop&&large.moreBottom<=large.footerTop&&large.footerBottom<=large.height&&large.scroll<=large.height,JSON.stringify(large));
+ const large=await page.evaluate(()=>{const direct=document.querySelector('[data-act=direct]').getBoundingClientRect(),footer=document.querySelector('.start-footer').getBoundingClientRect(),sc=document.querySelector('.preset-scroll');return {directBottom:direct.bottom,listContent:sc.scrollHeight,listHeight:sc.clientHeight,footerTop:footer.top,footerBottom:footer.bottom,height:innerHeight,scroll:document.documentElement.scrollHeight,background:getComputedStyle(document.documentElement).backgroundColor};});
+ assert(large.directBottom<=large.footerTop&&large.listContent>large.listHeight&&large.footerBottom<=large.height&&large.scroll<=large.height,JSON.stringify(large));
  assert.equal(large.background,'rgb(16, 23, 20)');
  await page.evaluate(()=>{document.documentElement.style.fontSize='';});
  await page.setViewportSize({width:390,height:380});
@@ -56,6 +66,14 @@ const briefing={days:1,date:'2026-10-14',start:1,total:660000,unlocks:2,aimless:
  await page.locator('[data-act=closeSheet]').click();
  await page.evaluate(()=>{insetsChanged(false);delete document.documentElement.dataset.theme;});
  await page.emulateMedia({colorScheme:'light'});
+ await page.evaluate(()=>{screen='settings';render();});
+ assert.equal(await page.locator('#themeMode').inputValue(),'system');
+ await page.locator('#themeMode').selectOption('dark');
+ await page.waitForFunction(()=>fixture.prefs.themeMode==='dark');
+ await page.evaluate(()=>render());
+ assert.equal(await page.locator('#themeMode').inputValue(),'dark');
+ await page.locator('#themeMode').selectOption('system');
+ await page.waitForFunction(()=>fixture.prefs.themeMode==='system');
  await page.setViewportSize({width:320,height:560});
  await page.evaluate(()=>{state.allPurposes=Array.from({length:30},(_,i)=>({id:'long'+i,label:'긴 목적 '+i,scope:'app'}));screen='app';render();});
  await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
@@ -105,7 +123,7 @@ const briefing={days:1,date:'2026-10-14',start:1,total:660000,unlocks:2,aimless:
   assert.equal(await page.locator('.chat-md-link').count(),0);
   assert.equal(await page.locator('.inline-reference').count(),1);
   const visible=await page.locator('.message').innerText();assert(!visible.includes('edaily.co.kr')&&!visible.includes('출처')&&!visible.includes('(')&&!visible.includes(')'),visible);
-  await page.locator('.inline-reference').click();assert.equal(await page.locator('.chat-source-item:visible').innerText(),'1\n기사 제목');
+  const before=await page.evaluate(()=>({height:document.documentElement.scrollHeight,y:window.scrollY}));await page.locator('.inline-reference').click();assert.equal(await page.locator('.chat-source-item:visible').innerText(),'1\n기사 제목');const after=await page.evaluate(()=>({height:document.documentElement.scrollHeight,y:window.scrollY}));assert(Math.abs(after.height-before.height)<2&&Math.abs(after.y-before.y)<2,'Citation shifted: '+JSON.stringify({before,after}));
   await page.locator('.inline-reference').click();assert.equal(await page.locator('.chat-source-item:visible').count(),0);
  }
  // Link and marker can both have metadata; cleanup must not invalidate earlier offsets.

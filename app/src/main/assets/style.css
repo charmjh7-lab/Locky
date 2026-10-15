@@ -41,3 +41,61 @@
 @media(prefers-reduced-motion:no-preference){button{transition:background-color .12s}}
 /* With an IME, utilities scroll inside their own space while typing stays usable. */
 .keyboard .utility-space .quick-tools{min-height:140px;flex-shrink:0}
+
+/* Phone start: stable top-down chooser; only the presets move. */
+.start-page:not(.gate-page)>.utility-space{flex:0 0 auto;min-height:0;overflow:visible}
+.start-page:not(.gate-page) .quick-tools{height:clamp(190px,30vh,256px);min-height:0;flex:0 0 auto}
+.start-page:not(.gate-page)>.start-purposes{
+ margin-top:0;flex:1 1 auto;min-height:0;display:flex;flex-direction:column;
+ overflow:hidden;padding-top:12px;border-top:1px solid var(--line)
+}
+.start-page:not(.gate-page) .purpose-intro{flex:0 0 auto;margin-bottom:8px}
+.start-page:not(.gate-page) .reason-picker{
+ display:flex;flex-direction:column;gap:8px;flex:1 1 auto;min-height:0
+}
+.start-page:not(.gate-page) .reason-picker>.reason.direct{flex:0 0 auto;min-height:48px}
+.start-page:not(.gate-page) .preset-scroll{
+ flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;
+ overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:thin;
+ scrollbar-color:var(--line) transparent;scroll-padding-block:6px
+}
+.start-page:not(.gate-page) .preset-scroll .reason-grid{
+ align-content:start;grid-auto-rows:minmax(48px,auto)
+}
+.start-page:not(.gate-page)>.start-footer{flex:0 0 auto;margin-top:0}
+/* Citation disclosure is a bounded layer, not a new paragraph pushing the conversation. */
+.chat-page .message{margin:14px 0 16px}
+.chat-page .message.assistant{padding:2px 0 6px}
+.chat-markdown p{margin:0 0 12px}
+.chat-source-group{position:relative;display:inline-block;vertical-align:baseline}
+.chat-source-list{
+ position:absolute;left:0;top:calc(100% + 6px);bottom:auto;
+ z-index:15;width:min(320px,calc(100vw - 24px));
+ max-height:min(42vh,280px);overflow-y:auto;overscroll-behavior:contain;
+ background:var(--white);border:1px solid var(--line);box-shadow:0 8px 24px #0002;
+ padding:6px 10px;margin:0;white-space:normal
+}
+.chat-source-list.source-above{top:auto;bottom:calc(100% + 6px)}
+.chat-source-footer .chat-source-group{display:inline-block}
+@media(max-height:650px){
+ .start-page:not(.gate-page) .quick-tools{height:148px;min-height:0}
+ .start-page:not(.gate-page)>.start-purposes{padding-top:8px}
+}
+@media(max-height:430px){
+ .start-page:not(.gate-page) .quick-tools{height:80px;min-height:0}
+ .start-page:not(.gate-page) .mini-head{min-height:30px}
+ .start-page:not(.gate-page) .mini-head button:not(.iconbtn){min-height:30px}
+ .start-page:not(.gate-page) .mini-head .iconbtn{height:30px}
+ .start-page:not(.gate-page) .note-actions{min-height:28px}
+ .start-page:not(.gate-page) .note-actions .iconbtn{height:28px}
+ .start-page:not(.gate-page) .dictionary-bar{min-height:44px}
+ .start-page:not(.gate-page) .dictionary-bar button{height:42px}
+ .start-page:not(.gate-page) .reason-picker>.reason.direct{min-height:42px}
+ .start-page:not(.gate-page) .purpose-intro{margin-bottom:2px}
+}
+.keyboard .start-page:not(.gate-page)>.start-purposes{
+ overflow:hidden;max-height:none;min-height:0;flex:1 1 auto;margin-top:0
+}
+.keyboard .start-page:not(.gate-page) .utility-space{overflow:visible}
+.keyboard .start-page:not(.gate-page) .quick-tools{height:clamp(72px,19vh,115px);min-height:0}
+.keyboard .start-page:not(.gate-page) .preset-scroll{overflow-y:auto}
