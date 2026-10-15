@@ -23,7 +23,7 @@ public class OverlayRenderingTest {
         final List<String> scripts=new ArrayList<>();final List<ValueCallback<String>> preparations=new ArrayList<>();int loads,resumes,pauses,layouts,timers,invalidations;
         FrameView(Activity c){super(c);}
         @Override public void postVisualStateCallback(long id,VisualStateCallback callback){ids.add(id);frames.add(callback);}
-        @Override public void evaluateJavascript(String script,ValueCallback<String> callback){scripts.add(script);if("prepareStart()".equals(script)){preparations.add(callback);return;}if(callback!=null)callback.onReceiveValue("null");}
+        @Override public void evaluateJavascript(String script,ValueCallback<String> callback){scripts.add(script);if(script.startsWith("prepareStart(")){preparations.add(callback);return;}if(callback!=null)callback.onReceiveValue("null");}
         @Override public void loadUrl(String url){loads++;}
         @Override public void onResume(){resumes++;}
         @Override public void onPause(){pauses++;}
@@ -104,7 +104,7 @@ public class OverlayRenderingTest {
     }
     @Test public void warmPreparationWaitsForItsOwnRevisionAndRejectsOlderPreparation(){
         rendered();view.complete(0);long generation=host.visualGeneration;
-        host.prepareStart();assertTrue(host.preparingStart);assertTrue(host.frameReady);
+        host.prepareStart();assertTrue(host.preparingStart);assertTrue(host.frameReady);assertTrue(view.scripts.get(view.scripts.size()-1).contains("\"purposes\""));
         host.prepareStart();view.preparations.get(0).onReceiveValue("2");
         assertTrue(host.preparingStart);assertEquals(generation,host.visualGeneration);
         view.preparations.get(1).onReceiveValue("1");
