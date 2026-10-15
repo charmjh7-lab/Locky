@@ -114,11 +114,13 @@ public class GateRestoreTest {
         windows(systemWindow());g.observeForeground(event);assertTrue(g.systemPaused);assertEquals(0f,g.overlayLayout.alpha,0);assertEquals(before+1,updates);
         g.observeForeground(event);assertEquals(before+1,updates);event.recycle();
     }
-    @Test public void newlyOpenedSystemWindowWinsEvenBeforeTheFirstStableOverlayFocus(){
+    @Test public void newSystemUiIdDuringUnlockDoesNotHideTheStartButAnExplicitPanelStillInterrupts(){
         unlockedStart();windows(systemWindow());
         var event=android.view.accessibility.AccessibilityEvent.obtain(android.view.accessibility.AccessibilityEvent.TYPE_WINDOWS_CHANGED);
         org.robolectric.util.ReflectionHelpers.setField(event,"mSourceWindowId",51);
         org.robolectric.util.ReflectionHelpers.setField(event,"mWindowChangeTypes",android.view.accessibility.AccessibilityEvent.WINDOWS_CHANGE_ADDED);
+        g.observeForeground(event);assertTrue(g.unlockTransition);assertFalse(g.systemPaused);assertEquals(1f,g.overlayLayout.alpha,0);
+        event.setClassName("com.android.systemui.qs.QSContainerImpl");event.setEventType(android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
         g.observeForeground(event);assertFalse(g.unlockTransition);assertTrue(g.systemPaused);assertEquals(0f,g.overlayLayout.alpha,0);event.recycle();
     }
     @Test public void permissionOverviewAndIncomingCallStillYieldDuringUnlock(){
@@ -166,13 +168,13 @@ public class GateRestoreTest {
         assertEquals(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,g.overlayLayout.type);assertEquals(1f,g.overlayLayout.alpha,0);
         assertNull(g.overlayLayout.token);
         int passive=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-        assertEquals(passive,g.overlayLayout.flags&passive);assertFalse(g.overlay.presentationActive);
+        assertEquals(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,g.overlayLayout.flags&passive);assertFalse(g.overlay.presentationActive);
         assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS,g.overlayWindow.getImportantForAccessibility());
         assertTrue((g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_SECURE)!=0);
         assertEquals(0,g.overlayLayout.flags&(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED|WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD));
         int before=updates;g.interactive=true;Shadows.shadowOf(keyguard).setKeyguardLocked(false);g.completeUnlock();
-        assertEquals(1f,g.overlayLayout.alpha,0);assertEquals(0,g.overlayLayout.flags&passive);assertEquals(before+1,updates);
-        g.revealOverlay();assertEquals(before+1,updates);assertEquals(1,adds);assertEquals(0,removes);
+        assertEquals(1f,g.overlayLayout.alpha,0);assertEquals(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,g.overlayLayout.flags&passive);assertEquals(before,updates);
+        g.revealOverlay();assertEquals(before,updates);assertEquals(1,adds);assertEquals(0,removes);
     }
     @Test public void permissionAndGateRoleMigrateOnlyTheWindowAndRetainTheWebView(){
         g.interactive=false;g.prepareUnlock();WebHost host=g.overlay;Object web=host.view;
@@ -208,8 +210,8 @@ public class GateRestoreTest {
         host.finishStartPreparation(host.view,host.navigationGeneration,host.startPreparation,"2");
         assertFalse(host.frameReady);assertTrue(host.hasUsableFrame());g.revealOverlay();
         assertEquals(1f,g.overlayLayout.alpha,0);assertEquals(added,adds);assertEquals(removed,removes);
-        assertEquals(java.util.List.of(1f),alphas); // input flags only, never 1 -> 0 -> 1
-        host.frameReady=true;g.revealOverlay();g.revealOverlay();assertEquals(1,alphas.size());
+        assertTrue(alphas.isEmpty()); // Neither alpha nor window input flags change on normal unlock.
+        host.frameReady=true;g.revealOverlay();g.revealOverlay();assertEquals(0,alphas.size());
     }
     @Test public void delayedAddedEventForTheObservedKeyguardCannotPauseUnlockButANewShadeCan(){
         windows(systemWindow());g.interactive=false;Shadows.shadowOf(keyguard).setKeyguardLocked(true);g.screenOff();
@@ -258,6 +260,25 @@ public class GateRestoreTest {
         g.applicationWindowFailed=true;assertEquals("failed-pending",g.startWindowStatus().getString("status"));
         g.store.settings.edit().putBoolean("start-under-keyguard",false).commit();g.reconcileWindowPermission();
         assertEquals("disabled",g.startWindowStatus().getString("status"));assertEquals("accessibility",g.startWindowStatus().getString("actual"));
+    }
+    @Test public void primaryApplicationWindowAcceptsTheFirstButtonTouchWithoutTakingKeyboardFocus(){
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true);g.interactive=false;g.waitingUnlock=true;g.prepareUnlock();
+        g.overlay.frameReady=true;g.revealOverlay();assertFalse(g.acceptGateInput());int before=updates;
+        g.interactive=true;g.completeUnlock();assertTrue(g.acceptGateInput());assertEquals(before,updates);
+        final int[] touches={0};android.view.View target=new android.view.View(g);target.setOnTouchListener((v,e)->{touches[0]++;return true;});
+        g.overlayWindow.removeAllViews();g.overlayWindow.addView(target,new android.widget.FrameLayout.LayoutParams(100,100));
+        g.overlayWindow.measure(android.view.View.MeasureSpec.makeMeasureSpec(100,1073741824),android.view.View.MeasureSpec.makeMeasureSpec(100,1073741824));g.overlayWindow.layout(0,0,100,100);
+        var event=android.view.MotionEvent.obtain(0,0,android.view.MotionEvent.ACTION_DOWN,20,20,0);
+        assertTrue(g.overlayWindow.dispatchTouchEvent(event));assertEquals(1,touches[0]);assertFalse(g.unlockTransition);assertEquals(before,updates);
+        Shadows.shadowOf(keyguard).setKeyguardLocked(true);g.overlayWindow.dispatchTouchEvent(event);assertEquals(1,touches[0]);event.recycle();
+    }
+    @Test public void editorFocusIsGrantedOnlyForAnUnlockedEditorAndOnlyOnce(){
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true);g.interactive=false;g.waitingUnlock=true;g.prepareUnlock();g.overlay.frameReady=true;g.revealOverlay();
+        int before=updates;g.requestEditorInput();assertEquals(before,updates);assertEquals(GuardService.Input.TOUCH,g.inputMode);
+        g.interactive=true;g.completeUnlock();assertEquals(before,updates);g.requestEditorInput();
+        assertEquals(before+1,updates);assertEquals(0,g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);assertEquals(1f,g.overlayLayout.alpha,0);
+        g.requestEditorInput();assertEquals(before+1,updates);
+        g.screenOff();assertEquals(GuardService.Input.TOUCH,g.inputMode);assertFalse(g.acceptGateInput());
     }
     @Test public void inPlaceChatPresentationRetainsBothOverlayAndAnyExistingMainHost(){
         LockyApp previous=LockyApp.app;LockyApp stub=new LockyApp();LockyApp.app=stub;

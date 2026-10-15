@@ -87,3 +87,7 @@
 .start-page:not(.gate-page){height:calc(var(--rest-height,var(--viewport)) - 70px)}
 .start-page.overlay-start:not(.gate-page){height:var(--rest-height,var(--viewport))}
 .start-input{overflow-y:auto;overscroll-behavior-y:contain}
+
+/* Only the opt-in unlock diagnostics controls. Existing start-screen geometry stays unchanged. */
+.diagnostic-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.diagnostic-actions button{min-height:48px}
+.diagnostic-log{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.75rem;line-height:1.65;user-select:text;padding:12px;background:var(--white);border:1px solid var(--line);border-radius:8px}

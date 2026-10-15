@@ -52,6 +52,17 @@ public class RawExportTest {
         assertEquals(1,new JSONObject(new String(Files.readAllBytes(target.toPath()),StandardCharsets.UTF_8)).getInt("schemaVersion"));
         assertFalse(new File(activity.getFilesDir(),"raw-exports/"+token+".json").exists());target.delete();
     }
+    @Test public void diagnosticTextExportSurvivesRecreationAndWritesARealUtf8File() throws Exception {
+        String text="Locky 잠금 해제 진단\nalpha requested 1.0->1.0\nwindow focus observed=true\n";
+        activity.saveDiagnosticsToDocument("Locky-unlock.txt",RawExport.stage(activity,text));
+        var picker=Shadows.shadowOf(activity).getNextStartedActivityForResult();
+        assertEquals("text/plain",picker.intent.getType());assertEquals("Locky-unlock.txt",picker.intent.getStringExtra(Intent.EXTRA_TITLE));
+        Bundle saved=new Bundle();activity.onSaveInstanceState(saved);controllers.get(0).destroy();activity=create(saved);
+        File target=File.createTempFile("locky-diagnostic-",".txt",activity.getCacheDir());Uri uri=Uri.parse("content://locky-export/document/diagnostic");
+        Shadows.shadowOf(activity.getContentResolver()).registerOutputStream(uri,new FileOutputStream(target));
+        activity.onActivityResult(picker.requestCode,Activity.RESULT_OK,new Intent().setData(uri));
+        awaitStatus("잠금 해제 진단 파일을 저장했습니다.");assertEquals(text,Files.readString(target.toPath(),StandardCharsets.UTF_8));target.delete();
+    }
     @Test public void repeatedRequestsDoNotReplacePendingExportAndCancelCleansBothStages() throws Exception {
         String first=RawExport.stage(activity,"{\"first\":1}"),second=RawExport.stage(activity,"{\"second\":2}");
         activity.saveRawToDocument("first.json",first);activity.saveRawToDocument("second.json",second);

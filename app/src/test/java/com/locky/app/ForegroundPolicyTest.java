@@ -3,10 +3,12 @@ import java.util.*;
 import org.junit.Test;
 import static org.junit.Assert.*;
 public class ForegroundPolicyTest {
-    @Test public void outgoingKeyguardAdditionBelongsToTheCurrentUnlockOnly(){
-        assertFalse(ForegroundPolicy.newSystemInterruption(true,Set.of(51),51));
-        assertTrue(ForegroundPolicy.newSystemInterruption(true,Set.of(51),52));
-        assertTrue(ForegroundPolicy.newSystemInterruption(false,Set.of(51),51));
+    @Test public void systemUiIdAloneCannotInterruptAnUnlock(){
+        assertFalse(ForegroundPolicy.interruptUnlock(true,false));
+        assertTrue(ForegroundPolicy.interruptUnlock(true,true));
+        assertTrue(ForegroundPolicy.interruptUnlock(false,false));
+        assertFalse(ForegroundPolicy.explicitSystemAction("NotificationShadeWindow"));
+        assertTrue(ForegroundPolicy.explicitSystemAction("com.android.systemui.qs.QSContainerImpl"));
     }
     private ForegroundPolicy.Window w(String p,int t,boolean focus,boolean active,int layer){return new ForegroundPolicy.Window(p,t,focus,active,layer,false);}
     @Test public void gestureServiceAndKeyboardDoNotBecomeForeground(){assertEquals("video",ForegroundPolicy.select(Arrays.asList(w("gesture.service",4,true,true,9),w("keyboard",2,true,true,8),w("video",1,false,false,1)),Collections.emptySet()).pkg);}

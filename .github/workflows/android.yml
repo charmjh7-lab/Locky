@@ -70,7 +70,7 @@ jobs:
           cache-disabled: true
       - name: Focused UI platform regressions, lint and signed release APK
         run: |
-          gradle :app:testDebugUnitTest --tests 'com.locky.app.DictionaryReturnTest' --tests 'com.locky.app.OverlayRenderingTest' --tests 'com.locky.app.GateRestoreTest' --tests 'com.locky.app.ForegroundPolicyTest' --tests 'com.locky.app.QuickQuestionTest' --tests 'com.locky.app.UiThemeTest' --tests 'com.locky.app.FloatingTimerInteractionTest' :app:lintDebug :app:assembleRelease --no-daemon
+          gradle :app:testDebugUnitTest --tests 'com.locky.app.DictionaryReturnTest' --tests 'com.locky.app.OverlayRenderingTest' --tests 'com.locky.app.GateRestoreTest' --tests 'com.locky.app.ForegroundPolicyTest' --tests 'com.locky.app.UnlockDiagnosticsTest' --tests 'com.locky.app.RawExportTest' --tests 'com.locky.app.QuickQuestionTest' --tests 'com.locky.app.UiThemeTest' --tests 'com.locky.app.FloatingTimerInteractionTest' :app:lintDebug :app:assembleRelease --no-daemon
       - name: Verify and publish directly installable APK
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -84,7 +84,7 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging distribution/Locky.apk > distribution/package.txt
           grep -q "name='com.locky.app'" distribution/package.txt
           (cd distribution && sha256sum Locky.apk > SHA256SUMS.txt)
-          gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.2.6 · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
+          gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.2.7 · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
           python3 scripts/prune-releases.py
   visual-evidence:
     # Capture-only publication. The already verified APK release is not rebuilt.
@@ -166,7 +166,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.2.6 · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
+          gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.2.7 · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
       - name: Keep three successful automatic releases
         if: ${{ success() && needs.ui.result == 'success' }}
         env:

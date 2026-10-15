@@ -32,11 +32,14 @@ public final class GuardService extends AccessibilityService {
     android.widget.FrameLayout overlayWindow;boolean unlockPrepared,unlockTransition,lockPending;
     enum Exposure { HIDDEN, WAITING, BEHIND_KEYGUARD, INTERACTIVE, SUSPENDED }
     Exposure exposure=Exposure.HIDDEN;
+    enum Input { TOUCH, FOCUS, EDITOR }
+    Input inputMode=Input.TOUCH;
+    Boolean observedKeyguard;
     boolean applicationWindowFailed;
     Context applicationWindowContext;WindowManager applicationWindow,gateWindow;
     final Set<Integer> keyguardWindows=new HashSet<>();
     final AppOpsManager.OnOpChangedListener overlayPermission=(op,pkg)->main.post(()->{
-        if(store==null)return;applicationWindowFailed=false;reconcileWindowPermission();WebHost.refreshAll();
+        if(store==null)return;WebHost.trace("overlay permission observed allowed="+android.provider.Settings.canDrawOverlays(this));applicationWindowFailed=false;reconcileWindowPermission();WebHost.refreshAll();
     });
     WebHost overlay;WindowManager window;WindowManager.LayoutParams overlayLayout;final Set<String> systemPackages=new HashSet<>();
     String homePackage="";
@@ -44,6 +47,8 @@ public final class GuardService extends AccessibilityService {
     final Runnable pulse=new Runnable(){public void run(){pulseScheduled=false;if(live!=GuardService.this)return;pulseCount++;checkpoint();enforce();ensurePulse();}};
     final BroadcastReceiver screen=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){
         String a=i.getAction();
+        if(Intent.ACTION_SCREEN_ON.equals(a)&&UnlockDiagnostics.live!=null)UnlockDiagnostics.live.resumeCapture();
+        if(!Intent.ACTION_SCREEN_OFF.equals(a))WebHost.trace("broadcast observed="+(Intent.ACTION_SCREEN_ON.equals(a)?"screen-on":Intent.ACTION_USER_PRESENT.equals(a)?"user-present":"clock"));
         if(Intent.ACTION_SCREEN_OFF.equals(a))screenOff();
         else if(Intent.ACTION_USER_PRESENT.equals(a)){
             interactive=getSystemService(PowerManager.class).isInteractive();
@@ -55,8 +60,8 @@ public final class GuardService extends AccessibilityService {
         }else if(Intent.ACTION_TIME_CHANGED.equals(a)||Intent.ACTION_TIMEZONE_CHANGED.equals(a)){checkpoint();policyChanged();Scheduler.schedule(c);}
     }};
     void screenOff(){
-        if(!interactive&&waitingUnlock&&unlockPrepared)return;
-        if(WebHost.tracing())WebHost.beginUnlockTrace();
+        if(!interactive&&waitingUnlock&&unlockPrepared){WebHost.trace("duplicate screen-off ignored");return;}
+        UnlockDiagnostics.get(this);WebHost.beginUnlockTrace();keyguardLocked();inputMode=Input.TOUCH;
         checkpoint();interactive=false;waitingUnlock=true;unlockPrepared=false;endUnlockTransition("screen-off");keyguardWindows.clear();
         if(lockPending){store.event("dismiss","열지 않기","","",0);lockPending=false;}
         main.removeCallbacks(lockCompletion);
@@ -84,7 +89,7 @@ public final class GuardService extends AccessibilityService {
         if(Build.VERSION.SDK_INT>=33)registerReceiver(screen,f,Context.RECEIVER_NOT_EXPORTED);else registerReceiver(screen,f);
         segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();
         long recoveryFrom=store.settings.getLong("checkpoint",System.currentTimeMillis());String recoveryPackage=store.settings.getString("last-package","");
-        waitingUnlock=!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked();
+        waitingUnlock=!interactive||keyguardLocked();
         if(waitingUnlock)prepareUnlock();else {observeForeground(null);main.postDelayed(()->{if(foreground.isEmpty())observeForeground(null);},250);main.postDelayed(()->{if(foreground.isEmpty())observeForeground(null);},750);}Scheduler.schedule(this);recover(recoveryFrom,store.settings.getBoolean("checkpoint-interactive",true)?recoveryPackage:"");
     }
     private void recover(long from,String old){long now=System.currentTimeMillis();
@@ -94,7 +99,7 @@ public final class GuardService extends AccessibilityService {
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
         if(store==null)return;
         interactive=getSystemService(PowerManager.class).isInteractive();
-        if(!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked()){if(waitingUnlock){rememberKeyguardWindows();revealOverlay();}return;}
+        if(!interactive||keyguardLocked()){if(waitingUnlock){rememberKeyguardWindows();revealOverlay();}return;}
         completeUnlock();
         observeForeground(event);
         // Window events can precede availability of the new application's root.
@@ -102,29 +107,65 @@ public final class GuardService extends AccessibilityService {
         main.removeCallbacks(settledForeground);
         main.postDelayed(settledForeground,500);
     }
+    boolean keyguardLocked(){
+        boolean locked=getSystemService(KeyguardManager.class).isKeyguardLocked();
+        if(observedKeyguard==null||observedKeyguard!=locked){observedKeyguard=locked;WebHost.trace("keyguard observed locked="+locked);}
+        return locked;
+    }
+    final class GateSurface extends android.widget.FrameLayout {
+        GateSurface(Context c){super(c);}
+        @Override public boolean dispatchTouchEvent(MotionEvent e){
+            if(!acceptGateInput())return true; // Never forward pre-authentication input to WebView.
+            if(e.getActionMasked()==MotionEvent.ACTION_DOWN)endUnlockTransition("user-touch");
+            return super.dispatchTouchEvent(e);
+        }
+        @Override public boolean dispatchKeyEvent(KeyEvent e){return !acceptGateInput()||super.dispatchKeyEvent(e);}
+    }
+    boolean acceptGateInput(){return overlayVisible&&exposure==Exposure.INTERACTIVE&&interactive&&!waitingUnlock&&!systemPaused&&!keyguardLocked();}
+    void requestNavigationInput(){
+        // Explicit in-document chat navigation still needs Android Back/key handling.
+        // This is user-driven, never part of keyguard exposure or frame callbacks.
+        if(!acceptGateInput()||inputMode!=Input.TOUCH)return;
+        inputMode=Input.FOCUS;WebHost.trace("input requested=navigation");revealOverlay();overlay.view.requestFocus();
+    }
+    void requestEditorInput(){
+        if(!acceptGateInput()||dictionaryHost!=null||dictionaryOpening)return;
+        endUnlockTransition("editor-request");
+        if(inputMode!=Input.EDITOR){inputMode=Input.EDITOR;WebHost.trace("input requested=editor");revealOverlay();}
+        if(overlay!=null){overlay.view.requestFocus();if(overlayWindow.hasWindowFocus())showEditorKeyboard();}
+    }
+    void showEditorKeyboard(){
+        if(inputMode!=Input.EDITOR||!acceptGateInput()||overlay==null)return;
+        overlay.view.post(()->{if(inputMode==Input.EDITOR&&acceptGateInput()&&overlayWindow.hasWindowFocus()){
+            getSystemService(android.view.inputmethod.InputMethodManager.class).showSoftInput(overlay.view,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+        }});
+    }
     void rememberKeyguardWindows(){
-        if(interactive&&!getSystemService(KeyguardManager.class).isKeyguardLocked())return;
-        for(AccessibilityWindowInfo w:getWindows())if(w.getType()==AccessibilityWindowInfo.TYPE_SYSTEM)keyguardWindows.add(w.getId());
+        if(interactive&&!keyguardLocked())return;
+        for(AccessibilityWindowInfo w:getWindows())if(w.getType()==AccessibilityWindowInfo.TYPE_SYSTEM){keyguardWindows.add(w.getId());WebHost.trace("keyguard window observed id="+w.getId()+" focused="+w.isFocused()+" active="+w.isActive());}
     }
     void beginUnlockTransition(){if(!unlockTransition){unlockTransition=true;WebHost.trace("unlockTransition=start");}}
-    void endUnlockTransition(String reason){if(unlockTransition){unlockTransition=false;WebHost.trace("unlockTransition=end reason="+reason);}}
+    void endUnlockTransition(String reason){if(unlockTransition){unlockTransition=false;WebHost.trace("unlockTransition=end reason="+reason);UnlockDiagnostics.get(this).transitionEnded(reason);}}
     void setSystemPaused(boolean value,String reason){if(systemPaused!=value){systemPaused=value;WebHost.trace("systemPaused="+value+" reason="+reason);}}
     boolean overview;String overviewCandidate="";long overviewCandidateSince;volatile String lastWindows="";
     void observeForeground(AccessibilityEvent event) {
-        if(store==null||!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked())return;
+        if(store==null||!interactive||keyguardLocked())return;
         List<ForegroundPolicy.Window> candidates=new ArrayList<>();StringBuilder diagnostic=new StringBuilder();
         View surface=overlayWindow==null?null:overlayWindow;
-        boolean ownFocus=surface!=null&&surface.hasWindowFocus(),newSystemWindow=false,foreignFocus=false;
+        boolean ownFocus=surface!=null&&surface.hasWindowFocus(),foreignFocus=false,explicitSystemWindow=false;
+        WebHost.trace("accessibility observed event="+(event==null?0:event.getEventType())+" changes="+(event!=null&&Build.VERSION.SDK_INT>=28?event.getWindowChanges():0)+" window="+(event==null?-1:event.getWindowId()));
         for(AccessibilityWindowInfo w:getWindows()) {
             String pkg="";
             // SAW is reported as a system window. Exclude our own window, not real system UI.
             if(w.getType()==AccessibilityWindowInfo.TYPE_APPLICATION||w.getType()==AccessibilityWindowInfo.TYPE_SYSTEM){AccessibilityNodeInfo root=w.getRoot();if(root!=null){CharSequence name=root.getPackageName();pkg=name==null?"":name.toString();root.recycle();}}
             if(w.getType()==AccessibilityWindowInfo.TYPE_SYSTEM&&(pkg.equals(getPackageName())
                 ||(pkg.isEmpty()&&ownFocus&&w.isFocused()&&overlayLayout!=null&&overlayLayout.type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY&&"Locky".contentEquals(w.getTitle()==null?"":w.getTitle()))))continue;
-            if(Build.VERSION.SDK_INT>=28&&event!=null&&event.getEventType()==AccessibilityEvent.TYPE_WINDOWS_CHANGED
-                &&(event.getWindowChanges()&AccessibilityEvent.WINDOWS_CHANGE_ADDED)!=0
-                &&event.getWindowId()==w.getId()&&w.getType()==AccessibilityWindowInfo.TYPE_SYSTEM
-                &&(w.isFocused()||w.isActive()))newSystemWindow|=ForegroundPolicy.newSystemInterruption(unlockTransition,keyguardWindows,w.getId());
+            boolean system=w.getType()==AccessibilityWindowInfo.TYPE_SYSTEM;
+            String role=pkg.isEmpty()?"unknown":pkg.equals("com.android.systemui")?"system-ui":systemPackages.contains(pkg)?"system-app":"other";
+            if(system){
+                WebHost.trace("system window observed id="+w.getId()+" role="+role+" focused="+w.isFocused()+" active="+w.isActive()+" knownKeyguard="+keyguardWindows.contains(w.getId()));
+                explicitSystemWindow|=(w.isFocused()||w.isActive())&&!pkg.isEmpty()&&!pkg.equals("com.android.systemui");
+            }
             if(event!=null&&w.getType()==AccessibilityWindowInfo.TYPE_APPLICATION&&w.isFocused()&&!pkg.equals(getPackageName())){
                 foreignFocus|=(event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED&&pkg.contentEquals(event.getPackageName()==null?"":event.getPackageName()))
                     ||(Build.VERSION.SDK_INT>=28&&event.getEventType()==AccessibilityEvent.TYPE_WINDOWS_CHANGED&&event.getWindowId()==w.getId()&&(event.getWindowChanges()&AccessibilityEvent.WINDOWS_CHANGE_FOCUSED)!=0);
@@ -151,21 +192,20 @@ public final class GuardService extends AccessibilityService {
             if(now-overviewCandidateSince<300){pauseSystem();return;}
             overview=false;overviewCandidate="";
         }
-        // A background application's root is not proof that keyguard teardown has finished.
-        // Wait for our already-prepared window to own focus in a non-system snapshot.
-        if(unlockTransition&&ownFocus&&!visible.paused&&overlay!=null&&overlay.presentationActive&&overlay.hasUsableFrame())
-            endUnlockTransition("stable-overlay-focus");
+        // An unfocused background root is not a boundary. With touch-only SAW we
+        // keep app focus untouched; a focused application in a non-system snapshot
+        // (or actual accepted user input) completes the transition without taking IME focus.
+        if(unlockTransition&&!visible.paused&&overlay!=null&&overlay.presentationActive&&overlay.hasUsableFrame()
+            &&(ownFocus||candidates.stream().anyMatch(w->w.type==AccessibilityWindowInfo.TYPE_APPLICATION&&w.focused&&!systemPackages.contains(w.pkg))))
+            endUnlockTransition(ownFocus?"stable-overlay-focus":"stable-application-focus");
         if(visible.paused){
             boolean explicitSystem=candidates.stream().anyMatch(w->w.type==AccessibilityWindowInfo.TYPE_APPLICATION&&w.focused
                 &&(w.pkg.equals("android")||systemPackages.contains(w.pkg))&&!w.pkg.equals("com.android.systemui"));
-            // NotificationShadeWindow is also the keyguard window: its class name alone
-            // cannot distinguish an unlock event from a user's notification shade.
-            if(Build.VERSION.SDK_INT<28&&event!=null&&event.getClassName()!=null){
-                String name=event.getClassName().toString().toLowerCase(Locale.ROOT);
-                explicitSystem|=name.contains("notification")||name.contains("shade");
-            }
-            if(explicitSystem||newSystemWindow)endUnlockTransition(explicitSystem?"system-application":"new-system-window");
-            pauseSystem(explicitSystem?"system-application":newSystemWindow?"new-system-window":"system-snapshot");return;
+            boolean explicitAction=event!=null&&event.getClassName()!=null&&ForegroundPolicy.explicitSystemAction(event.getClassName().toString());
+            boolean interrupt=ForegroundPolicy.interruptUnlock(unlockTransition,explicitSystem||explicitSystemWindow||explicitAction);
+            WebHost.trace("system decision="+(interrupt?"interrupt":"keyguard-teardown")+" unlocking="+unlockTransition+" explicit="+(explicitSystem||explicitSystemWindow||explicitAction));
+            if(!interrupt)return;
+            endUnlockTransition("confirmed-system-interruption");pauseSystem("confirmed-system-interruption");return;
         }
         // Revocation can make our old SAW window incapable of acquiring focus. End
         // the transition only after a real app owns a non-system snapshot, then
@@ -243,7 +283,7 @@ public final class GuardService extends AccessibilityService {
         long now=System.currentTimeMillis();boolean managed=store.managed(now);if(managed!=wasManaged){wasManaged=managed;if(!managed){clearSessions();if(overlayVisible&&!gate.equals("unlock"))hideOverlay();Notices.cancelTimer(this);}else{clearSessions();}Scheduler.schedule(this);}
         if(!sessionPkg.isEmpty()&&sessionPolicyEnd>0&&now>=sessionPolicyEnd)clearSessions();
         if(dictionaryHost!=null)return;
-        if(!interactive||systemPaused||foreground.equals(getPackageName())||getSystemService(KeyguardManager.class).isKeyguardLocked()||foreground.isEmpty())return;
+        if(!interactive||systemPaused||foreground.equals(getPackageName())||keyguardLocked()||foreground.isEmpty())return;
         if(overlayVisible&&gate.equals("unlock"))return;
         if(!LockyApp.app.authBrowser.isEmpty()&&foreground.equals(LockyApp.app.authBrowser)){if(overlayVisible)hideOverlay();Notices.cancelTimer(this);return;}
         if(!managed){if(overlayVisible&&!gate.equals("unlock"))hideOverlay();Notices.cancelTimer(this);return;}
@@ -261,7 +301,7 @@ public final class GuardService extends AccessibilityService {
             &&!foreground.isEmpty()&&foreground.equals(sessionPkg)&&!foreground.equals(getPackageName())
             &&store.managed(now)&&rule!=null&&"limited".equals(rule.optString("mode"))
             &&dailyRemaining(foreground)>0&&sessionRemaining>0
-            &&!getSystemService(KeyguardManager.class).isKeyguardLocked()
+            &&!keyguardLocked()
             &&(LockyApp.app==null||!foreground.equals(LockyApp.app.authBrowser));
         floatingTimer.update(visible,foreground,sessionEvent,rule==null?"":rule.optString("label"),purpose,sessionRemaining,dailyRemaining(foreground));
     }
@@ -269,8 +309,8 @@ public final class GuardService extends AccessibilityService {
     @Override public void onConfigurationChanged(android.content.res.Configuration config){super.onConfigurationChanged(config);if(overlay!=null)overlay.applyTheme();hideFloatingTimer();syncFloatingTimer();if(overlayVisible&&overlay!=null)revealOverlay();}
     long lastNotice=-1;
     void prepareUnlock(){
-        if(unlockPrepared)return;
-        if(WebHost.tracing())WebHost.trace("prepare-begin");
+        if(unlockPrepared){WebHost.trace("duplicate prepare ignored");return;}
+        if(WebHost.tracing())WebHost.trace("prepare-begin overlayPermission="+android.provider.Settings.canDrawOverlays(this)+" requestedApplication="+store.settings.getBoolean("start-under-keyguard",true));
         unlockPrepared=true;
         boolean reused=overlay!=null&&gate.equals("unlock")&&overlay.pendingScreen.equals("unlock");
         showGate("unlock","");
@@ -279,10 +319,11 @@ public final class GuardService extends AccessibilityService {
         if(WebHost.tracing())WebHost.trace("prepare-dispatched reused="+reused);
     }
     boolean completeUnlock(){
-        if(!waitingUnlock||!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked())return false;
+        if(!waitingUnlock){WebHost.trace("duplicate unlock ignored");return false;}
+        if(!interactive||keyguardLocked())return false;
         WebHost.resumeUnlockTrace();WebHost.trace("unlock-confirmed");
         if(!unlockPrepared)prepareUnlock();
-        waitingUnlock=false;setSystemPaused(false,"unlock-confirmed");beginUnlockTransition();main.removeCallbacks(checkUnlock);
+        waitingUnlock=false;setSystemPaused(false,"unlock-confirmed");beginUnlockTransition();UnlockDiagnostics.get(this).confirmed(overlayLayout==null?0:overlayLayout.type);main.removeCallbacks(checkUnlock);
         if(WebHost.tracing())WebHost.trace("complete-unlock ready="+overlay.frameReady+" pending="+overlay.preparingStart);
         // The caller reads the foreground once, retaining the actual event when available.
         revealOverlay();return true;
@@ -296,12 +337,14 @@ public final class GuardService extends AccessibilityService {
             Context hostContext=this;
             if(desiredWindowType()==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY){
                 try{managerFor(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);hostContext=applicationWindowContext;}
-                catch(IllegalStateException|SecurityException e){applicationWindowFailed=true;WebHost.trace("fallback accessibility reason=window-context");}
+                catch(IllegalStateException|SecurityException e){applicationWindowFailed=true;UnlockDiagnostics.get(this).failure("context",e);WebHost.trace("fallback accessibility reason=window-context");}
             }
             overlay=new WebHost(hostContext,true);overlay.frameAvailableCallback=this::revealOverlay;
-            overlayWindow=new android.widget.FrameLayout(hostContext);
+            overlayWindow=new GateSurface(hostContext);
             overlayWindow.getViewTreeObserver().addOnWindowFocusChangeListener(focused->{
+                WebHost.trace("window focus observed="+focused);
                 if(focused&&unlockTransition)observeForeground(null);
+                if(focused)showEditorKeyboard();
             });
             overlayWindow.addView(overlay.root,new android.widget.FrameLayout.LayoutParams(-1,-1));
         }
@@ -339,20 +382,20 @@ public final class GuardService extends AccessibilityService {
         try{addGateWindow(type);}
         catch(SecurityException|WindowManager.BadTokenException|IllegalStateException e){
             if(type!=WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)throw e;
-            applicationWindowFailed=true;WebHost.trace("fallback accessibility reason="+e.getClass().getSimpleName());
+            applicationWindowFailed=true;UnlockDiagnostics.get(this).failure("add",e);WebHost.trace("fallback accessibility reason="+e.getClass().getSimpleName());
             addGateWindow(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY);
         }
     }
     void addGateWindow(int type){
         WindowManager manager=managerFor(type);WindowManager.LayoutParams layout=gateLayout(type);
         manager.addView(overlayWindow,layout);gateWindow=manager;overlayLayout=layout;exposure=Exposure.WAITING;
-        WebHost.trace("window add type="+type+" alpha=0 flags="+layout.flags);
+        WebHost.trace("window add accepted type="+type+" alpha=0 flags="+layout.flags);
     }
     void removeGateWindow(String reason){
         if(overlayLayout==null)return;
         applyExposure(Exposure.HIDDEN);
-        WebHost.trace("window remove type="+overlayLayout.type+" reason="+reason);
-        try{(gateWindow==null?window:gateWindow).removeViewImmediate(overlayWindow);}catch(IllegalArgumentException ignored){}
+        WebHost.trace("window remove requested type="+overlayLayout.type+" reason="+reason);
+        try{(gateWindow==null?window:gateWindow).removeViewImmediate(overlayWindow);WebHost.trace("window removal accepted");}catch(IllegalArgumentException ignored){WebHost.trace("window removal observed=already-detached");}
         overlayLayout=null;gateWindow=null;
     }
     void reconcileWindowPermission(){
@@ -361,6 +404,9 @@ public final class GuardService extends AccessibilityService {
     }
     WindowManager.LayoutParams gateLayout(int type){
         WindowManager.LayoutParams p=new WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.MATCH_PARENT,type,WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE|WindowManager.LayoutParams.FLAG_SECURE,PixelFormat.OPAQUE);
+        // The primary-display SAW stays touchable/nonfocusable across keyguard teardown.
+        // Android keeps it below keyguard; GateSurface also rejects all locked/unready input.
+        if(type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)p.flags&=~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
         p.alpha=0;p.gravity=Gravity.TOP|Gravity.START;p.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;p.setTitle("Locky");return p;
     }
     boolean keyguardPlacementSafe(){
@@ -374,11 +420,11 @@ public final class GuardService extends AccessibilityService {
     }
     void revealOverlay(){
         if(dictionaryHost!=null||dictionaryOpening)return;
-        WebHost.trace("reveal request state="+exposure+" type="+(overlayLayout==null?0:overlayLayout.type));
+        WebHost.trace("reveal requested state="+exposure+" type="+(overlayLayout==null?0:overlayLayout.type)+" frameReady="+(overlay!=null&&overlay.frameReady)+" retainedFrame="+(overlay!=null&&overlay.retainedFrame));
         if(overlay==null)return;
         boolean usable=overlay.hasUsableFrame()||overlay.hasPresentedDocument()||(!overlay.everRendered&&overlay.loadFailed);
         if(!overlayVisible){applyExposure(Exposure.HIDDEN);return;}
-        boolean locked=!interactive||waitingUnlock||getSystemService(KeyguardManager.class).isKeyguardLocked();
+        boolean locked=!interactive||waitingUnlock||keyguardLocked();
         Exposure next;
         if(overlayLayout!=null&&overlayLayout.type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY&&!applicationStartAllowed())next=Exposure.SUSPENDED;
         else if(systemPaused)next=Exposure.SUSPENDED;
@@ -399,29 +445,36 @@ public final class GuardService extends AccessibilityService {
         View surface=overlayWindow==null?overlay.root:overlayWindow;
         boolean input=next==Exposure.INTERACTIVE,hidden=next==Exposure.HIDDEN;
         int visibility=hidden?View.GONE:View.VISIBLE;
-        if(surface.getVisibility()!=visibility){WebHost.trace("visibility="+surface.getVisibility()+"->"+visibility);surface.setVisibility(visibility);}
+        if(surface.getVisibility()!=visibility){WebHost.trace("visibility requested="+surface.getVisibility()+"->"+visibility);surface.setVisibility(visibility);}
         int accessibility=input?View.IMPORTANT_FOR_ACCESSIBILITY_AUTO:View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS;
         if(surface.getImportantForAccessibility()!=accessibility)surface.setImportantForAccessibility(accessibility);
         if(dictionaryHost==null){
-            if(overlay.root.getVisibility()!=visibility){WebHost.trace("root visibility="+overlay.root.getVisibility()+"->"+visibility);overlay.root.setVisibility(visibility);}
+            if(overlay.root.getVisibility()!=visibility){WebHost.trace("root visibility requested="+overlay.root.getVisibility()+"->"+visibility);overlay.root.setVisibility(visibility);}
             if(input)overlay.resumeOverlay();
         }
         int passive=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
         if(overlayLayout!=null){
             float alpha=input||next==Exposure.BEHIND_KEYGUARD?1f:0f;
-            int flags=input?overlayLayout.flags&~passive:overlayLayout.flags|passive;
+            int flags;
+            if(keyguardPlacementSafe()&&(next==Exposure.BEHIND_KEYGUARD||input||(next==Exposure.WAITING&&(!interactive||waitingUnlock||keyguardLocked())))){
+                flags=overlayLayout.flags&~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                flags=input&&inputMode!=Input.TOUCH?flags&~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE:flags|WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+            }else flags=input?overlayLayout.flags&~passive:overlayLayout.flags|passive;
             if(overlayLayout.alpha!=alpha||overlayLayout.flags!=flags){
                 WebHost.trace("exposure "+exposure+"->"+next+" type="+overlayLayout.type+" alpha="+overlayLayout.alpha+"->"+alpha+" flags="+overlayLayout.flags+"->"+flags);
+                if(overlayLayout.alpha!=alpha)WebHost.trace("alpha requested "+overlayLayout.alpha+"->"+alpha+" state="+next);
+                WebHost.trace("window update requested type="+overlayLayout.type+" alpha="+alpha+" flagsBefore="+overlayLayout.flags+" flagsAfter="+flags);
                 overlayLayout.alpha=alpha;overlayLayout.flags=flags;
-                try{(gateWindow==null?window:gateWindow).updateViewLayout(surface,overlayLayout);}
+                try{(gateWindow==null?window:gateWindow).updateViewLayout(surface,overlayLayout);WebHost.trace("window update accepted");}
                 catch(SecurityException|IllegalArgumentException e){
                     if(overlayLayout.type!=WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)throw e;
-                    applicationWindowFailed=true;exposure=Exposure.SUSPENDED;WebHost.trace("fallback pending reason="+e.getClass().getSimpleName());
+                    applicationWindowFailed=true;UnlockDiagnostics.get(this).failure("update",e);exposure=Exposure.SUSPENDED;WebHost.trace("fallback pending reason="+e.getClass().getSimpleName());
                     // Do not recursively remove/add a window from a render callback.
                     main.post(this::reconcileWindowPermission);return;
                 }
             }
         }
+        if(exposure!=next)WebHost.trace("state requested "+exposure+"->"+next+" input="+(input?inputMode:"blocked"));
         exposure=next;
         if(dictionaryHost==null&&!input&&!hidden&&prepareHidden)overlay.prepareOverlay();
     }
@@ -430,7 +483,7 @@ public final class GuardService extends AccessibilityService {
         String actual=overlayLayout==null?"none":overlayLayout.type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY?"application":"accessibility";
         boolean application=actual.equals("application");
         String status=!requested?(application?"disabled-pending":"disabled"):!permission?(application?"revoked-pending":"permission-required"):applicationWindowFailed?(application?"failed-pending":"failed"):!"unlock".equals(gate)?"app-gate":actual.equals("application")?"applied":"pending";
-        return new JSONObject().put("status",status).put("actual",actual).put("exposure",exposure.name());
+        return UnlockDiagnostics.get(this).windowStatus().put("status",status).put("actual",actual).put("permission",permission).put("requested",requested?"application":"accessibility").put("exposure",exposure.name());
     }
     void openDictionary(String word,java.util.function.Consumer<String> result){
         if(dictionaryOpening){result.accept("사전을 여는 중입니다. 잠시 후 다시 시도해 주세요.");return;}
@@ -462,7 +515,7 @@ public final class GuardService extends AccessibilityService {
         dictionaryHost=null;dictionaryOpening=false;
         overlayWindow.removeAllViews();overlayWindow.addView(overlay.root,new android.widget.FrameLayout.LayoutParams(-1,-1));
         utility="첫 화면";
-        if(overlayVisible&&interactive&&!getSystemService(KeyguardManager.class).isKeyguardLocked()){
+        if(overlayVisible&&interactive&&!keyguardLocked()){
             overlay.firstFrameCallback=()->{revealOverlay();activity.finish();};
             overlay.prepareOverlay();
         }else {activity.finish();revealOverlay();}
@@ -486,7 +539,7 @@ public final class GuardService extends AccessibilityService {
     JSONObject state() throws JSONException {String pkg=overlayVisible?gatePkg:sessionPkg;return new JSONObject().put("mode",gate).put("pkg",pkg).put("label",UsageReader.label(this,pkg)).put("purpose",purpose).put("daily",dailyRemaining(pkg)).put("session",sessionRemaining).put("activePkg",sessionPkg).put("free",!store.managed(System.currentTimeMillis())).put("paused",systemPaused||foreground.equals(getPackageName())).put("visible",overlayVisible);}
     final Runnable lockCompletion=()->{
         if(!lockPending)return;
-        if(!getSystemService(PowerManager.class).isInteractive()||getSystemService(KeyguardManager.class).isKeyguardLocked())return;
+        if(!getSystemService(PowerManager.class).isInteractive()||keyguardLocked())return;
         lockPending=false;revealOverlay();
         android.widget.Toast.makeText(this,"화면을 잠그지 못했습니다. 다시 시도해 주세요.",android.widget.Toast.LENGTH_LONG).show();
     };

@@ -18,11 +18,14 @@ final class ForegroundPolicy {
         if(best==null)return new Result("",false);
         return system.contains(best.pkg)?new Result("",true):new Result(best.pkg,false);
     }
-    // ADDED can be delivered late for the keyguard window already observed while
-    // locked. Only a distinct window interrupts that in-flight unlock; after focus
-    // settles, the same shade ID must again be treated as a normal interruption.
-    static boolean newSystemInterruption(boolean unlocking,Set<Integer> keyguardIds,int id){
-        return !unlocking||!keyguardIds.contains(id);
+    // A new SystemUI/unknown window ID is not evidence of a user interrupt while
+    // keyguard is being removed. Focused permission/phone/system apps and explicit
+    // system actions still interrupt; after a stable app/touch boundary normal policy applies.
+    static boolean interruptUnlock(boolean unlocking,boolean explicit){return !unlocking||explicit;}
+    static boolean explicitSystemAction(String className){
+        String name=className.toLowerCase(Locale.ROOT);
+        return name.contains("notificationpanel")||name.contains("quicksettings")||name.contains("qscontainer")
+            ||name.contains("qsdetail")||name.contains("globalactions")||name.contains("volumedialog");
     }
     private static int score(Window w){return w.focused?2:w.active?1:0;}
 }
