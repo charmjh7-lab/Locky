@@ -24,7 +24,7 @@ final class WebHost {
     boolean frameReady,presentationActive,everRendered,loadFailed;int initialRetries;
     private Runnable initialWatch,visualWatch;int visualRetryCount;
     String handoffState;Runnable firstFrameCallback;
-    WebHost(Context c,boolean overlay){context=c;store=Store.get(c);isOverlay=overlay;presentationActive=!overlay;root=new android.widget.FrameLayout(c);root.setBackgroundColor(Color.rgb(244,243,237));hosts.add(new WeakReference<>(this));
+    WebHost(Context c,boolean overlay){context=c;store=Store.get(c);isOverlay=overlay;presentationActive=!overlay;root=new android.widget.FrameLayout(c);root.setBackgroundColor(themeBackground());hosts.add(new WeakReference<>(this));
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root,(v,insets)->{
             androidx.core.graphics.Insets bars=insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()|androidx.core.view.WindowInsetsCompat.Type.displayCutout());
             androidx.core.graphics.Insets ime=insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime());
@@ -34,9 +34,9 @@ final class WebHost {
         root.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){public void onViewAttachedToWindow(View v){androidx.core.view.ViewCompat.requestApplyInsets(v);main.post(()->{redraw();requestVisualState();});}public void onViewDetachedFromWindow(View v){resetVisualState();}});
         if(overlay){
             android.widget.LinearLayout waiting=new android.widget.LinearLayout(c);waiting.setOrientation(android.widget.LinearLayout.VERTICAL);
-            waiting.setGravity(Gravity.CENTER);waiting.setPadding(32,24,32,24);waiting.setBackgroundColor(Color.rgb(244,243,237));
-            android.widget.TextView title=new android.widget.TextView(c);title.setText("휴대폰 시작");title.setTextColor(Color.rgb(35,55,46));title.setTextSize(22);title.setGravity(Gravity.CENTER);waiting.addView(title);
-            android.widget.TextView detail=new android.widget.TextView(c);detail.setText("시작화면을 준비하고 있습니다");detail.setTextColor(Color.rgb(109,120,111));detail.setTextSize(14);detail.setGravity(Gravity.CENTER);
+            waiting.setGravity(Gravity.CENTER);waiting.setPadding(32,24,32,24);waiting.setBackgroundColor(themeBackground());
+            android.widget.TextView title=new android.widget.TextView(c);title.setText("휴대폰 시작");title.setTextColor(themeForeground());title.setTextSize(22);title.setGravity(Gravity.CENTER);waiting.addView(title);
+            android.widget.TextView detail=new android.widget.TextView(c);detail.setText("시작화면을 준비하고 있습니다");detail.setTextColor(isDarkTheme()?Color.rgb(166,184,175):Color.rgb(97,113,107));detail.setTextSize(14);detail.setGravity(Gravity.CENTER);
             android.widget.LinearLayout.LayoutParams info=new android.widget.LinearLayout.LayoutParams(-2,-2);info.topMargin=16;waiting.addView(detail,info);
             android.widget.Button retry=new android.widget.Button(c);retry.setText("다시 불러오기");
             android.widget.LinearLayout.LayoutParams retryParams=new android.widget.LinearLayout.LayoutParams(-2,-2);retryParams.topMargin=18;waiting.addView(retry,retryParams);
@@ -45,7 +45,27 @@ final class WebHost {
             dismiss.setOnClickListener(v->{GuardService g=GuardService.live;if(g!=null){if("unlock".equals(g.gate))g.dismissStart();else g.stopApp();}});
             loadingView=waiting;root.addView(waiting,new android.widget.FrameLayout.LayoutParams(-1,-1));
         }else loadingView=null;
-        createView();
+        createView();syncTheme();
+    }
+    boolean isDarkTheme(){return (context.getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK)==android.content.res.Configuration.UI_MODE_NIGHT_YES;}
+    int themeBackground(){return isDarkTheme()?Color.rgb(16,24,23):Color.rgb(246,247,244);}
+    int themeForeground(){return isDarkTheme()?Color.rgb(238,245,240):Color.rgb(32,44,41);}
+    void syncTheme(){
+        int bg=themeBackground();root.setBackgroundColor(bg);
+        if(view!=null)view.setBackgroundColor(bg);
+        if(loadingView!=null){loadingView.setBackgroundColor(bg);
+            if(loadingView instanceof android.widget.LinearLayout){android.widget.LinearLayout panel=(android.widget.LinearLayout)loadingView;
+                if(panel.getChildAt(0) instanceof android.widget.TextView)((android.widget.TextView)panel.getChildAt(0)).setTextColor(themeForeground());
+                if(panel.getChildAt(1) instanceof android.widget.TextView)((android.widget.TextView)panel.getChildAt(1)).setTextColor(isDarkTheme()?Color.rgb(166,184,175):Color.rgb(97,113,107));
+            }
+        }
+        if(context instanceof Activity){Window w=((Activity)context).getWindow();w.setStatusBarColor(bg);w.setNavigationBarColor(bg);
+            int appearance=android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+            if(android.os.Build.VERSION.SDK_INT>=30 && w.getInsetsController()!=null)w.getInsetsController().setSystemBarsAppearance(isDarkTheme()?0:appearance,appearance);
+            else{View decor=w.getDecorView();int mask=View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+                decor.setSystemUiVisibility((decor.getSystemUiVisibility()&~mask)|(isDarkTheme()?0:mask));}
+        }
+        if(ready)evaluate("document.documentElement.dataset.theme='"+(isDarkTheme()?"dark":"light")+"'");
     }
     void resetVisualState(){if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}++visualGeneration;visualPending=-1;visualCompleted=-1;frameReady=false;paintedScreen="";visualRetryCount=0;}
     void showLoading(){resetVisualState();renderedScreen="";if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);if(isOverlay&&view!=null)view.setVisibility(View.INVISIBLE);}
@@ -154,7 +174,7 @@ final class WebHost {
         view.setLayerType(View.LAYER_TYPE_SOFTWARE,null);
         root.addView(view,0,new android.widget.FrameLayout.LayoutParams(-1,-1));
         if(isOverlay){view.setVisibility(View.INVISIBLE);if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);}
-        WebSettings s=view.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(false);s.setAllowFileAccess(false);s.setAllowContentAccess(false);s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);s.setMediaPlaybackRequiresUserGesture(true);s.setSupportMultipleWindows(false);view.setBackgroundColor(Color.rgb(244,243,237));
+        WebSettings s=view.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(false);s.setAllowFileAccess(false);s.setAllowContentAccess(false);s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);s.setMediaPlaybackRequiresUserGesture(true);s.setSupportMultipleWindows(false);view.setBackgroundColor(themeBackground());
         WebViewAssetLoader loader=new WebViewAssetLoader.Builder().addPathHandler("/assets/",new WebViewAssetLoader.AssetsPathHandler(context)).build();
         view.setWebViewClient(new WebViewClient(){
             @Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){return loader.shouldInterceptRequest(r.getUrl());}
@@ -181,6 +201,7 @@ final class WebHost {
         main.post(()->{
             if(closed||!ready||candidate!=view||navigation!=navigationGeneration)return;
             String navJs="chat".equals(name)&&!chat.isEmpty()?"openChatById("+JSONObject.quote(chat)+","+navigation+")":"navigate("+JSONObject.quote(name)+","+navigation+")";
+            navJs="document.documentElement.dataset.theme=\'"+(isDarkTheme()?"dark":"light")+"\';"+navJs;
             String snapshot=handoffState;handoffState=null;
             if(snapshot!=null&&!snapshot.isEmpty())
                 candidate.evaluateJavascript("restoreDictionaryStartState("+JSONObject.quote(snapshot)+")",

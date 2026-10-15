@@ -79,10 +79,10 @@ const server=http.createServer((req,res)=>{const name=req.url==='/'?'index.html'
  assert(balanced.topGap>=0&&balanced.topGap<=16,JSON.stringify(balanced)); // Utilities stay directly below the header.
  assert(balanced.toolsToDictionary>=0&&balanced.toolsToDictionary<=16,JSON.stringify(balanced));
  assert(balanced.dictionaryToPurposes>=8,JSON.stringify(balanced));
- assert(Math.abs(balanced.bottomGap-balanced.dictionaryToPurposes)<=10,JSON.stringify(balanced)); // Center the decision independently of the utility anchors.
+ assert(balanced.bottomGap>=0&&balanced.bottomGap<=20,JSON.stringify(balanced)); // Decision stays immediately above the fixed dismissal.
  assert.equal(balanced.heading,'무엇을 하려고 열었나요?');
- assert.equal(balanced.helper,'목적을 선택하면 휴대폰 사용을 시작합니다.');
- assert.equal(balanced.panelBorder,'0px');
+ assert.equal(balanced.helper,undefined); // Avoid repeating the obvious action on every unlock.
+ assert.equal(balanced.panelBorder,'2px'); // A restrained decision boundary, not another card.
  assert.notEqual(balanced.panelBackground,'rgba(0, 0, 0, 0)');
 
  await fit();const initial=await page.locator('.quick-tools').boundingBox();await page.locator('#noteBody').fill('길어도 고정 크기\n'.repeat(80));await page.waitForTimeout(450);assert(demo.notes.some(n=>n.body.includes('길어도')));await fit();const editedHeight=(await page.locator('.quick-tools').boundingBox()).height;assert(editedHeight>=130&&Math.abs(editedHeight-initial.height)<2,JSON.stringify({before:initial.height,after:editedHeight}));

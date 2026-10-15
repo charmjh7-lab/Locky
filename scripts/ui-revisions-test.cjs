@@ -32,7 +32,7 @@ const briefing={days:1,date:'2026-10-14',start:1,total:660000,unlocks:2,aimless:
    assert(result.areaBottom<=result.footerTop+1,JSON.stringify({viewport,count,...result}));
    assert(result.footerBottom<=result.height,JSON.stringify(result));assert(result.scroll<=result.height+1,JSON.stringify(result));
    assert(result.toolsTop<=55&&result.toolsHeight>=100,JSON.stringify(result));
-   assert(result.areaTop-result.dictionaryBottom>=7&&result.areaTop-result.dictionaryBottom<=17,JSON.stringify(result));
+   assert(result.areaTop-result.dictionaryBottom>=7,JSON.stringify(result)); // Purpose remains below tools, anchored toward the bottom.
   }
  }
  await page.setViewportSize({width:320,height:560});
