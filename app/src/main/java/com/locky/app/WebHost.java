@@ -23,6 +23,7 @@ final class WebHost {
     String renderedScreen="";long navigationGeneration,visualGeneration,visualPending=-1,visualCompleted=-1;
     boolean frameReady,presentationActive,everRendered,loadFailed;int initialRetries;
     private Runnable initialWatch,visualWatch;int visualRetryCount;
+    String handoffState;Runnable firstFrameCallback;
     WebHost(Context c,boolean overlay){context=c;store=Store.get(c);isOverlay=overlay;presentationActive=!overlay;root=new android.widget.FrameLayout(c);root.setBackgroundColor(Color.rgb(244,243,237));hosts.add(new WeakReference<>(this));
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root,(v,insets)->{
             androidx.core.graphics.Insets bars=insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()|androidx.core.view.WindowInsetsCompat.Type.displayCutout());
@@ -118,6 +119,7 @@ final class WebHost {
         long generation=visualGeneration;String screen=renderedScreen;
         main.post(()->{if(!closed&&source==view&&presentationActive&&frameReady&&generation==visualGeneration&&root.isShown()){
             visualCompleted=generation;paintedScreen=screen;
+            if(firstFrameCallback!=null){Runnable r=firstFrameCallback;firstFrameCallback=null;r.run();}
         }});
     }
     private void cancelInitialWatch(){if(initialWatch!=null){main.removeCallbacks(initialWatch);initialWatch=null;}}
@@ -176,8 +178,16 @@ final class WebHost {
     }
     private void dispatchScreen(){
         WebView candidate=view;long navigation=navigationGeneration;String name=pendingScreen,chat=pendingChat;
-        main.post(()->{if(!closed&&ready&&candidate==view&&navigation==navigationGeneration)
-            candidate.evaluateJavascript("chat".equals(name)&&!chat.isEmpty()?"openChatById("+JSONObject.quote(chat)+","+navigation+")":"navigate("+JSONObject.quote(name)+","+navigation+")",null);});
+        main.post(()->{
+            if(closed||!ready||candidate!=view||navigation!=navigationGeneration)return;
+            String navJs="chat".equals(name)&&!chat.isEmpty()?"openChatById("+JSONObject.quote(chat)+","+navigation+")":"navigate("+JSONObject.quote(name)+","+navigation+")";
+            String snapshot=handoffState;handoffState=null;
+            if(snapshot!=null&&!snapshot.isEmpty())
+                candidate.evaluateJavascript("restoreDictionaryStartState("+JSONObject.quote(snapshot)+")",
+                    ignored->{if(!closed&&ready&&candidate==view&&navigation==navigationGeneration)
+                        candidate.evaluateJavascript(navJs,null);});
+            else candidate.evaluateJavascript(navJs,null);
+        });
     }
     void evaluate(String js){WebView candidate=view;main.post(()->{if(!closed&&ready&&candidate==view&&(candidate.getParent()!=null||!isOverlay))candidate.evaluateJavascript(js,null);});}
     void close(){closed=true;ready=false;resetVisualState();main.removeCallbacksAndMessages(null);root.removeView(view);view.removeJavascriptInterface("Native");view.destroy();hosts.removeIf(r->r.get()==null||r.get()==this);}

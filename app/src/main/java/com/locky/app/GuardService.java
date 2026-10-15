@@ -107,7 +107,7 @@ public final class GuardService extends AccessibilityService {
     void pauseSystem(){
         hideFloatingTimer();
         boolean changed=!systemPaused;if(changed){checkpoint();systemPaused=true;lastNotice=-1;}
-        if(overlayVisible&&overlay!=null&&dictionaryHost==null)setOverlayExposure(false);
+        if(overlayVisible&&overlay!=null&&dictionaryHost==null&&!dictionaryOpening)setOverlayExposure(false);
         if(changed&&!sessionPkg.isEmpty())Notices.paused(this,UsageReader.label(this,sessionPkg),dailyRemaining(sessionPkg),sessionRemaining);
         ensurePulse();
     }
@@ -208,7 +208,8 @@ public final class GuardService extends AccessibilityService {
         if(dictionaryHost!=null)return;
         if(overlayVisible&&overlay!=null)setOverlayExposure(interactive&&!systemPaused&&!getSystemService(KeyguardManager.class).isKeyguardLocked());
     }
-    void setOverlayExposure(boolean exposed){
+    void setOverlayExposure(boolean exposed){setOverlayExposure(exposed,true);}
+    void setOverlayExposure(boolean exposed,boolean prepareHidden){
         if(overlay==null)return;
         // Keep the measured window attached during screen-off/keyguard preparation. Alpha zero
         // and passive flags prevent both private pixels and input interception before unlock.
@@ -220,33 +221,56 @@ public final class GuardService extends AccessibilityService {
             float alpha=exposed?1f:0f;int flags=exposed?overlayLayout.flags&~passive:overlayLayout.flags|passive;
             if(overlayLayout.alpha!=alpha||overlayLayout.flags!=flags){overlayLayout.alpha=alpha;overlayLayout.flags=flags;window.updateViewLayout(overlay.root,overlayLayout);}
         }
-        if(exposed)overlay.resumeOverlay();else overlay.prepareOverlay();
+        if(exposed)overlay.resumeOverlay();else if(prepareHidden)overlay.prepareOverlay();
     }
     void openDictionary(String word,boolean picker) throws Exception {
-        // Every successive query in the dictionary view stays in the same host
-        // Activity. Only the external dictionary popup is relaunched.
         if(dictionaryHost!=null){dictionaryHost.search(word,picker);return;}
         if(dictionaryOpening)return;
-        dictionaryOpening=true;
+        dictionaryOpening=true;useUtility("사전");
+        // Snapshot editable drafts and order, not the WebView. Keep the unlock
+        // overlay fully attached/rendered while the dictionary Activity prepares.
+        if(overlay==null||overlay.view==null||!overlay.ready){launchDictionaryHost(word,picker,"");return;}
+        overlay.view.evaluateJavascript("captureDictionaryStartState()",encoded->{
+            String snapshot="";
+            try{snapshot=new JSONArray("["+encoded+"]").getString(0);}catch(Exception ignored){}
+            launchDictionaryHost(word,picker,snapshot);
+        });
+    }
+    void launchDictionaryHost(String word,boolean picker,String snapshot){
+        if(!dictionaryOpening||dictionaryHost!=null)return;
         try{
-            useUtility("사전");
             startActivity(new Intent(this,DictionaryActivity.class)
-                .putExtra("word",word).putExtra("picker",picker)
+                .putExtra("word",word).putExtra("picker",picker).putExtra("handoff",snapshot)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_MULTIPLE_TASK
                     |Intent.FLAG_ACTIVITY_NO_ANIMATION|Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS));
-        }catch(RuntimeException e){dictionaryOpening=false;throw e;}
+        }catch(RuntimeException e){
+            dictionaryOpening=false;
+            android.widget.Toast.makeText(this,"사전 화면을 열지 못했습니다.",android.widget.Toast.LENGTH_SHORT).show();
+        }
     }
-    boolean borrowStart(DictionaryActivity activity){
-        dictionaryOpening=false;        if(!overlayVisible||overlay==null||dictionaryHost!=null)return false;
-        checkpoint();window.removeViewImmediate(overlay.root);dictionaryHost=activity;activity.setContentView(overlay.root);overlay.root.setVisibility(View.VISIBLE);overlay.resumeOverlay();return true;
+    boolean dictionaryReady(DictionaryActivity activity){
+        if(!dictionaryOpening||dictionaryHost!=null||!overlayVisible||overlay==null||!interactive)return false;
+        checkpoint();
+        // The new window is ready below the original overlay. Only change the
+        // overlay's window alpha; never detach/reattach its live WebView.
+        setOverlayExposure(false,false);
+        dictionaryHost=activity;dictionaryOpening=false;
+        return true;
     }
     void returnDictionary(DictionaryActivity activity){
-        if(dictionaryHost!=activity)return;checkpoint();dictionaryHost=null;
-        if(overlay==null)return;android.view.ViewParent parent=overlay.root.getParent();if(parent instanceof ViewGroup)((ViewGroup)parent).removeView(overlay.root);
-        if(live!=this)return;
-        window.addView(overlay.root,gateLayout());if(overlayVisible)revealOverlay();else overlay.root.setVisibility(View.GONE);utility="첫 화면";
+        if(dictionaryHost!=activity)return;
+        checkpoint();dictionaryHost=null;utility="첫 화면";
+        if(overlayVisible)revealOverlay();
     }
-    void hideOverlay(){if(dictionaryHost!=null)dictionaryHost.returnToStart();checkpoint();overlayVisible=false;if(overlay!=null){overlay.pause();overlay.root.setVisibility(View.GONE);}segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();utility="첫 화면";}
+    void dictionaryHostDestroyed(DictionaryActivity activity){
+        if(dictionaryHost==activity)returnDictionary(activity);
+        else if(dictionaryOpening){dictionaryOpening=false;revealOverlay();}
+    }
+    void restoreDictionaryDraft(String snapshot){
+        if(overlay!=null&&snapshot!=null&&!snapshot.isEmpty())
+            overlay.evaluate("restoreDictionaryStartState("+JSONObject.quote(snapshot)+")");
+    }
+    void hideOverlay(){if(dictionaryHost!=null)dictionaryHost.returnToStart();dictionaryOpening=false;checkpoint();overlayVisible=false;if(overlay!=null){overlay.pause();overlay.root.setVisibility(View.GONE);}segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();utility="첫 화면";}
     void choosePhone(JSONObject p) throws Exception {checkpoint();phoneEvent=store.event("unlock",p.getString("label"),"",p.optString("pkg"),0,p.optInt("aimless",0)==1);hideOverlay();launch(p);enforce();ensurePulse();}
     void allowApp(JSONObject p,int minutes) throws Exception {
         checkpoint();long remaining=dailyRemaining(gatePkg);JSONObject rule=store.rule(gatePkg);if(!store.managed(System.currentTimeMillis())){hideOverlay();return;}

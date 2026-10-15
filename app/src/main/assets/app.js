@@ -6,6 +6,25 @@ let seq=0,requests=new Map(),state=null,screen='home',selected='',minutes=5,chat
 let reshufflePurposeOnRender=true,purposePositions=new Map(),previousPurposePositions=new Map();
 let normalHeight=0,normalWidth=0;
 let quickQuestionDraft='',dictionaryWordDraft='';
+let dictionaryHandoff=false,dictionaryHandoffScroll=null;
+function captureDictionaryStartState(){
+ return JSON.stringify({word:$('#word')?.value??dictionaryWordDraft,quickQuestion:$('#quickQuestion')?.value??quickQuestionDraft,
+ noteId,purposePositions:[...purposePositions],previousPurposePositions:[...previousPurposePositions],scrollY:window.scrollY});
+}
+function restoreDictionaryStartState(raw){
+ try{
+  const s=JSON.parse(raw);
+  dictionaryWordDraft=String(s.word??dictionaryWordDraft);
+  quickQuestionDraft=String(s.quickQuestion??quickQuestionDraft);
+  if(typeof s.noteId==='string')noteId=s.noteId;
+  if(Array.isArray(s.purposePositions))purposePositions=new Map(s.purposePositions);
+  if(Array.isArray(s.previousPurposePositions))previousPurposePositions=new Map(s.previousPurposePositions);
+  dictionaryHandoff=true;
+  if(Number.isFinite(s.scrollY))dictionaryHandoffScroll=s.scrollY;
+  if($('#word'))$('#word').value=dictionaryWordDraft;
+  if($('#quickQuestion'))$('#quickQuestion').value=quickQuestionDraft;
+ }catch(e){}
+}
 let nativeNavigation=0;
 let nativeKeyboard=false,purposeScope='phone',restored=false,briefSeq=0,settingsTimer=null;
 let purposeStarting=false,briefData=null;const briefSort={apps:'desc',events:'desc',timeline:'desc'};
@@ -24,7 +43,7 @@ function header(back=false,title='Locky'){return `<div class="top">${back?`<butt
 function nav(){if(state?.overlay||['chat',...gated,'unlock'].includes(screen))return '';return `<div class="bottom"><nav class="nav" aria-label="주 메뉴">${[['home','home','시작'],['chats','chat','대화'],['brief','chart','브리핑'],['settings','settings','설정']].map(([s,i,l])=>`<button data-nav="${s}" class="${screen===s?'active':''}">${icon(i)}<span>${l}</span></button>`).join('')}</nav></div>`;}
 function startPolling(){clearInterval(poll);poll=null;if(['chat','chats','timer',...gated].includes(screen)&&document.visibilityState!=='hidden')poll=setInterval(()=>refresh(),1000);}
 function remember(){if(state&&!state.overlay&&!gated.includes(screen)&&screen!=='unlock')safe(()=>api('remember',{screen,chat:chatId,note:noteId}));}
-async function navigate(s,navigation=nativeNavigation){if(['home','unlock','app'].includes(s))reshufflePurposeOnRender=true;if(settingsTimer&&screen==='settings'){clearTimeout(settingsTimer);settingsTimer=null;await safe(saveReminders);}await flushMemo();if(navigation<nativeNavigation)return;nativeNavigation=navigation;closeSheet();screen=s;selected='';minutes=5;document.body.classList.toggle('start-screen',starts.includes(screen));window.scrollTo(0,0);await refresh(true);startPolling();remember();if(state&&['notes','chat','chats'].includes(s))safe(()=>api('utility',{name:s==='notes'?'메모':'ChatGPT'}));}
+async function navigate(s,navigation=nativeNavigation){if(['home','unlock','app'].includes(s)&&!dictionaryHandoff)reshufflePurposeOnRender=true;dictionaryHandoff=false;if(settingsTimer&&screen==='settings'){clearTimeout(settingsTimer);settingsTimer=null;await safe(saveReminders);}await flushMemo();if(navigation<nativeNavigation)return;nativeNavigation=navigation;closeSheet();screen=s;selected='';minutes=5;document.body.classList.toggle('start-screen',starts.includes(screen));window.scrollTo(0,0);await refresh(true);startPolling();remember();if(state&&['notes','chat','chats'].includes(s))safe(()=>api('utility',{name:s==='notes'?'메모':'ChatGPT'}));}
 async function refresh(force=false){if(refreshing){if(force)refreshAgain=true;return;}refreshing=true;try{
  if(!force&&state&&['chat','timer',...gated].includes(screen))Object.assign(state,await api('tick'));else state=await api('state');
  if(!restored){restored=true;chatId=chatId||state.savedChat||'';noteId=state.savedNote||noteId;}
@@ -35,7 +54,7 @@ function openChatById(id,navigation=nativeNavigation){chatId=id;return navigate(
 function signalRendered(){Native.request('0','rendered',JSON.stringify({screen,navigation:nativeNavigation}));}
 function nativeRestore(){if($('#app')?.childElementCount)signalRendered();else return refresh(true);}
 function render(){if($('#quickQuestion'))quickQuestionDraft=$('#quickQuestion').value;if($('#word'))dictionaryWordDraft=$('#word').value;let html='';switch(screen){case 'unlock':case 'home':html=home();break;case 'setup':html=setup();break;case 'settings':html=settings();break;case 'apps':html=appsPage();break;case 'usageApps':html=usageAppsPage();break;case 'app':case 'renew':case 'blocked':html=gate();break;case 'timer':html=timer();break;case 'notes':html=notesPage();break;case 'chats':html=chats();break;case 'chat':html=chat();break;case 'brief':html=brief();break;case 'week':briefDays=7;screen='brief';html=brief();break;default:screen='home';html=home();}
- document.body.classList.toggle('start-screen',starts.includes(screen));$('#app').innerHTML=html+nav();bind();viewportChanged();signalRendered();}
+ document.body.classList.toggle('start-screen',starts.includes(screen));$('#app').innerHTML=html+nav();bind();viewportChanged();if(dictionaryHandoffScroll!==null){const pos=dictionaryHandoffScroll;dictionaryHandoffScroll=null;requestAnimationFrame(()=>window.scrollTo(0,pos));}signalRendered();}
 function dismissButton(){return `<button class="dismiss" data-act="dismiss">${icon('power')}그냥 끄기</button>`;}
 function home(){return `<main class="start-page ${state.overlay?'overlay-start':''}">${header(false,'휴대폰 시작')}<div class="quick-tools"><section class="mini-note">${memoHTML(false)}</section><section class="quick-chat"><div class="mini-head"><button data-act="openChat">${icon('chat')} ChatGPT</button><button class="iconbtn" data-act="openChat" aria-label="대화 목록">${icon('expand')}</button></div><textarea id="quickQuestion" placeholder="바로 질문하기" aria-label="바로 질문하기" maxlength="20000">${esc(quickQuestionDraft)}</textarea><button class="quick-send" data-act="quickSend" aria-label="질문 전송">${icon('send')}</button></section></div><form id="dictionaryForm" class="dictionary-bar"><button type="button" data-act="dictionaryChoice" aria-label="사전 선택">${icon('book')}</button><input id="word" value="${esc(dictionaryWordDraft)}" placeholder="사전에서 찾을 단어" aria-label="찾을 단어"><button type="submit" aria-label="사전 검색">${icon('search')}</button></form><section class="start-purposes" aria-labelledby="purposeQuestion"><div class="purpose-intro"><div class="sectionhead"><h2 id="purposeQuestion">무엇을 하려고 열었나요?</h2><button class="textbtn purpose-edit" data-act="managePurposes" aria-label="시작 목적 편집">편집</button></div><p class="purpose-helper">목적을 선택하면 휴대폰 사용을 시작합니다.</p></div>${purposeGrid(false)}</section><footer class="start-footer">${!state.status.accessibility?'<button class="textbtn" data-nav="setup">자동 관리를 위한 권한 설정</button>':''}${dismissButton()}</footer></main>`;}
 function reshufflePurposesForStart(){reshufflePurposeOnRender=true;if(state&&['home','unlock','app'].includes(screen)&&!$('#sheet')?.innerHTML)render();}
