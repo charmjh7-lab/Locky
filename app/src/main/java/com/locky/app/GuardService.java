@@ -50,7 +50,7 @@ public final class GuardService extends AccessibilityService {
     void screenOff(){
         if(!interactive&&phoneStart!=null&&phoneStart.awaitingUnlock()){WebHost.trace("duplicate screen-off ignored");return;}
         UnlockDiagnostics.get(this);WebHost.beginUnlockTrace();
-        checkpoint();interactive=false;
+        checkpoint();interactive=false;hideFloatingTimer();
         if(lockPending){store.event("dismiss","열지 않기","","",0);lockPending=false;}
         main.removeCallbacks(lockCompletion);
         overview=false;overviewCandidate="";clearSessions();foreground="";

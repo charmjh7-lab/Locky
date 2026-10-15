@@ -297,7 +297,7 @@ final class WebHost {
         });
     }
     void evaluate(String js){WebView candidate=view;main.post(()->{if(!closed&&ready&&candidate==view&&(candidate.getParent()!=null||!isOverlay))candidate.evaluateJavascript(js,null);});}
-    void close(){closed=true;ready=false;setPreparingStart(false);resetVisualState("close");main.removeCallbacksAndMessages(null);root.removeView(view);view.removeJavascriptInterface("Native");view.destroy();hosts.removeIf(r->r.get()==null||r.get()==this);}
+    void close(){closed=true;ready=false;resetVisualState("close");main.removeCallbacksAndMessages(null);root.removeView(view);view.removeJavascriptInterface("Native");view.destroy();hosts.removeIf(r->r.get()==null||r.get()==this);}
     void refresh(){evaluate("refresh()");}
     static void refreshAll(){for(var r:hosts){WebHost h=r.get();if(h!=null)h.refresh();}}
     static JSONObject dictionaryLaunched(){try{return new JSONObject().put("launched",true);}catch(JSONException e){throw new IllegalStateException(e);}}
