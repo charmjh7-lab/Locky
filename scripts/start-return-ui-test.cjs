@@ -8,10 +8,41 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.addScriptTag({content:fs.readFileSync(path.join(__dirname,'../app/src/main/assets/app.js'),'utf8')});
   await page.evaluate(()=>{
    window.fixture={overlay:true,prefs:{enabled:true,start:540,end:1260},status:{accessibility:true},gate:{mode:'unlock'},allPurposes:Array.from({length:20},(_,i)=>({id:'p'+i,label:'목적 '+i,scope:'phone'})),notes:[{id:'n',title:'메모',body:'보존할 메모',mode:'text'}],chats:[],accounts:[],models:[],connection:{},dictionary:'process:dictionary/Popup'};window.calls=[];window.pendingLookup=null;
-   window.Native={request:(id,action,raw)=>{const args=JSON.parse(raw);calls.push({action,args});if(action==='rendered')return;if(action==='dictionary'){window.pendingLookup=id;return;}if(action==='dictionaryChoice')fixture.dictionary=args.id;
+   window.Native={request:(id,action,raw)=>{const args=JSON.parse(raw);calls.push({action,args});if(action==='rendered')return;if(action==='saveNote'&&window.holdMemo){window.pendingMemo=id;return;}if(action==='dictionary'){window.pendingLookup=id;return;}if(action==='dictionaryChoice')fixture.dictionary=args.id;
     setTimeout(()=>receive(id,action==='state'?fixture:action==='dictionaries'?[{id:'process:dictionary/Popup',label:'작은 사전'}]:{},null),0);}};
    state=fixture;screen='unlock';render();
   });
+  // Screen-off preparation reorders existing presets, even while a memo save is pending.
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  await page.evaluate(()=>{
+   window.editors=['#noteBody','#quickQuestion','#word'].map(s=>document.querySelector(s));
+   window.fixed=['.start-page','.reason-picker > .direct','.start-footer'].map(s=>document.querySelector(s));
+   window.buttons=new Map([...document.querySelectorAll('[data-purpose]')].map(el=>[el.dataset.purpose,el]));
+   window.orderBefore=[...buttons.keys()];window.frameBefore=domRevision;
+   window.signalsBefore=calls.filter(c=>c.action==='rendered').length;
+   editors[0].value='보존할 메모';scheduleMemo();window.holdMemo=true;
+   editors[1].value='목적 섞기 중 질문';editors[2].value='검색 초안';
+   editors[1].focus();editors[1].setSelectionRange(2,5);
+   document.querySelector('.preset-scroll').scrollTop=80;window.scrollBefore=document.querySelector('.preset-scroll').scrollTop;
+   window.preparedRevision=prepareStart();
+  });
+  assert.equal(await page.evaluate(()=>preparedRevision),await page.evaluate(()=>frameBefore+1));
+  assert.equal(await page.evaluate(()=>!!memoSaving&&pendingMemo!=null),true);
+  assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='rendered').length),await page.evaluate(()=>signalsBefore+1));
+  assert.equal(await page.evaluate(()=>editors.every((el,i)=>el===document.querySelector(['#noteBody','#quickQuestion','#word'][i]))),true);
+  assert.equal(await page.evaluate(()=>fixed.every(el=>el.isConnected)),true);
+  assert.equal(await page.evaluate(()=>[...document.querySelectorAll('[data-purpose]')].every(el=>buttons.get(el.dataset.purpose)===el&&typeof el.onclick==='function')),true);
+  assert.notDeepEqual(await page.locator('[data-purpose]').evaluateAll(els=>els.map(el=>el.dataset.purpose)),await page.evaluate(()=>orderBefore));
+  assert.deepEqual(await page.evaluate(()=>[document.activeElement===editors[1],editors[1].selectionStart,editors[1].selectionEnd,editors[1].value,editors[2].value]),[true,2,5,'목적 섞기 중 질문','검색 초안']);
+  assert.equal(await page.locator('.preset-scroll').evaluate(el=>el.scrollTop),await page.evaluate(()=>scrollBefore));
+  await page.evaluate(()=>{receive(pendingMemo,{},null);window.holdMemo=false;nativeRestore();});await page.waitForFunction(()=>!memoSaving);
+  assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='rendered').at(-1).args.revision),await page.evaluate(()=>preparedRevision));
+  // A sheet and a single-purpose list are unchanged preparations, not new revisions.
+  await page.evaluate(()=>{sheet('<p>열린 선택 화면</p>');window.noopBefore=domRevision;prepareStart();});
+  assert.equal(await page.evaluate(()=>domRevision),await page.evaluate(()=>noopBefore));
+  await page.evaluate(()=>{closeSheet();window.all=state.allPurposes;state.allPurposes=all.slice(0,1);render();window.noopBefore=domRevision;prepareStart();});
+  assert.equal(await page.evaluate(()=>domRevision),await page.evaluate(()=>noopBefore));
+  await page.evaluate(()=>{state.allPurposes=all;render();});
   const word='첫 단어 "<뜻>"',question='입력 중인 질문';await page.locator('#word').fill(word);await page.locator('#quickQuestion').fill(question);
   await page.locator('.preset-scroll').evaluate(el=>el.scrollTop=80);const scroll=await page.locator('.preset-scroll').evaluate(el=>el.scrollTop);
   await page.locator('#dictionaryForm').evaluate(form=>form.requestSubmit());await page.waitForFunction(()=>pendingLookup!==null);
@@ -37,7 +68,17 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.evaluate(()=>refresh(true));assert.equal(await page.locator('#word').inputValue(),'');
   await page.evaluate(()=>navigate('unlock',nativeNavigation+1));assert.equal(await page.locator('#word').inputValue(),'');assert.equal(await page.locator('#quickQuestion').inputValue(),question);
   const before=await page.evaluate(()=>calls.filter(c=>c.action==='dictionary').length);await page.locator('#dictionaryForm').evaluate(form=>form.requestSubmit());await page.waitForFunction(()=>document.querySelector('#toast').textContent==='찾을 단어를 입력해 주세요.');assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='dictionary').length),before);
+  // App-purpose reordering preserves direct/more controls, minute choice and handlers too.
+  await page.evaluate(()=>{
+   state.rules=[];state.gate={pkg:'example.app',daily:600000};state.allPurposes=all.map(p=>({...p,scope:'app'}));screen='app';minutes=8;render();
+   window.appDirect=document.querySelector('[data-act=direct]');window.appMore=document.querySelector('.more-reasons');
+   window.appBefore=[...document.querySelectorAll('[data-purpose]')].map(el=>el.dataset.purpose);reshufflePurposesForStart();
+  });
+  assert.equal(await page.evaluate(()=>appDirect===document.querySelector('[data-act=direct]')&&appMore===document.querySelector('.more-reasons')&&minutes===8),true);
+  assert.notDeepEqual(await page.locator('[data-purpose]').evaluateAll(els=>els.map(el=>el.dataset.purpose)),await page.evaluate(()=>appBefore));
+  await page.locator('[data-purpose]').first().evaluate(el=>el.click());await page.waitForFunction(()=>!purposeStarting);
+  assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='grant').at(-1).args.minutes),8);
   assert.equal(await page.evaluate(()=>calls.filter(x=>['dismiss','stop','choose'].includes(x.action)).length),0);assert.deepEqual(errors,[]);
-  console.log('PASS: deferred dispatch, success-only clearing, failure/retry, duplicate submit, newer edit, choice/cancel, repeated search, draft/scroll preservation and unlock reuse.');
+  console.log('PASS: partial preset reorder, editor/button identity, focus/selection/scroll, nonblocking memo save, revision/no-op/sheet handling; deferred dispatch, success-only clearing, failure/retry, duplicate submit, newer edit, choice/cancel, repeated search, draft/scroll preservation and unlock reuse.');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

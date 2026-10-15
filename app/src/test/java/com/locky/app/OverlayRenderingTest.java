@@ -20,10 +20,10 @@ public class OverlayRenderingTest {
     WebHost host;FrameView view;
     static class FrameView extends WebView {
         final List<VisualStateCallback> frames=new ArrayList<>();final List<Long> ids=new ArrayList<>();
-        final List<String> scripts=new ArrayList<>();int loads,resumes,pauses,layouts,timers;
+        final List<String> scripts=new ArrayList<>();final List<ValueCallback<String>> preparations=new ArrayList<>();int loads,resumes,pauses,layouts,timers;
         FrameView(Activity c){super(c);}
         @Override public void postVisualStateCallback(long id,VisualStateCallback callback){ids.add(id);frames.add(callback);}
-        @Override public void evaluateJavascript(String script,ValueCallback<String> callback){scripts.add(script);if(callback!=null)callback.onReceiveValue("null");}
+        @Override public void evaluateJavascript(String script,ValueCallback<String> callback){scripts.add(script);if("prepareStart()".equals(script)){preparations.add(callback);return;}if(callback!=null)callback.onReceiveValue("null");}
         @Override public void loadUrl(String url){loads++;}
         @Override public void onResume(){resumes++;}
         @Override public void onPause(){pauses++;}
@@ -39,7 +39,7 @@ public class OverlayRenderingTest {
         host.pendingScreen="unlock";host.ready=true;host.resumeOverlay();
     }
     @After public void cleanup(){host.close();host.store.close();Store.instance=null;}
-    void rendered(){host.rendered(view,"unlock",host.navigationGeneration);}
+    void rendered(){host.rendered(view,"unlock",host.navigationGeneration,1);}
     @Test public void javascriptAndVisualCallbacksDoNotClaimAndroidHasDrawn(){
         rendered();assertEquals(1,view.frames.size());assertEquals(View.INVISIBLE,view.getVisibility());
         view.complete(0);assertTrue(host.frameReady);assertEquals(View.VISIBLE,view.getVisibility());assertEquals(View.GONE,host.loadingView.getVisibility());assertEquals("",host.paintedScreen);
@@ -48,13 +48,13 @@ public class OverlayRenderingTest {
     @Test public void staleFrameAndSameScreenJavascriptCannotCompleteNewNavigation(){
         long previous=host.navigationGeneration;rendered();host.screen("unlock");view.complete(0);
         assertFalse(host.frameReady);assertEquals(View.INVISIBLE,view.getVisibility());
-        host.rendered(view,"unlock",previous);assertEquals(1,view.frames.size());
-        host.rendered(view,"unlock",host.navigationGeneration);assertEquals(2,view.frames.size());
+        host.rendered(view,"unlock",previous,1);assertEquals(1,view.frames.size());
+        host.rendered(view,"unlock",host.navigationGeneration,1);assertEquals(2,view.frames.size());
     }
     @Test public void hiddenCallbacksCannotSuppressTheNextResume(){
         rendered();host.pause();view.complete(0);assertFalse(host.frameReady);assertEquals("",host.paintedScreen);
         host.resumeOverlay();assertEquals(2,view.frames.size());view.complete(1);assertTrue(host.frameReady);
-        WebView stale=new WebView(view.getContext());host.rendered(stale,"unlock",host.navigationGeneration);assertEquals(2,view.frames.size());stale.destroy();
+        WebView stale=new WebView(view.getContext());host.rendered(stale,"unlock",host.navigationGeneration,1);assertEquals(2,view.frames.size());stale.destroy();
     }
     @Test public void preparationDoesNotCountAsPresentationAndResumePreservesDocument(){
         rendered();host.prepareOverlay();assertFalse(host.presentationActive);view.complete(0);
@@ -89,10 +89,48 @@ public class OverlayRenderingTest {
         view.complete(1);assertTrue(host.frameReady);
     }
     @Test public void changedDomOnTheSameScreenNeedsItsOwnFrameRatherThanReusingTheOldReadyFlag(){
-        rendered();view.complete(0);long visual=host.visualGeneration,navigation=host.navigationGeneration;
-        rendered();assertFalse(host.frameReady);assertTrue(host.visualGeneration>visual);assertEquals(navigation,host.navigationGeneration);
+        rendered();view.complete(0);long visual=host.visualGeneration,navigation=host.navigationGeneration;int layouts=view.layouts;
+        host.rendered(view,"unlock",navigation,2);assertFalse(host.frameReady);assertTrue(host.visualGeneration>visual);assertEquals(navigation,host.navigationGeneration);
         assertEquals(2,view.frames.size());view.complete(0);assertFalse(host.frameReady);
-        view.complete(1);assertTrue(host.frameReady);assertSame(view,host.view);assertEquals(0,view.loads);
+        view.complete(1);assertTrue(host.frameReady);assertEquals(layouts,view.layouts);assertSame(view,host.view);assertEquals(0,view.loads);
     }
-
+    @Test public void duplicateRestoreAndOlderRevisionCannotInvalidateAValidFrame(){
+        rendered();view.complete(0);long generation=host.visualGeneration;
+        rendered();host.rendered(view,"unlock",host.navigationGeneration,0);
+        assertTrue(host.frameReady);assertEquals(generation,host.visualGeneration);assertEquals(1,view.frames.size());
+    }
+    @Test public void warmPreparationWaitsForItsOwnRevisionAndRejectsOlderPreparation(){
+        rendered();view.complete(0);long generation=host.visualGeneration;
+        host.prepareStart();assertTrue(host.preparingStart);assertTrue(host.frameReady);
+        host.prepareStart();view.preparations.get(0).onReceiveValue("2");
+        assertTrue(host.preparingStart);assertEquals(generation,host.visualGeneration);
+        view.preparations.get(1).onReceiveValue("1");
+        assertFalse(host.preparingStart);assertTrue(host.frameReady);assertEquals(generation,host.visualGeneration);
+        host.prepareStart();view.preparations.get(2).onReceiveValue("2");
+        assertFalse(host.preparingStart);assertFalse(host.frameReady);assertEquals(2,view.frames.size());
+        view.complete(0);assertFalse(host.frameReady);view.complete(1);assertTrue(host.frameReady);
+        assertSame(view,host.view);assertEquals(0,view.loads);
+    }
+    @Test public void stalledPreparationUsesExistingLivenessRecoveryAndCannotApplyALateResult(){
+        rendered();view.complete(0);host.prepareStart();
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(6001));
+        assertFalse(host.preparingStart);assertFalse(host.frameReady);assertEquals(2,view.frames.size());
+        view.preparations.get(0).onReceiveValue("9");assertEquals(1,host.renderedRevision);
+        view.complete(1);assertTrue(host.frameReady);assertEquals(0,view.loads);
+        // If the delayed JS actually changes DOM later, its bridge signal still validates it.
+        host.rendered(view,"unlock",host.navigationGeneration,2);assertFalse(host.frameReady);
+        assertEquals(3,view.frames.size());view.complete(2);assertTrue(host.frameReady);
+    }
+    @Test public void unchangedInsetsDoNotScheduleAnotherViewportUpdateButImeChangesDo(){
+        Shadows.shadowOf(Looper.getMainLooper()).idle();view.scripts.clear();
+        var bars=androidx.core.graphics.Insets.of(0,24,0,32);
+        var normal=new androidx.core.view.WindowInsetsCompat.Builder().setInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars(),bars).setVisible(androidx.core.view.WindowInsetsCompat.Type.ime(),false).build();
+        androidx.core.view.ViewCompat.dispatchApplyWindowInsets(host.root,normal);Shadows.shadowOf(Looper.getMainLooper()).idle();
+        long count=view.scripts.stream().filter(s->s.startsWith("insetsChanged")).count();assertEquals(1,count);
+        androidx.core.view.ViewCompat.dispatchApplyWindowInsets(host.root,normal);Shadows.shadowOf(Looper.getMainLooper()).idle();
+        assertEquals(count,view.scripts.stream().filter(s->s.startsWith("insetsChanged")).count());
+        var ime=new androidx.core.view.WindowInsetsCompat.Builder(normal).setInsets(androidx.core.view.WindowInsetsCompat.Type.ime(),androidx.core.graphics.Insets.of(0,0,0,300)).setVisible(androidx.core.view.WindowInsetsCompat.Type.ime(),true).build();
+        androidx.core.view.ViewCompat.dispatchApplyWindowInsets(host.root,ime);Shadows.shadowOf(Looper.getMainLooper()).idle();
+        assertEquals(count+1,view.scripts.stream().filter(s->s.startsWith("insetsChanged")).count());assertEquals(300,host.root.getPaddingBottom());
+    }
 }

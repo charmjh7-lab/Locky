@@ -47,6 +47,7 @@ public final class GuardService extends AccessibilityService {
     }};
     void screenOff(){
         if(!interactive&&waitingUnlock&&unlockPrepared)return;
+        if(BuildConfig.DEBUG)WebHost.beginUnlockTrace();
         checkpoint();interactive=false;waitingUnlock=true;unlockPrepared=false;unlockTransition=false;
         if(lockPending){store.event("dismiss","열지 않기","","",0);lockPending=false;}
         main.removeCallbacks(lockCompletion);
@@ -235,16 +236,20 @@ public final class GuardService extends AccessibilityService {
     long lastNotice=-1;
     void prepareUnlock(){
         if(unlockPrepared)return;
+        if(BuildConfig.DEBUG)WebHost.trace("prepare-begin");
         unlockPrepared=true;
         boolean reused=overlay!=null&&gate.equals("unlock")&&overlay.pendingScreen.equals("unlock");
         showGate("unlock","");
-        if(reused)overlay.evaluate("Promise.resolve(flushMemo()).then(()=>reshufflePurposesForStart())");
+        if(reused)overlay.prepareStart();
         utility="첫 화면";unlockChecks=0;
+        if(BuildConfig.DEBUG)WebHost.trace("prepare-dispatched reused="+reused);
     }
     boolean completeUnlock(){
         if(!waitingUnlock||!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked())return false;
+        if(BuildConfig.DEBUG)WebHost.trace("unlock-confirmed");
         if(!unlockPrepared)prepareUnlock();
         waitingUnlock=false;systemPaused=false;unlockTransition=true;main.removeCallbacks(checkUnlock);
+        if(BuildConfig.DEBUG)WebHost.trace("complete-unlock ready="+overlay.frameReady+" pending="+overlay.preparingStart);
         // The caller reads the foreground once, retaining the actual event when available.
         revealOverlay();return true;
     }
@@ -274,7 +279,7 @@ public final class GuardService extends AccessibilityService {
     void revealOverlay(){
         if(dictionaryHost!=null||dictionaryOpening)return;
         if(overlayVisible&&overlay!=null)setOverlayExposure(interactive&&!waitingUnlock&&!systemPaused
-            &&!getSystemService(KeyguardManager.class).isKeyguardLocked()&&(overlay.frameReady||(!overlay.everRendered&&overlay.loadFailed)));
+            &&!getSystemService(KeyguardManager.class).isKeyguardLocked()&&!overlay.preparingStart&&(overlay.frameReady||(!overlay.everRendered&&overlay.loadFailed)));
     }
     void setOverlayExposure(boolean exposed){setOverlayExposure(exposed,true);}
     void setOverlayExposure(boolean exposed,boolean prepareHidden){
@@ -286,12 +291,13 @@ public final class GuardService extends AccessibilityService {
         if(dictionaryHost==null){
             if(overlay.root.getVisibility()!=View.VISIBLE)overlay.root.setVisibility(View.VISIBLE);
             // Activate the prepared presentation before committing visible/input flags together.
-            if(exposed)overlay.resumeOverlay();
+            if(exposed){if(BuildConfig.DEBUG&&!overlay.presentationActive)WebHost.trace("exposure-eligible generation="+overlay.visualGeneration);overlay.resumeOverlay();}
         }
         int passive=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
         if(overlayLayout!=null){
             float alpha=exposed?1f:0f;int flags=exposed?overlayLayout.flags&~passive:overlayLayout.flags|passive;
             if(overlayLayout.alpha!=alpha||overlayLayout.flags!=flags){
+                if(BuildConfig.DEBUG)WebHost.trace("window alpha="+overlayLayout.alpha+"->"+alpha+" flags="+overlayLayout.flags+"->"+flags);
                 overlayLayout.alpha=alpha;overlayLayout.flags=flags;window.updateViewLayout(surface,overlayLayout);
             }
         }

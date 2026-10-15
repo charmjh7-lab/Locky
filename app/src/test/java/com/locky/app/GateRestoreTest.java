@@ -95,6 +95,7 @@ public class GateRestoreTest {
     void unlockedStart(){
         windows();g.interactive=false;g.waitingUnlock=true;g.unlockPrepared=false;g.prepareUnlock();
         g.overlay.ready=true;g.overlay.frameReady=true;g.overlay.renderedScreen="unlock";
+        if(g.overlay.preparingStart)g.overlay.finishStartPreparation(g.overlay.view,g.overlay.navigationGeneration,g.overlay.startPreparation,"1");
         Shadows.shadowOf(keyguard).setKeyguardLocked(false);
         g.screen.onReceive(g,new android.content.Intent(android.content.Intent.ACTION_USER_PRESENT));
         assertTrue(g.unlockTransition);assertEquals(1f,g.overlayLayout.alpha,0);
@@ -148,4 +149,12 @@ public class GateRestoreTest {
         g.onAccessibilityEvent(event);g.revealOverlay();assertEquals(hidden+1,updates);event.recycle();
     }
 
+    @Test public void fastUnlockCannotExposeTheOldRevisionWhilePresetReorderIsPending(){
+        unlockedStart();WebHost host=g.overlay;host.everRendered=true;host.renderedRevision=1;
+        g.screenOff();assertTrue(host.preparingStart);assertTrue(host.frameReady);int hidden=updates;
+        g.interactive=true;g.completeUnlock();g.revealOverlay();assertEquals(0f,g.overlayLayout.alpha,0);assertEquals(hidden,updates);
+        host.finishStartPreparation(host.view,host.navigationGeneration,host.startPreparation,"1");
+        assertEquals(1f,g.overlayLayout.alpha,0);assertEquals(hidden+1,updates);
+        g.completeUnlock();g.revealOverlay();assertEquals(hidden+1,updates);
+    }
 }

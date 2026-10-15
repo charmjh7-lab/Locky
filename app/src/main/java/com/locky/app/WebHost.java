@@ -20,16 +20,27 @@ final class WebHost {
     static final List<WeakReference<WebHost>> hosts=new CopyOnWriteArrayList<>();
     final android.widget.FrameLayout root;final View loadingView;WebView view;final Context context;final Store store;final boolean isOverlay;final Handler main=new Handler(Looper.getMainLooper());volatile String pendingScreen="home",paintedScreen="",pendingChat="";boolean ready=false,closed=false;
     // DOM completion, Chromium frame preparation and Android drawing are separate states.
-    String renderedScreen="";long navigationGeneration,visualGeneration,visualPending=-1,visualCompleted=-1;
+    String renderedScreen="";long navigationGeneration,renderedRevision=-1,visualGeneration,visualPending=-1,visualCompleted=-1;
+    // frameReady: drawable DOM revision, not a display fence. presentationActive: requested
+    // presentation, not proof of composition. didDraw is an observation, never an exposure gate.
     boolean frameReady,presentationActive,everRendered,loadFailed,renderingActive;int initialRetries;
+    boolean preparingStart;long startPreparation;Boolean insetKeyboard;
     private Runnable initialWatch,visualWatch;int visualRetryCount;
     Runnable firstFrameCallback,frameAvailableCallback;
+    // Debug-only, bounded to one unlock. No text, package names or persistent collection.
+    private static int traceBudget;
+    static void beginUnlockTrace(){if(BuildConfig.DEBUG){traceBudget=40;trace("screen-off");}}
+    static void trace(String event){if(BuildConfig.DEBUG&&traceBudget>0){--traceBudget;android.util.Log.d("LockyUnlock",SystemClock.uptimeMillis()+" "+event);}}
     WebHost(Context c,boolean overlay){context=c;store=Store.get(c);isOverlay=overlay;presentationActive=!overlay;root=new android.widget.FrameLayout(c);root.setBackgroundColor(UiTheme.background(c));hosts.add(new WeakReference<>(this));
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root,(v,insets)->{
             androidx.core.graphics.Insets bars=insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()|androidx.core.view.WindowInsetsCompat.Type.displayCutout());
             androidx.core.graphics.Insets ime=insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime());
-            v.setPadding(bars.left,bars.top,bars.right,Math.max(bars.bottom,ime.bottom));
-            evaluate("insetsChanged("+insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime())+")");return androidx.core.view.WindowInsetsCompat.CONSUMED;
+            int bottom=Math.max(bars.bottom,ime.bottom);
+            boolean padding=v.getPaddingLeft()!=bars.left||v.getPaddingTop()!=bars.top||v.getPaddingRight()!=bars.right||v.getPaddingBottom()!=bottom;
+            boolean keyboard=insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime());
+            if(padding)v.setPadding(bars.left,bars.top,bars.right,bottom);
+            if(padding||insetKeyboard==null||insetKeyboard!=keyboard){insetKeyboard=keyboard;evaluate("insetsChanged("+keyboard+")");}
+            return androidx.core.view.WindowInsetsCompat.CONSUMED;
         });
         root.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){
             public void onViewAttachedToWindow(View v){
@@ -37,7 +48,7 @@ final class WebHost {
                 main.post(()->{if(closed||!root.isAttachedToWindow())return;applyTheme();
                     if(root.getVisibility()==View.VISIBLE){resumeEngine();redraw();requestVisualState();}});
             }
-            public void onViewDetachedFromWindow(View v){renderingActive=false;resetVisualState();}
+            public void onViewDetachedFromWindow(View v){renderingActive=false;resetVisualState("detach");}
         });
         if(overlay){
             android.widget.LinearLayout waiting=new android.widget.LinearLayout(c);waiting.setOrientation(android.widget.LinearLayout.VERTICAL);
@@ -71,21 +82,44 @@ final class WebHost {
         if(view!=null){view.getSettings().setTextZoom(Math.round(context.getResources().getConfiguration().fontScale*100));view.setBackgroundColor(UiTheme.background(context));if(Build.VERSION.SDK_INT>=29)view.setForceDarkAllowed(false);}
         if(ready)evaluate("themeChanged("+UiTheme.dark(context)+");viewportChanged()");
     }
-    void resetVisualState(){if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}++visualGeneration;visualPending=-1;visualCompleted=-1;frameReady=false;paintedScreen="";visualRetryCount=0;}
-    void showLoading(){resetVisualState();renderedScreen="";if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);if(isOverlay&&view!=null)view.setVisibility(View.INVISIBLE);}
-    void rendered(WebView source,String screen,long navigation){
-        if(closed||source!=view||!ready||navigation!=navigationGeneration)return;
+    void resetVisualState(String reason){if(BuildConfig.DEBUG)trace("invalidate "+reason+" ready="+frameReady+" generation="+(visualGeneration+1));if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}++visualGeneration;visualPending=-1;visualCompleted=-1;frameReady=false;paintedScreen="";visualRetryCount=0;}
+    void showLoading(){preparingStart=false;++startPreparation;cancelInitialWatch();resetVisualState("document");renderedRevision=-1;renderedScreen="";if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);if(isOverlay&&view!=null)view.setVisibility(View.INVISIBLE);}
+    void rendered(WebView source,String screen,long navigation,long revision){
+        if(closed||source!=view||!ready||navigation!=navigationGeneration||revision<0||revision<renderedRevision)return;
         if(isOverlay&&!pendingScreen.equals(screen))return;
         if(!isOverlay)pendingScreen=screen;
-        // Every explicit DOM render can change content even on the same screen.
-        // Simple unlock exposure never enters this path.
-        if(!renderedScreen.isEmpty())resetVisualState();
-        renderedScreen=screen;everRendered=true;loadFailed=false;cancelInitialWatch();requestVisualState();
+        boolean changed=revision!=renderedRevision||!screen.equals(renderedScreen);
+        if(changed&&!renderedScreen.isEmpty())resetVisualState("dom");
+        if(BuildConfig.DEBUG)trace("dom changed="+changed+" revision="+revision);
+        renderedRevision=revision;renderedScreen=screen;everRendered=true;loadFailed=false;if(!preparingStart)cancelInitialWatch();requestVisualState();
+    }
+    void prepareStart(){
+        // Loading/navigation already shuffles its initial DOM. A warm document needs only
+        // a preset reorder. Keep its frame valid, but do not expose it before JS answers.
+        if(closed||!ready||!everRendered||!"unlock".equals(renderedScreen))return;
+        preparingStart=true;long preparation=++startPreparation,navigation=navigationGeneration;WebView source=view;
+        // Reuse the document liveness watchdog, only as failure recovery. Normal exposure
+        // waits for the actual JS result, not a timeout or an onDraw on a hidden window.
+        cancelInitialWatch();initialWatch=()->{
+            initialWatch=null;
+            if(closed||source!=view||navigation!=navigationGeneration||preparation!=startPreparation||!preparingStart)return;
+            preparingStart=false;++startPreparation;resetVisualState("prepare-stalled");requestVisualState();
+        };main.postDelayed(initialWatch,6000);
+        source.evaluateJavascript("prepareStart()",result->finishStartPreparation(source,navigation,preparation,result));
+    }
+    void finishStartPreparation(WebView source,long navigation,long preparation,String result){
+        if(closed||!preparingStart||source!=view||navigation!=navigationGeneration||preparation!=startPreparation)return;
+        preparingStart=false;cancelInitialWatch();
+        try{rendered(source,"unlock",navigation,Long.parseLong(result));}
+        catch(NumberFormatException e){resetVisualState("prepare-failed");requestVisualState();}
+        if(BuildConfig.DEBUG)trace("prepare-complete revision="+renderedRevision+" ready="+frameReady);
+        if(frameAvailableCallback!=null)frameAvailableCallback.run();
     }
     void redraw(){
         if(closed||view==null)return;
-        root.requestLayout();view.requestLayout();view.invalidate();root.postInvalidateOnAnimation();
+        root.requestLayout();view.requestLayout();invalidateFrame();
     }
+    void invalidateFrame(){if(!closed&&view!=null){view.invalidate();root.postInvalidateOnAnimation();}}
     void resumeOverlay(){if(isOverlay)resumeRendering();}
     void resume(){if(!isOverlay)resumeRendering();}
     private boolean resumeEngine(){
@@ -101,7 +135,7 @@ final class WebHost {
         if(frameReady){
             // The warm buffer is valid. Only confirm Android presentation, without relayout
             // or a new Chromium visual callback / resume / DOM navigation.
-            if(exposing&&!resumed){view.invalidate();root.postInvalidateOnAnimation();}
+            if(exposing&&!resumed)invalidateFrame();
             return;
         }
         if(!ready){watchInitialLoad();return;}
@@ -111,7 +145,7 @@ final class WebHost {
     void pause(){
         boolean invalidate=presentationActive||renderingActive||frameReady||visualPending!=-1;
         presentationActive=false;
-        if(invalidate)resetVisualState();
+        if(invalidate)resetVisualState("pause");
         if(view!=null&&renderingActive){view.onPause();renderingActive=false;}
     }
     void prepareOverlay(){
@@ -150,17 +184,20 @@ final class WebHost {
             if(root.getVisibility()!=View.VISIBLE){visualPending=-1;return;}
             if(frameReady)return;
             if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}
-            visualPending=-1;frameReady=true;
-            // This only makes a prepared frame drawable; onDraw records Android presentation.
-            candidate.setVisibility(View.VISIBLE);if(loadingView!=null)loadingView.setVisibility(View.GONE);redraw();if(frameAvailableCallback!=null)frameAvailableCallback.run();
+            visualPending=-1;frameReady=true;if(BuildConfig.DEBUG)trace("visual-ready generation="+generation);
+            // Chromium guarantees that a subsequent draw can contain this DOM revision.
+            // Neither this callback nor onDraw is a fence for the system compositor.
+            candidate.setVisibility(View.VISIBLE);if(loadingView!=null)loadingView.setVisibility(View.GONE);invalidateFrame();if(frameAvailableCallback!=null)frameAvailableCallback.run();
         }});
-        redraw();
+        // DOM layout belongs to Chromium. An attached view with unchanged bounds only
+        // needs a draw here; attach/resume and watchdog recovery still request layout.
+        invalidateFrame();
     }
     void didDraw(WebView source){
         if(closed||source!=view||!presentationActive||!frameReady||!root.isShown()||visualCompleted==visualGeneration)return;
         long generation=visualGeneration;String screen=renderedScreen;
-        main.post(()->{if(!closed&&source==view&&presentationActive&&frameReady&&generation==visualGeneration&&root.isShown()){
-            visualCompleted=generation;paintedScreen=screen;
+        main.post(()->{if(!closed&&source==view&&presentationActive&&frameReady&&generation==visualGeneration&&visualCompleted!=generation&&root.isShown()){
+            visualCompleted=generation;paintedScreen=screen;if(BuildConfig.DEBUG)trace("view-draw generation="+generation);
             if(firstFrameCallback!=null){Runnable r=firstFrameCallback;firstFrameCallback=null;r.run();}
         }});
     }
@@ -191,7 +228,7 @@ final class WebHost {
     }
     void createView(){
         if(closed)return;
-        renderingActive=false;
+        renderingActive=false;insetKeyboard=null;
         view=new WebView(context){@Override protected void onDraw(Canvas canvas){super.onDraw(canvas);didDraw(this);}};
         // Scope the compositor workaround to WebView; keep native controls/windows unchanged.
         view.setLayerType(View.LAYER_TYPE_SOFTWARE,null);
@@ -203,7 +240,7 @@ final class WebHost {
             @Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){return loader.shouldInterceptRequest(r.getUrl());}
             @Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return true;}
             @Override public void onReceivedError(WebView v,WebResourceRequest request,WebResourceError error){if(v==view&&request.isForMainFrame()&&!everRendered){loadFailed=true;watchInitialLoad();if(frameAvailableCallback!=null)frameAvailableCallback.run();}}
-            @Override public void onPageFinished(WebView v,String url){if(closed||v!=view||loadFailed||ready)return;ready=true;applyTheme();dispatchScreen();}
+            @Override public void onPageFinished(WebView v,String url){if(closed||v!=view||loadFailed||ready)return;ready=true;applyTheme();if(insetKeyboard!=null)evaluate("insetsChanged("+insetKeyboard+")");dispatchScreen();}
             @Override public boolean onRenderProcessGone(WebView v,RenderProcessGoneDetail detail){
                 if(v!=view)return true;
                 // Recreation is reserved for an actually dead renderer, never a slow visual callback.
@@ -228,7 +265,7 @@ final class WebHost {
         });
     }
     void evaluate(String js){WebView candidate=view;main.post(()->{if(!closed&&ready&&candidate==view&&(candidate.getParent()!=null||!isOverlay))candidate.evaluateJavascript(js,null);});}
-    void close(){closed=true;ready=false;resetVisualState();main.removeCallbacksAndMessages(null);root.removeView(view);view.removeJavascriptInterface("Native");view.destroy();hosts.removeIf(r->r.get()==null||r.get()==this);}
+    void close(){closed=true;ready=false;preparingStart=false;resetVisualState("close");main.removeCallbacksAndMessages(null);root.removeView(view);view.removeJavascriptInterface("Native");view.destroy();hosts.removeIf(r->r.get()==null||r.get()==this);}
     static void refreshAll(){for(var r:hosts){WebHost h=r.get();if(h!=null)h.evaluate("refresh()");}}
     static JSONObject dictionaryLaunched(){try{return new JSONObject().put("launched",true);}catch(JSONException e){throw new IllegalStateException(e);}}
     void answer(String id,Object value,String error){evaluate("receive("+JSONObject.quote(id)+","+(value==null?"null":value.toString())+","+(error==null?"null":JSONObject.quote(error))+")");}
@@ -239,7 +276,7 @@ final class WebHost {
         @JavascriptInterface public void request(String id,String action,String raw){
             if(closed||source!=view)return;
             if(!action.matches("[A-Za-z]+")||raw.length()>1000000){answer(id,null,"요청을 처리할 수 없습니다.");return;}
-            if("rendered".equals(action)){main.post(()->{try{JSONObject frame=new JSONObject(raw);rendered(source,frame.optString("screen"),frame.optLong("navigation",-1));}catch(JSONException ignored){}});return;}
+            if("rendered".equals(action)){main.post(()->{try{JSONObject frame=new JSONObject(raw);rendered(source,frame.optString("screen"),frame.optLong("navigation",-1),frame.optLong("revision",-1));}catch(JSONException ignored){}});return;}
             if(Set.of("choose","grant","extend","stop","utility","open","permission","dictionary","linkTest","signin","cancelLogin","exit","dismiss").contains(action))main.post(()->handle(id,action,raw));
             else LockyApp.app.work.execute(()->handle(id,action,raw));
         }

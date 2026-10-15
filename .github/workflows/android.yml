@@ -83,7 +83,7 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging distribution/Locky.apk > distribution/package.txt
           grep -q "name='com.locky.app'" distribution/package.txt
           (cd distribution && sha256sum Locky.apk > SHA256SUMS.txt)
-          gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.2.3 · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
+          gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.2.4 · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
           python3 scripts/prune-releases.py
   visual-evidence:
     # Capture-only publication. The already verified APK release is not rebuilt.
@@ -165,7 +165,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.2.3 · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
+          gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.2.4 · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
       - name: Keep three successful automatic releases
         if: ${{ success() && needs.ui.result == 'success' }}
         env:
