@@ -20,14 +20,16 @@ public class GateRestoreTest {
         @org.robolectric.annotation.Implementation protected boolean performGlobalAction(int action){actions.add(action);return accepted;}
         @org.robolectric.annotation.Implementation protected java.util.List<android.view.accessibility.AccessibilityWindowInfo> getWindows(){snapshots++;return super.getWindows();}
     }
-    GuardService g;int adds,removes,updates;KeyguardManager keyguard;
+    GuardService g;int adds,removes,updates;java.util.List<Float> alphas=new java.util.ArrayList<>();KeyguardManager keyguard;
     @Before public void setup(){
         org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(false);
         LockActions.accepted=true;LockActions.snapshots=0;LockActions.actions.clear();Store.instance=null;g=Robolectric.buildService(GuardService.class).create().get();g.store=Store.get(g);GuardService.live=g;
         g.segmentWall=System.currentTimeMillis();g.segmentElapsed=android.os.SystemClock.elapsedRealtime();
         keyguard=g.getSystemService(KeyguardManager.class);
         g.systemPackages.add("com.android.systemui");g.systemPackages.add("com.android.permissioncontroller");
-        g.window=(WindowManager)Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{WindowManager.class},(p,m,a)->{if(m.getName().equals("addView"))adds++;if(m.getName().startsWith("removeView"))removes++;if(m.getName().equals("updateViewLayout"))updates++;return null;});
+        g.window=(WindowManager)Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{WindowManager.class},(p,m,a)->{if(m.getName().equals("addView"))adds++;if(m.getName().startsWith("removeView"))removes++;if(m.getName().equals("updateViewLayout")){updates++;alphas.add(((WindowManager.LayoutParams)a[1]).alpha);}return null;});
+        g.applicationWindow=g.window;
+        g.applicationWindowContext=g.getApplicationContext().createDisplayContext(g.getSystemService(android.hardware.display.DisplayManager.class).getDisplay(android.view.Display.DEFAULT_DISPLAY));
     }
     @After public void cleanup(){GuardService.live=null;g.main.removeCallbacksAndMessages(null);if(g.overlay!=null)g.overlay.close();g.store.close();Store.instance=null;}
     @Test public void lockedPreparationIsTransparentPassiveAndUsesTheSameWindowOnUnlock(){
@@ -150,10 +152,10 @@ public class GateRestoreTest {
         g.onAccessibilityEvent(event);g.revealOverlay();assertEquals(hidden+1,updates);event.recycle();
     }
 
-    @Test public void fastUnlockCannotExposeTheOldRevisionWhilePresetReorderIsPending(){
+    @Test public void fastUnlockKeepsValidatedPixelsWhilePresetReorderIsPending(){
         unlockedStart();WebHost host=g.overlay;host.everRendered=true;host.renderedRevision=1;
         g.screenOff();assertTrue(host.preparingStart);assertTrue(host.frameReady);int hidden=updates;
-        g.interactive=true;g.completeUnlock();g.revealOverlay();assertEquals(0f,g.overlayLayout.alpha,0);assertEquals(hidden,updates);
+        g.interactive=true;g.completeUnlock();g.revealOverlay();assertEquals(1f,g.overlayLayout.alpha,0);assertEquals(hidden+1,updates);
         host.finishStartPreparation(host.view,host.navigationGeneration,host.startPreparation,"1");
         assertEquals(1f,g.overlayLayout.alpha,0);assertEquals(hidden+1,updates);
         g.completeUnlock();g.revealOverlay();assertEquals(hidden+1,updates);
@@ -162,7 +164,7 @@ public class GateRestoreTest {
         org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true);
         g.interactive=false;g.waitingUnlock=true;g.prepareUnlock();g.overlay.frameReady=true;g.revealOverlay();
         assertEquals(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,g.overlayLayout.type);assertEquals(1f,g.overlayLayout.alpha,0);
-        assertNotNull(g.overlayLayout.token);
+        assertNull(g.overlayLayout.token);
         int passive=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
         assertEquals(passive,g.overlayLayout.flags&passive);assertFalse(g.overlay.presentationActive);
         assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS,g.overlayWindow.getImportantForAccessibility());
@@ -188,7 +190,7 @@ public class GateRestoreTest {
         org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true);final int[] attempts={0};
         g.window=(WindowManager)Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{WindowManager.class},(p,m,a)->{
             if(m.getName().equals("addView")&&((WindowManager.LayoutParams)a[1]).type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY){attempts[0]++;throw new SecurityException("permission changed");}return null;});
-        g.interactive=false;g.prepareUnlock();Object web=g.overlay.view;g.showGate("unlock","");
+        g.applicationWindow=g.window;g.interactive=false;g.prepareUnlock();Object web=g.overlay.view;g.showGate("unlock","");
         assertEquals(1,attempts[0]);assertEquals(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,g.overlayLayout.type);assertSame(web,g.overlay.view);
     }
     @Test public void ownApplicationOverlayIsNotMistakenForTheNotificationShade(){
@@ -196,6 +198,66 @@ public class GateRestoreTest {
         var own=systemWindow();var root=android.view.accessibility.AccessibilityNodeInfo.obtain();root.setPackageName(g.getPackageName());Shadows.shadowOf(own).setRoot(root);
         windows(own);g.observeForeground(null);assertFalse(g.systemPaused);assertEquals(1f,g.overlayLayout.alpha,0);
         windows(systemWindow());g.observeForeground(null);assertTrue(g.systemPaused);assertEquals(0f,g.overlayLayout.alpha,0);
+    }
+    @Test public void validatedApplicationWindowNeverDimsForReorderOrDomCallbackDuringUnlock(){
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true);unlockedStart();
+        WebHost host=g.overlay;host.everRendered=true;host.retainedFrame=true;host.renderedRevision=1;
+        g.screenOff();assertTrue(host.preparingStart);assertEquals(1f,g.overlayLayout.alpha,0);
+        int added=adds,removed=removes;alphas.clear();
+        g.interactive=true;g.completeUnlock();assertEquals(1f,g.overlayLayout.alpha,0);
+        host.finishStartPreparation(host.view,host.navigationGeneration,host.startPreparation,"2");
+        assertFalse(host.frameReady);assertTrue(host.hasUsableFrame());g.revealOverlay();
+        assertEquals(1f,g.overlayLayout.alpha,0);assertEquals(added,adds);assertEquals(removed,removes);
+        assertEquals(java.util.List.of(1f),alphas); // input flags only, never 1 -> 0 -> 1
+        host.frameReady=true;g.revealOverlay();g.revealOverlay();assertEquals(1,alphas.size());
+    }
+    @Test public void delayedAddedEventForTheObservedKeyguardCannotPauseUnlockButANewShadeCan(){
+        windows(systemWindow());g.interactive=false;Shadows.shadowOf(keyguard).setKeyguardLocked(true);g.screenOff();
+        assertTrue(g.keyguardWindows.contains(51));
+        g.overlay.frameReady=true;g.interactive=true;Shadows.shadowOf(keyguard).setKeyguardLocked(false);g.completeUnlock();
+        var event=android.view.accessibility.AccessibilityEvent.obtain(android.view.accessibility.AccessibilityEvent.TYPE_WINDOWS_CHANGED);
+        org.robolectric.util.ReflectionHelpers.setField(event,"mSourceWindowId",51);
+        org.robolectric.util.ReflectionHelpers.setField(event,"mWindowChangeTypes",android.view.accessibility.AccessibilityEvent.WINDOWS_CHANGE_ADDED);
+        g.observeForeground(event);assertTrue(g.unlockTransition);assertFalse(g.systemPaused);assertEquals(1f,g.overlayLayout.alpha,0);
+        focusSurface();windows();g.observeForeground(null);assertFalse(g.unlockTransition);
+        windows(systemWindow());g.observeForeground(event);assertTrue(g.systemPaused);assertEquals(0f,g.overlayLayout.alpha,0);event.recycle();
+    }
+    @Test public void grantedPermissionDoesNotReconnectAnInvisiblePreparingWindowOnScreenOn(){
+        g.interactive=false;g.waitingUnlock=true;g.prepareUnlock();int added=adds,removed=removes;
+        g.interactive=true;org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true);
+        g.reconcileWindowPermission();g.showGate("unlock","");g.overlay.frameReady=true;g.completeUnlock();
+        assertEquals(added,adds);assertEquals(removed,removes);assertEquals(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,g.overlayLayout.type);
+        g.screenOff();assertEquals(added+1,adds);assertEquals(removed+1,removes);assertEquals(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,g.overlayLayout.type);
+    }
+    @Test public void revocationSuspendsWithoutReconnectUntilAnActualSystemScreenCoversUs(){
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true);unlockedStart();int added=adds,removed=removes;
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(false);g.reconcileWindowPermission();
+        assertEquals(added,adds);assertEquals(removed,removes);assertEquals(0f,g.overlayLayout.alpha,0);
+        windows(appWindow("com.android.permissioncontroller",true));g.observeForeground(null);
+        assertEquals(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,g.overlayLayout.type);assertEquals(added+1,adds);assertEquals(removed+1,removes);
+        assertTrue(g.systemPaused);assertEquals(0f,g.overlayLayout.alpha,0);
+        g.overlay.frameReady=true;g.switchForeground("example.app");assertEquals(1f,g.overlayLayout.alpha,0);
+    }
+    @Test public void revocationWithoutASettingsWindowRecoversAfterAStableAppSnapshot(){
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true);unlockedStart();int added=adds;
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(false);g.reconcileWindowPermission();
+        assertTrue(g.unlockTransition);assertEquals(added,adds);
+        windows(appWindow("example.app",true));g.observeForeground(null);
+        assertFalse(g.unlockTransition);assertFalse(g.systemPaused);assertEquals(added+1,adds);
+        assertEquals(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,g.overlayLayout.type);
+    }
+    @Test public void missingPlacementProofNeverMakesALockedWindowOpaque(){
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true);
+        g.interactive=false;g.waitingUnlock=true;g.prepareUnlock();g.applicationWindowContext=null;g.overlay.frameReady=true;g.revealOverlay();
+        assertEquals(0f,g.overlayLayout.alpha,0);assertFalse(g.overlay.presentationActive);
+    }
+    @Test public void statusSeparatesRequestPermissionCreationFailureAndActualRole() throws Exception {
+        assertEquals("permission-required",g.startWindowStatus().getString("status"));
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true);assertEquals("pending",g.startWindowStatus().getString("status"));
+        g.interactive=false;g.prepareUnlock();assertEquals("applied",g.startWindowStatus().getString("status"));
+        g.applicationWindowFailed=true;assertEquals("failed-pending",g.startWindowStatus().getString("status"));
+        g.store.settings.edit().putBoolean("start-under-keyguard",false).commit();g.reconcileWindowPermission();
+        assertEquals("disabled",g.startWindowStatus().getString("status"));assertEquals("accessibility",g.startWindowStatus().getString("actual"));
     }
     @Test public void inPlaceChatPresentationRetainsBothOverlayAndAnyExistingMainHost(){
         LockyApp previous=LockyApp.app;LockyApp stub=new LockyApp();LockyApp.app=stub;

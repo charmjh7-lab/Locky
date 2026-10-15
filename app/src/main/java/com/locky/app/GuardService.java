@@ -30,9 +30,13 @@ public final class GuardService extends AccessibilityService {
     DictionaryActivity dictionaryHost;boolean dictionaryOpening;
     java.util.function.Consumer<String> dictionaryResult;String dictionaryWord="";
     android.widget.FrameLayout overlayWindow;boolean unlockPrepared,unlockTransition,lockPending;
+    enum Exposure { HIDDEN, WAITING, BEHIND_KEYGUARD, INTERACTIVE, SUSPENDED }
+    Exposure exposure=Exposure.HIDDEN;
     boolean applicationWindowFailed;
+    Context applicationWindowContext;WindowManager applicationWindow,gateWindow;
+    final Set<Integer> keyguardWindows=new HashSet<>();
     final AppOpsManager.OnOpChangedListener overlayPermission=(op,pkg)->main.post(()->{
-        if(store==null)return;applicationWindowFailed=false;reconcileWindowPermission();
+        if(store==null)return;applicationWindowFailed=false;reconcileWindowPermission();WebHost.refreshAll();
     });
     WebHost overlay;WindowManager window;WindowManager.LayoutParams overlayLayout;final Set<String> systemPackages=new HashSet<>();
     String homePackage="";
@@ -46,20 +50,21 @@ public final class GuardService extends AccessibilityService {
             main.removeCallbacks(checkUnlock);checkUnlock.run();
         }else if(Intent.ACTION_SCREEN_ON.equals(a)){
             interactive=true;
+            if(waitingUnlock)rememberKeyguardWindows();
             if(waitingUnlock){unlockChecks=0;main.removeCallbacks(checkUnlock);checkUnlock.run();}
         }else if(Intent.ACTION_TIME_CHANGED.equals(a)||Intent.ACTION_TIMEZONE_CHANGED.equals(a)){checkpoint();policyChanged();Scheduler.schedule(c);}
     }};
     void screenOff(){
         if(!interactive&&waitingUnlock&&unlockPrepared)return;
-        if(BuildConfig.DEBUG)WebHost.beginUnlockTrace();
-        checkpoint();interactive=false;waitingUnlock=true;unlockPrepared=false;unlockTransition=false;
+        if(WebHost.tracing())WebHost.beginUnlockTrace();
+        checkpoint();interactive=false;waitingUnlock=true;unlockPrepared=false;endUnlockTransition("screen-off");keyguardWindows.clear();
         if(lockPending){store.event("dismiss","열지 않기","","",0);lockPending=false;}
         main.removeCallbacks(lockCompletion);
         if(dictionaryHost!=null)dictionaryHost.returnToStart();
         else if(dictionaryOpening){dictionaryOpening=false;finishDictionaryRequest("사전 검색을 취소했습니다.");}
         overview=false;overviewCandidate="";clearSessions();foreground="";
         store.settings.edit().putBoolean("checkpoint-interactive",false).putString("last-package","").apply();
-        systemPaused=false;main.removeCallbacks(checkUnlock);prepareUnlock();
+        setSystemPaused(false,"screen-off");rememberKeyguardWindows();main.removeCallbacks(checkUnlock);prepareUnlock();
         Notices.cancelTimer(this);main.removeCallbacks(pulse);pulseScheduled=false;
     }
     int unlockChecks;
@@ -89,7 +94,7 @@ public final class GuardService extends AccessibilityService {
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
         if(store==null)return;
         interactive=getSystemService(PowerManager.class).isInteractive();
-        if(!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked()){if(waitingUnlock)revealOverlay();return;}
+        if(!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked()){if(waitingUnlock){rememberKeyguardWindows();revealOverlay();}return;}
         completeUnlock();
         observeForeground(event);
         // Window events can precede availability of the new application's root.
@@ -97,6 +102,13 @@ public final class GuardService extends AccessibilityService {
         main.removeCallbacks(settledForeground);
         main.postDelayed(settledForeground,500);
     }
+    void rememberKeyguardWindows(){
+        if(interactive&&!getSystemService(KeyguardManager.class).isKeyguardLocked())return;
+        for(AccessibilityWindowInfo w:getWindows())if(w.getType()==AccessibilityWindowInfo.TYPE_SYSTEM)keyguardWindows.add(w.getId());
+    }
+    void beginUnlockTransition(){if(!unlockTransition){unlockTransition=true;WebHost.trace("unlockTransition=start");}}
+    void endUnlockTransition(String reason){if(unlockTransition){unlockTransition=false;WebHost.trace("unlockTransition=end reason="+reason);}}
+    void setSystemPaused(boolean value,String reason){if(systemPaused!=value){systemPaused=value;WebHost.trace("systemPaused="+value+" reason="+reason);}}
     boolean overview;String overviewCandidate="";long overviewCandidateSince;volatile String lastWindows="";
     void observeForeground(AccessibilityEvent event) {
         if(store==null||!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked())return;
@@ -112,7 +124,7 @@ public final class GuardService extends AccessibilityService {
             if(Build.VERSION.SDK_INT>=28&&event!=null&&event.getEventType()==AccessibilityEvent.TYPE_WINDOWS_CHANGED
                 &&(event.getWindowChanges()&AccessibilityEvent.WINDOWS_CHANGE_ADDED)!=0
                 &&event.getWindowId()==w.getId()&&w.getType()==AccessibilityWindowInfo.TYPE_SYSTEM
-                &&(w.isFocused()||w.isActive()))newSystemWindow=true;
+                &&(w.isFocused()||w.isActive()))newSystemWindow|=ForegroundPolicy.newSystemInterruption(unlockTransition,keyguardWindows,w.getId());
             if(event!=null&&w.getType()==AccessibilityWindowInfo.TYPE_APPLICATION&&w.isFocused()&&!pkg.equals(getPackageName())){
                 foreignFocus|=(event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED&&pkg.contentEquals(event.getPackageName()==null?"":event.getPackageName()))
                     ||(Build.VERSION.SDK_INT>=28&&event.getEventType()==AccessibilityEvent.TYPE_WINDOWS_CHANGED&&event.getWindowId()==w.getId()&&(event.getWindowChanges()&AccessibilityEvent.WINDOWS_CHANGE_FOCUSED)!=0);
@@ -125,7 +137,7 @@ public final class GuardService extends AccessibilityService {
         if(event!=null&&event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED&&event.getClassName()!=null){
             String name=event.getClassName().toString().toLowerCase(Locale.ROOT),pkg=event.getPackageName()==null?"":event.getPackageName().toString();
             boolean systemLauncher=pkg.equals(homePackage)||pkg.equals("com.android.systemui")||pkg.contains("launcher");
-            if(systemLauncher&&(name.contains("recents")||name.contains("overview")||name.contains("recentapps"))){unlockTransition=false;overview=true;overviewCandidate="";}
+            if(systemLauncher&&(name.contains("recents")||name.contains("overview")||name.contains("recentapps"))){endUnlockTransition("overview");overview=true;overviewCandidate="";}
             else if(pkg.equals(homePackage)&&name.contains("launcher")&&visible.pkg.equals(homePackage)){overview=false;overviewCandidate="";}
         }
         // A recent-task thumbnail can expose its old app window before the user actually enters it.
@@ -141,8 +153,8 @@ public final class GuardService extends AccessibilityService {
         }
         // A background application's root is not proof that keyguard teardown has finished.
         // Wait for our already-prepared window to own focus in a non-system snapshot.
-        if(unlockTransition&&ownFocus&&!visible.paused&&overlay!=null&&overlay.presentationActive&&overlay.frameReady)
-            unlockTransition=false;
+        if(unlockTransition&&ownFocus&&!visible.paused&&overlay!=null&&overlay.presentationActive&&overlay.hasUsableFrame())
+            endUnlockTransition("stable-overlay-focus");
         if(visible.paused){
             boolean explicitSystem=candidates.stream().anyMatch(w->w.type==AccessibilityWindowInfo.TYPE_APPLICATION&&w.focused
                 &&(w.pkg.equals("android")||systemPackages.contains(w.pkg))&&!w.pkg.equals("com.android.systemui"));
@@ -152,28 +164,38 @@ public final class GuardService extends AccessibilityService {
                 String name=event.getClassName().toString().toLowerCase(Locale.ROOT);
                 explicitSystem|=name.contains("notification")||name.contains("shade");
             }
-            if(explicitSystem||newSystemWindow)unlockTransition=false;
-            pauseSystem();return;
+            if(explicitSystem||newSystemWindow)endUnlockTransition(explicitSystem?"system-application":"new-system-window");
+            pauseSystem(explicitSystem?"system-application":newSystemWindow?"new-system-window":"system-snapshot");return;
+        }
+        // Revocation can make our old SAW window incapable of acquiring focus. End
+        // the transition only after a real app owns a non-system snapshot, then
+        // recover the already-suspended surface once (never during keyguard teardown).
+        if(!visible.paused&&overlayLayout!=null
+            &&overlayLayout.type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY&&!applicationStartAllowed()
+            &&(ownFocus||candidates.stream().anyMatch(w->w.type==AccessibilityWindowInfo.TYPE_APPLICATION&&w.focused))){
+            endUnlockTransition("permission-revoked-stable-app");
+            setSystemPaused(true,"permission-recovery");reconcileWindowPermission();
         }
         if(visible.pkg.isEmpty())return; // transient/root unavailable: do not trust background event senders
         String pkg=visible.pkg;
-        if(pkg.contains("incallui")||pkg.equals("com.android.server.telecom")){unlockTransition=false;if(overlayVisible)hideOverlay();pauseSystem();return;}
+        if(pkg.contains("incallui")||pkg.equals("com.android.server.telecom")){endUnlockTransition("incoming-call");if(overlayVisible)hideOverlay();pauseSystem();return;}
         if(foreignFocus&&!ownFocus&&overlayVisible&&overlay!=null&&Set.of("chat","chats").contains(overlay.pendingScreen))hideOverlay();
         switchForeground(pkg);
     }
-    void pauseSystem(){
+    void pauseSystem(){pauseSystem("system");}
+    void pauseSystem(String reason){
         // Keyguard teardown can report a system window before the app window exists.
         if(lockPending)return;
         if(unlockTransition&&overlayVisible&&"unlock".equals(gate)&&!overview)return;
         hideFloatingTimer();
-        boolean changed=!systemPaused;if(changed){checkpoint();systemPaused=true;lastNotice=-1;}
-        if(overlayVisible&&overlay!=null&&dictionaryHost==null&&!dictionaryOpening)setOverlayExposure(false);
+        boolean changed=!systemPaused;if(changed){checkpoint();setSystemPaused(true,reason);lastNotice=-1;}
+        if(overlayVisible&&overlay!=null&&dictionaryHost==null&&!dictionaryOpening){reconcileWindowPermission();}
         if(changed&&!sessionPkg.isEmpty())Notices.paused(this,UsageReader.label(this,sessionPkg),dailyRemaining(sessionPkg),sessionRemaining);
         ensurePulse();
     }
     void switchForeground(String pkg){
         if(dictionaryHost!=null)dictionaryHost.foregroundChanged(pkg);
-        if(systemPaused){checkpoint();systemPaused=false;lastNotice=-1;}
+        if(systemPaused){checkpoint();setSystemPaused(false,"foreground");lastNotice=-1;}
         if(!pkg.equals(foreground)) {
             checkpoint();
             // Preserve each app's original grant; time away never buys a new grant.
@@ -248,20 +270,20 @@ public final class GuardService extends AccessibilityService {
     long lastNotice=-1;
     void prepareUnlock(){
         if(unlockPrepared)return;
-        if(BuildConfig.DEBUG)WebHost.trace("prepare-begin");
+        if(WebHost.tracing())WebHost.trace("prepare-begin");
         unlockPrepared=true;
         boolean reused=overlay!=null&&gate.equals("unlock")&&overlay.pendingScreen.equals("unlock");
         showGate("unlock","");
         if(reused)overlay.prepareStart();
         utility="첫 화면";unlockChecks=0;
-        if(BuildConfig.DEBUG)WebHost.trace("prepare-dispatched reused="+reused);
+        if(WebHost.tracing())WebHost.trace("prepare-dispatched reused="+reused);
     }
     boolean completeUnlock(){
         if(!waitingUnlock||!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked())return false;
-        if(BuildConfig.DEBUG)WebHost.trace("unlock-confirmed");
+        WebHost.resumeUnlockTrace();WebHost.trace("unlock-confirmed");
         if(!unlockPrepared)prepareUnlock();
-        waitingUnlock=false;systemPaused=false;unlockTransition=true;main.removeCallbacks(checkUnlock);
-        if(BuildConfig.DEBUG)WebHost.trace("complete-unlock ready="+overlay.frameReady+" pending="+overlay.preparingStart);
+        waitingUnlock=false;setSystemPaused(false,"unlock-confirmed");beginUnlockTransition();main.removeCallbacks(checkUnlock);
+        if(WebHost.tracing())WebHost.trace("complete-unlock ready="+overlay.frameReady+" pending="+overlay.preparingStart);
         // The caller reads the foreground once, retaining the actual event when available.
         revealOverlay();return true;
     }
@@ -271,8 +293,13 @@ public final class GuardService extends AccessibilityService {
         boolean same=overlayVisible&&sameScreen;
         if(!same){checkpoint();gate=type;gatePkg=pkg;utility=type.equals("unlock")?"첫 화면":"사용 확인";}
         if(overlay==null){
-            overlay=new WebHost(this,true);overlay.frameAvailableCallback=this::revealOverlay;
-            overlayWindow=new android.widget.FrameLayout(this);
+            Context hostContext=this;
+            if(desiredWindowType()==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY){
+                try{managerFor(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);hostContext=applicationWindowContext;}
+                catch(IllegalStateException|SecurityException e){applicationWindowFailed=true;WebHost.trace("fallback accessibility reason=window-context");}
+            }
+            overlay=new WebHost(hostContext,true);overlay.frameAvailableCallback=this::revealOverlay;
+            overlayWindow=new android.widget.FrameLayout(hostContext);
             overlayWindow.getViewTreeObserver().addOnWindowFocusChangeListener(focused->{
                 if(focused&&unlockTransition)observeForeground(null);
             });
@@ -284,75 +311,126 @@ public final class GuardService extends AccessibilityService {
         if(!sameScreen)overlay.screen(type);
         revealOverlay();ensurePulse();
     }
-    WindowManager.LayoutParams gateLayout(){
-        return gateLayout(desiredWindowType());
-    }
     boolean applicationStartAllowed(){return !applicationWindowFailed&&store.settings.getBoolean("start-under-keyguard",true)&&android.provider.Settings.canDrawOverlays(this);}
     int desiredWindowType(){return "unlock".equals(gate)&&applicationStartAllowed()?WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY:WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY;}
+    WindowManager managerFor(int type){
+        if(type!=WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)return window;
+        if(applicationWindow==null){
+            // Never inherit AccessibilityService's default accessibility token. Reuse one
+            // standard non-activity window context; no arbitrary Binder / parent token.
+            Context app=getApplicationContext();
+            android.view.Display display=app.getSystemService(android.hardware.display.DisplayManager.class).getDisplay(Display.DEFAULT_DISPLAY);
+            if(display==null)throw new IllegalStateException("Primary display unavailable");
+            applicationWindowContext=app.createDisplayContext(display);
+            if(Build.VERSION.SDK_INT>=30)applicationWindowContext=applicationWindowContext.createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,null);
+            applicationWindow=applicationWindowContext.getSystemService(WindowManager.class);
+        }
+        return applicationWindow;
+    }
+    boolean canReplaceGateWindow(){
+        // SCREEN_ON / waitingUnlock is not a hidden boundary. Neither is alpha=0
+        // during frame validation. A real system interruption may safely cover us.
+        return !interactive||!overlayVisible||(systemPaused&&!waitingUnlock&&!unlockTransition);
+    }
     void ensureGateWindow(){
         int type=desiredWindowType();if(overlayLayout!=null&&overlayLayout.type==type)return;
-        if(type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY&&overlayLayout!=null&&overlayVisible&&interactive&&!waitingUnlock&&overlayLayout.alpha==1f)return;
-        if(overlayLayout!=null){overlayWindow.setVisibility(View.GONE);try{window.removeViewImmediate(overlayWindow);}catch(IllegalArgumentException ignored){}}
-        try{window.addView(overlayWindow,gateLayout(type));}
-        catch(SecurityException|WindowManager.BadTokenException e){
+        if(overlayLayout!=null&&!canReplaceGateWindow()){WebHost.trace("window migration deferred type="+overlayLayout.type+" requested="+type);return;}
+        removeGateWindow("role-or-permission");
+        try{addGateWindow(type);}
+        catch(SecurityException|WindowManager.BadTokenException|IllegalStateException e){
             if(type!=WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)throw e;
-            applicationWindowFailed=true;window.addView(overlayWindow,gateLayout(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY));
+            applicationWindowFailed=true;WebHost.trace("fallback accessibility reason="+e.getClass().getSimpleName());
+            addGateWindow(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY);
         }
+    }
+    void addGateWindow(int type){
+        WindowManager manager=managerFor(type);WindowManager.LayoutParams layout=gateLayout(type);
+        manager.addView(overlayWindow,layout);gateWindow=manager;overlayLayout=layout;exposure=Exposure.WAITING;
+        WebHost.trace("window add type="+type+" alpha=0 flags="+layout.flags);
+    }
+    void removeGateWindow(String reason){
+        if(overlayLayout==null)return;
+        applyExposure(Exposure.HIDDEN);
+        WebHost.trace("window remove type="+overlayLayout.type+" reason="+reason);
+        try{(gateWindow==null?window:gateWindow).removeViewImmediate(overlayWindow);}catch(IllegalArgumentException ignored){}
+        overlayLayout=null;gateWindow=null;
     }
     void reconcileWindowPermission(){
         if(overlay==null||dictionaryHost!=null||dictionaryOpening)return;
-        // Never migrate a visible start just because permission was granted. Revocation
-        // must recover immediately; promotion waits for screen-off or a hidden surface.
-        if(!interactive||!overlayVisible||overlayLayout==null||overlayLayout.alpha==0
-            ||(overlayLayout.type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY&&!applicationStartAllowed())){
-            ensureGateWindow();revealOverlay();
-        }
+        ensureGateWindow();revealOverlay();
     }
     WindowManager.LayoutParams gateLayout(int type){
         WindowManager.LayoutParams p=new WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.MATCH_PARENT,type,WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE|WindowManager.LayoutParams.FLAG_SECURE,PixelFormat.OPAQUE);
-        // AccessibilityService's WindowManager otherwise supplies its accessibility token.
-        // SAW must have its own token/layer, not become a child of that privileged surface.
-        if(type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)p.token=new Binder();
-        p.alpha=0;p.gravity=Gravity.TOP|Gravity.START;p.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;p.setTitle("Locky");overlayLayout=p;return p;
+        p.alpha=0;p.gravity=Gravity.TOP|Gravity.START;p.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;p.setTitle("Locky");return p;
+    }
+    boolean keyguardPlacementSafe(){
+        // AOSP DisplayPolicy only hides these windows by keyguard on the primary display.
+        // Accessibility overlays are above keyguard; FLAG_SECURE is not a placement rule.
+        Display display=overlayWindow==null?null:overlayWindow.getDisplay();
+        if(display==null&&applicationWindowContext!=null)display=applicationWindowContext.getSystemService(WindowManager.class).getDefaultDisplay();
+        return "unlock".equals(gate)&&overlayLayout!=null&&overlayLayout.type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            &&applicationStartAllowed()&&display!=null&&display.getDisplayId()==Display.DEFAULT_DISPLAY
+            &&(overlayLayout.flags&(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED|WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD))==0;
     }
     void revealOverlay(){
         if(dictionaryHost!=null||dictionaryOpening)return;
-        if(overlayLayout!=null&&overlayLayout.type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY&&!applicationStartAllowed())ensureGateWindow();
-        if(overlayVisible&&overlay!=null)setOverlayExposure(interactive&&!waitingUnlock&&!systemPaused
-            &&!getSystemService(KeyguardManager.class).isKeyguardLocked()&&!overlay.preparingStart
-            &&(overlay.frameReady||overlay.hasPresentedDocument()||(!overlay.everRendered&&overlay.loadFailed)));
+        WebHost.trace("reveal request state="+exposure+" type="+(overlayLayout==null?0:overlayLayout.type));
+        if(overlay==null)return;
+        boolean usable=overlay.hasUsableFrame()||overlay.hasPresentedDocument()||(!overlay.everRendered&&overlay.loadFailed);
+        if(!overlayVisible){applyExposure(Exposure.HIDDEN);return;}
+        boolean locked=!interactive||waitingUnlock||getSystemService(KeyguardManager.class).isKeyguardLocked();
+        Exposure next;
+        if(overlayLayout!=null&&overlayLayout.type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY&&!applicationStartAllowed())next=Exposure.SUSPENDED;
+        else if(systemPaused)next=Exposure.SUSPENDED;
+        else if(!usable)next=Exposure.WAITING;
+        else if(locked)next=keyguardPlacementSafe()?Exposure.BEHIND_KEYGUARD:Exposure.WAITING;
+        else next=Exposure.INTERACTIVE;
+        applyExposure(next);
     }
+    // Dictionary handoff explicitly suspends this surface while the same WebView is
+    // presented in its Activity. All actual window writes still go through one path.
     void setOverlayExposure(boolean exposed){setOverlayExposure(exposed,true);}
     void setOverlayExposure(boolean exposed,boolean prepareHidden){
+        applyExposure(exposed?Exposure.INTERACTIVE:Exposure.SUSPENDED,prepareHidden);
+    }
+    void applyExposure(Exposure next){applyExposure(next,true);}
+    void applyExposure(Exposure next,boolean prepareHidden){
         if(overlay==null)return;
-        android.view.View surface=overlayWindow==null?overlay.root:overlayWindow;
-        if(surface.getVisibility()!=View.VISIBLE)surface.setVisibility(View.VISIBLE);
-        int accessibility=exposed?View.IMPORTANT_FOR_ACCESSIBILITY_AUTO:View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS;
+        View surface=overlayWindow==null?overlay.root:overlayWindow;
+        boolean input=next==Exposure.INTERACTIVE,hidden=next==Exposure.HIDDEN;
+        int visibility=hidden?View.GONE:View.VISIBLE;
+        if(surface.getVisibility()!=visibility){WebHost.trace("visibility="+surface.getVisibility()+"->"+visibility);surface.setVisibility(visibility);}
+        int accessibility=input?View.IMPORTANT_FOR_ACCESSIBILITY_AUTO:View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS;
         if(surface.getImportantForAccessibility()!=accessibility)surface.setImportantForAccessibility(accessibility);
         if(dictionaryHost==null){
-            if(overlay.root.getVisibility()!=View.VISIBLE)overlay.root.setVisibility(View.VISIBLE);
-            // Activate the prepared presentation before committing visible/input flags together.
-            if(exposed){if(BuildConfig.DEBUG&&!overlay.presentationActive)WebHost.trace("exposure-eligible generation="+overlay.visualGeneration);overlay.resumeOverlay();}
+            if(overlay.root.getVisibility()!=visibility){WebHost.trace("root visibility="+overlay.root.getVisibility()+"->"+visibility);overlay.root.setVisibility(visibility);}
+            if(input)overlay.resumeOverlay();
         }
         int passive=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
         if(overlayLayout!=null){
-            // A normal application overlay is hidden by Android's keyguard policy. Keep
-            // prepared pixels opaque below it; unlock changes input, not the pixel alpha.
-            boolean behindKeyguard=prepareHidden&&dictionaryHost==null&&!dictionaryOpening&&overlayVisible&&"unlock".equals(gate)
-                &&overlayLayout.type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY&&(!interactive||waitingUnlock||getSystemService(KeyguardManager.class).isKeyguardLocked())
-                &&overlay.frameReady&&!overlay.preparingStart;
-            float alpha=exposed||behindKeyguard?1f:0f;int flags=exposed?overlayLayout.flags&~passive:overlayLayout.flags|passive;
+            float alpha=input||next==Exposure.BEHIND_KEYGUARD?1f:0f;
+            int flags=input?overlayLayout.flags&~passive:overlayLayout.flags|passive;
             if(overlayLayout.alpha!=alpha||overlayLayout.flags!=flags){
-                if(BuildConfig.DEBUG)WebHost.trace("window alpha="+overlayLayout.alpha+"->"+alpha+" flags="+overlayLayout.flags+"->"+flags);
+                WebHost.trace("exposure "+exposure+"->"+next+" type="+overlayLayout.type+" alpha="+overlayLayout.alpha+"->"+alpha+" flags="+overlayLayout.flags+"->"+flags);
                 overlayLayout.alpha=alpha;overlayLayout.flags=flags;
-                try{window.updateViewLayout(surface,overlayLayout);}catch(SecurityException e){
+                try{(gateWindow==null?window:gateWindow).updateViewLayout(surface,overlayLayout);}
+                catch(SecurityException|IllegalArgumentException e){
                     if(overlayLayout.type!=WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)throw e;
-                    applicationWindowFailed=true;ensureGateWindow();revealOverlay();return;
+                    applicationWindowFailed=true;exposure=Exposure.SUSPENDED;WebHost.trace("fallback pending reason="+e.getClass().getSimpleName());
+                    // Do not recursively remove/add a window from a render callback.
+                    main.post(this::reconcileWindowPermission);return;
                 }
             }
         }
-        // Hide private pixels and release input before doing any preparation on a locked phone.
-        if(dictionaryHost==null&&!exposed&&prepareHidden)overlay.prepareOverlay();
+        exposure=next;
+        if(dictionaryHost==null&&!input&&!hidden&&prepareHidden)overlay.prepareOverlay();
+    }
+    JSONObject startWindowStatus() throws JSONException {
+        boolean requested=store.settings.getBoolean("start-under-keyguard",true),permission=android.provider.Settings.canDrawOverlays(this);
+        String actual=overlayLayout==null?"none":overlayLayout.type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY?"application":"accessibility";
+        boolean application=actual.equals("application");
+        String status=!requested?(application?"disabled-pending":"disabled"):!permission?(application?"revoked-pending":"permission-required"):applicationWindowFailed?(application?"failed-pending":"failed"):!"unlock".equals(gate)?"app-gate":actual.equals("application")?"applied":"pending";
+        return new JSONObject().put("status",status).put("actual",actual).put("exposure",exposure.name());
     }
     void openDictionary(String word,java.util.function.Consumer<String> result){
         if(dictionaryOpening){result.accept("사전을 여는 중입니다. 잠시 후 다시 시도해 주세요.");return;}
@@ -389,7 +467,7 @@ public final class GuardService extends AccessibilityService {
             overlay.prepareOverlay();
         }else {activity.finish();revealOverlay();}
     }
-    void hideOverlay(){unlockTransition=false;overlayVisible=false;if(dictionaryHost!=null)dictionaryHost.returnToStart();finishDictionaryRequest("사전 검색을 취소했습니다.");dictionaryOpening=false;checkpoint();overlayVisible=false;if(overlay!=null){overlay.pause();overlay.root.setVisibility(View.GONE);if(overlayWindow!=null)overlayWindow.setVisibility(View.GONE);}segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();utility="첫 화면";}
+    void hideOverlay(){endUnlockTransition("hide");overlayVisible=false;if(dictionaryHost!=null)dictionaryHost.returnToStart();finishDictionaryRequest("사전 검색을 취소했습니다.");dictionaryOpening=false;checkpoint();overlayVisible=false;if(overlay!=null){applyExposure(Exposure.HIDDEN);overlay.pause();reconcileWindowPermission();}segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();utility="첫 화면";}
     void choosePhone(JSONObject p) throws Exception {checkpoint();phoneEvent=store.event("unlock",p.getString("label"),"",p.optString("pkg"),0,p.optInt("aimless",0)==1);hideOverlay();launch(p);enforce();ensurePulse();}
     void allowApp(JSONObject p,int minutes) throws Exception {
         checkpoint();long remaining=dailyRemaining(gatePkg);JSONObject rule=store.rule(gatePkg);if(!store.managed(System.currentTimeMillis())){hideOverlay();return;}
@@ -424,6 +502,6 @@ public final class GuardService extends AccessibilityService {
         main.postDelayed(lockCompletion,1500); // Failure recovery only; never delays exposure or locking.
     }
     @Override public void onInterrupt(){}
-    @Override public void onDestroy(){getSystemService(AppOpsManager.class).stopWatchingMode(overlayPermission);hideFloatingTimer();checkpoint();live=null;interactive=false;overlayVisible=false;if(dictionaryHost!=null)dictionaryHost.returnToStart();main.removeCallbacksAndMessages(null);try{unregisterReceiver(screen);}catch(Exception ignored){}if(overlay!=null){try{window.removeViewImmediate(overlayWindow==null?overlay.root:overlayWindow);}catch(IllegalArgumentException ignored){}overlay.close();}Notices.cancelTimer(this);super.onDestroy();}
+    @Override public void onDestroy(){getSystemService(AppOpsManager.class).stopWatchingMode(overlayPermission);hideFloatingTimer();checkpoint();live=null;interactive=false;overlayVisible=false;if(dictionaryHost!=null)dictionaryHost.returnToStart();main.removeCallbacksAndMessages(null);try{unregisterReceiver(screen);}catch(Exception ignored){}if(overlay!=null){removeGateWindow("service-destroy");overlay.close();}Notices.cancelTimer(this);super.onDestroy();}
 }
 

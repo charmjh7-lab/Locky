@@ -121,6 +121,16 @@ public class OverlayRenderingTest {
         host.rendered(view,"unlock",host.navigationGeneration,2);assertFalse(host.frameReady);
         assertEquals(3,view.frames.size());view.complete(2);assertTrue(host.frameReady);
     }
+    @Test public void retainedPixelsSurviveWarmValidationButNeverADocumentDetachOrRealPause(){
+        rendered();assertFalse(host.hasUsableFrame());view.complete(0);assertTrue(host.hasUsableFrame());
+        host.prepareOverlay();host.rendered(view,"unlock",host.navigationGeneration,2);
+        assertFalse(host.frameReady);assertTrue(host.hasUsableFrame());
+        host.resetVisualState("detach");assertFalse(host.hasUsableFrame());
+        host.requestVisualState();view.complete(view.frames.size()-1);assertTrue(host.hasUsableFrame());
+        host.pause();assertFalse(host.hasUsableFrame());
+        host.resumeOverlay();view.complete(view.frames.size()-1);assertTrue(host.hasUsableFrame());
+        host.screen("unlock");assertFalse(host.hasUsableFrame());assertEquals(View.INVISIBLE,view.getVisibility());
+    }
     @Test public void unchangedInsetsDoNotScheduleAnotherViewportUpdateButImeChangesDo(){
         Shadows.shadowOf(Looper.getMainLooper()).idle();view.scripts.clear();
         var bars=androidx.core.graphics.Insets.of(0,24,0,32);

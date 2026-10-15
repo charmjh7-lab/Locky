@@ -29,7 +29,7 @@ public class DictionaryReturnTest {
             return null;
         });
         g.overlay=new WebHost(g,true);g.overlay.pendingScreen="unlock";g.overlay.ready=true;g.overlay.frameReady=true;
-        g.overlayWindow=new android.widget.FrameLayout(g);g.overlayWindow.addView(g.overlay.root);g.gateLayout();g.overlayLayout.alpha=1f;
+        g.overlayWindow=new android.widget.FrameLayout(g);g.overlayWindow.addView(g.overlay.root);g.overlayLayout=g.gateLayout(g.desiredWindowType());g.overlayLayout.alpha=1f;
     }
     @After public void cleanup(){
         GuardService.live=null;g.main.removeCallbacksAndMessages(null);g.overlay.close();g.store.close();Store.instance=null;

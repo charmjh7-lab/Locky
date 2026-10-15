@@ -23,14 +23,18 @@ final class WebHost {
     String renderedScreen="",presentationUtility="";long navigationGeneration,renderedRevision=-1,visualGeneration,visualPending=-1,visualCompleted=-1;
     // frameReady: drawable DOM revision, not a display fence. presentationActive: requested
     // presentation, not proof of composition. didDraw is an observation, never an exposure gate.
+    boolean retainedFrame; // Valid pixels survive a DOM revision, never document loss or detach.
     boolean frameReady,presentationActive,everRendered,loadFailed,renderingActive;int initialRetries;
     boolean preparingStart;long startPreparation;Boolean insetKeyboard;
     private Runnable initialWatch,visualWatch;int visualRetryCount;
     Runnable firstFrameCallback,frameAvailableCallback;
-    // Debug-only, bounded to one unlock. No text, package names or persistent collection.
-    private static int traceBudget;
-    static void beginUnlockTrace(){if(BuildConfig.DEBUG){traceBudget=40;trace("screen-off");}}
-    static void trace(String event){if(BuildConfig.DEBUG&&traceBudget>0){--traceBudget;android.util.Log.d("LockyUnlock",SystemClock.uptimeMillis()+" "+event);}}
+    // Bounded unlock trace. Release logging requires log.tag.LockyUnlock=DEBUG.
+    // No text, package names or persistent collection.
+    private static int traceBudget,traceCycle;private static long traceUntil;
+    static boolean tracing(){return BuildConfig.DEBUG||android.util.Log.isLoggable("LockyUnlock",android.util.Log.DEBUG);}
+    static void beginUnlockTrace(){if(tracing()){traceBudget=120;traceUntil=SystemClock.uptimeMillis()+30_000;++traceCycle;trace("screen-off");}}
+    static void resumeUnlockTrace(){if(tracing()){traceUntil=SystemClock.uptimeMillis()+30_000;traceBudget=Math.max(traceBudget,80);}}
+    static void trace(String event){if(traceBudget>0&&SystemClock.uptimeMillis()<=traceUntil){--traceBudget;android.util.Log.d("LockyUnlock","cycle="+traceCycle+" "+SystemClock.uptimeMillis()+" "+event);}}
     WebHost(Context c,boolean overlay){context=c;store=Store.get(c);isOverlay=overlay;presentationActive=!overlay;root=new android.widget.FrameLayout(c);root.setBackgroundColor(UiTheme.background(c));hosts.add(new WeakReference<>(this));
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root,(v,insets)->{
             androidx.core.graphics.Insets bars=insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()|androidx.core.view.WindowInsetsCompat.Type.displayCutout());
@@ -44,11 +48,12 @@ final class WebHost {
         });
         root.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){
             public void onViewAttachedToWindow(View v){
+                trace("view attach");
                 androidx.core.view.ViewCompat.requestApplyInsets(v);
                 main.post(()->{if(closed||!root.isAttachedToWindow())return;applyTheme();
                     if(root.getVisibility()==View.VISIBLE){resumeEngine();redraw();requestVisualState();}});
             }
-            public void onViewDetachedFromWindow(View v){renderingActive=false;resetVisualState("detach");}
+            public void onViewDetachedFromWindow(View v){trace("view detach");renderingActive=false;resetVisualState("detach");}
         });
         if(overlay){
             android.widget.LinearLayout waiting=new android.widget.LinearLayout(c);waiting.setOrientation(android.widget.LinearLayout.VERTICAL);
@@ -82,37 +87,39 @@ final class WebHost {
         if(view!=null){view.getSettings().setTextZoom(Math.round(context.getResources().getConfiguration().fontScale*100));view.setBackgroundColor(UiTheme.background(context));if(Build.VERSION.SDK_INT>=29)view.setForceDarkAllowed(false);}
         if(ready)evaluate("themeChanged("+UiTheme.dark(context)+");viewportChanged()");
     }
-    void resetVisualState(String reason){if(BuildConfig.DEBUG)trace("invalidate "+reason+" ready="+frameReady+" generation="+(visualGeneration+1));if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}++visualGeneration;visualPending=-1;visualCompleted=-1;frameReady=false;paintedScreen="";visualRetryCount=0;}
-    void showLoading(){presentationUtility="";preparingStart=false;++startPreparation;cancelInitialWatch();resetVisualState("document");renderedRevision=-1;renderedScreen="";if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);if(isOverlay&&view!=null)view.setVisibility(View.INVISIBLE);}
+    void resetVisualState(String reason){if(!Set.of("dom","prepare-stalled","prepare-failed").contains(reason))retainedFrame=false;if(tracing())trace("frameReady="+frameReady+"->false reason="+reason+" generation="+(visualGeneration+1));if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}++visualGeneration;visualPending=-1;visualCompleted=-1;frameReady=false;paintedScreen="";visualRetryCount=0;}
+    void showLoading(){presentationUtility="";setPreparingStart(false);++startPreparation;cancelInitialWatch();resetVisualState("document");renderedRevision=-1;renderedScreen="";if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);if(isOverlay&&view!=null)view.setVisibility(View.INVISIBLE);}
     void rendered(WebView source,String screen,long navigation,long revision){
         if(closed||source!=view||!ready||navigation!=navigationGeneration||revision<0||revision<renderedRevision)return;
         if(isOverlay&&!pendingScreen.equals(screen))return;
         if(!isOverlay)pendingScreen=screen;
         boolean changed=revision!=renderedRevision||!screen.equals(renderedScreen);
         if(changed&&!renderedScreen.isEmpty())resetVisualState("dom");
-        if(BuildConfig.DEBUG)trace("dom changed="+changed+" revision="+revision);
+        if(tracing())trace("dom changed="+changed+" revision="+revision);
         renderedRevision=revision;renderedScreen=screen;everRendered=true;loadFailed=false;if(!preparingStart)cancelInitialWatch();requestVisualState();
     }
+    void setPreparingStart(boolean value){if(preparingStart!=value){trace("preparingStart="+value);preparingStart=value;}}
+    boolean hasUsableFrame(){return frameReady||retainedFrame;}
     void prepareStart(){
         // Loading/navigation already shuffles its initial DOM. A warm document needs only
-        // a preset reorder. Keep its frame valid, but do not expose it before JS answers.
+        // a preset reorder. Retain validated pixels while checking the updated revision.
         if(closed||!ready||!everRendered||!"unlock".equals(renderedScreen))return;
-        preparingStart=true;long preparation=++startPreparation,navigation=navigationGeneration;WebView source=view;
-        // Reuse the document liveness watchdog, only as failure recovery. Normal exposure
-        // waits for the actual JS result, not a timeout or an onDraw on a hidden window.
+        setPreparingStart(true);long preparation=++startPreparation,navigation=navigationGeneration;WebView source=view;
+        // Reuse the liveness watchdog for a stalled reorder; it never discards the
+        // validated document or schedules an artificial unlock delay.
         cancelInitialWatch();initialWatch=()->{
             initialWatch=null;
             if(closed||source!=view||navigation!=navigationGeneration||preparation!=startPreparation||!preparingStart)return;
-            preparingStart=false;++startPreparation;resetVisualState("prepare-stalled");requestVisualState();
+            setPreparingStart(false);++startPreparation;resetVisualState("prepare-stalled");requestVisualState();
         };main.postDelayed(initialWatch,6000);
         source.evaluateJavascript("prepareStart()",result->finishStartPreparation(source,navigation,preparation,result));
     }
     void finishStartPreparation(WebView source,long navigation,long preparation,String result){
         if(closed||!preparingStart||source!=view||navigation!=navigationGeneration||preparation!=startPreparation)return;
-        preparingStart=false;cancelInitialWatch();
+        setPreparingStart(false);cancelInitialWatch();
         try{rendered(source,"unlock",navigation,Long.parseLong(result));}
         catch(NumberFormatException e){resetVisualState("prepare-failed");requestVisualState();}
-        if(BuildConfig.DEBUG)trace("prepare-complete revision="+renderedRevision+" ready="+frameReady);
+        if(tracing())trace("prepare-complete revision="+renderedRevision+" ready="+frameReady);
         if(frameAvailableCallback!=null)frameAvailableCallback.run();
     }
     void redraw(){
@@ -174,7 +181,7 @@ final class WebHost {
             visualPending=-1;redraw();
             if(visualRetryCount++==0)requestVisualState();
             else{
-                frameReady=true;candidate.setVisibility(View.VISIBLE);
+                frameReady=true;retainedFrame=true;trace("frameReady=true watchdog");candidate.setVisibility(View.VISIBLE);
                 if(loadingView!=null)loadingView.setVisibility(View.GONE);
                 redraw();if(frameAvailableCallback!=null)frameAvailableCallback.run();
             }
@@ -186,7 +193,7 @@ final class WebHost {
             if(root.getVisibility()!=View.VISIBLE){visualPending=-1;return;}
             if(frameReady)return;
             if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}
-            visualPending=-1;frameReady=true;if(BuildConfig.DEBUG)trace("visual-ready generation="+generation);
+            visualPending=-1;frameReady=true;retainedFrame=true;if(tracing())trace("visual-ready generation="+generation);
             // Chromium guarantees that a subsequent draw can contain this DOM revision.
             // Neither this callback nor onDraw is a fence for the system compositor.
             candidate.setVisibility(View.VISIBLE);if(loadingView!=null)loadingView.setVisibility(View.GONE);invalidateFrame();if(frameAvailableCallback!=null)frameAvailableCallback.run();
@@ -199,7 +206,7 @@ final class WebHost {
         if(closed||source!=view||!presentationActive||!frameReady||!root.isShown()||visualCompleted==visualGeneration)return;
         long generation=visualGeneration;String screen=renderedScreen;
         main.post(()->{if(!closed&&source==view&&presentationActive&&frameReady&&generation==visualGeneration&&visualCompleted!=generation&&root.isShown()){
-            visualCompleted=generation;paintedScreen=screen;if(BuildConfig.DEBUG)trace("view-draw generation="+generation);
+            visualCompleted=generation;paintedScreen=screen;if(tracing())trace("view-draw generation="+generation);
             // Recording may write SQLite. Keep it out of immediate navigation and do it
             // only after this presentation actually drew, independently of request storage.
             if(!presentationUtility.isEmpty()){String name=presentationUtility;presentationUtility="";GuardService g=GuardService.live;if(g!=null&&g.overlay==this)g.useUtility(name);}
@@ -269,8 +276,8 @@ final class WebHost {
         // JS has already built the next screen in this document. Do not navigate/load,
         // hide the WebView or show the native loading surface. rendered(revision) owns validation.
         navigationGeneration=navigation;pendingScreen=screen;pendingChat="chat".equals(screen)?chat:"";
-        preparingStart=false;++startPreparation;cancelInitialWatch();
-        if(isOverlay){g.unlockTransition=false;presentationUtility="unlock".equals(screen)?"첫 화면":"ChatGPT";}
+        setPreparingStart(false);++startPreparation;cancelInitialWatch();
+        if(isOverlay){g.endUnlockTransition("in-place-navigation");presentationUtility="unlock".equals(screen)?"첫 화면":"ChatGPT";}
     }
     private void dispatchScreen(){
         WebView candidate=view;long navigation=navigationGeneration;String name=pendingScreen,chat=pendingChat;
@@ -281,7 +288,7 @@ final class WebHost {
         });
     }
     void evaluate(String js){WebView candidate=view;main.post(()->{if(!closed&&ready&&candidate==view&&(candidate.getParent()!=null||!isOverlay))candidate.evaluateJavascript(js,null);});}
-    void close(){closed=true;ready=false;preparingStart=false;resetVisualState("close");main.removeCallbacksAndMessages(null);root.removeView(view);view.removeJavascriptInterface("Native");view.destroy();hosts.removeIf(r->r.get()==null||r.get()==this);}
+    void close(){closed=true;ready=false;setPreparingStart(false);resetVisualState("close");main.removeCallbacksAndMessages(null);root.removeView(view);view.removeJavascriptInterface("Native");view.destroy();hosts.removeIf(r->r.get()==null||r.get()==this);}
     static void refreshAll(){for(var r:hosts){WebHost h=r.get();if(h!=null)h.evaluate("refresh()");}}
     static JSONObject dictionaryLaunched(){try{return new JSONObject().put("launched",true);}catch(JSONException e){throw new IllegalStateException(e);}}
     void answer(String id,Object value,String error){evaluate("receive("+JSONObject.quote(id)+","+(value==null?"null":value.toString())+","+(error==null?"null":JSONObject.quote(error))+")");}
@@ -382,7 +389,7 @@ final class WebHost {
         if(a.has("model")){String model=a.getString("model");JSONArray models=new JSONArray(store.settings.getString("models","[]"));boolean valid=false;for(int i=0;i<models.length();i++)if(models.getJSONObject(i).getString("slug").equals(model))valid=true;if(!valid)throw new IllegalArgumentException("연결된 계정의 모델을 선택해 주세요.");e.putString("model",model);}e.apply();
     }
     JSONObject state() throws Exception {
-        JSONObject status=new JSONObject().put("accessibility",GuardService.live!=null).put("drawOverlays",Settings.canDrawOverlays(context)).put("usage",UsageReader.allowed(context)).put("notifications",context.getSystemService(NotificationManager.class).areNotificationsEnabled()).put("exact",Build.VERSION.SDK_INT<31||context.getSystemService(AlarmManager.class).canScheduleExactAlarms()).put("liveTimer",Notices.timerStatus(context));
+        JSONObject status=new JSONObject().put("accessibility",GuardService.live!=null).put("drawOverlays",Settings.canDrawOverlays(context)).put("startWindow",GuardService.live==null?new JSONObject().put("status","service-off"):GuardService.live.startWindowStatus()).put("usage",UsageReader.allowed(context)).put("notifications",context.getSystemService(NotificationManager.class).areNotificationsEnabled()).put("exact",Build.VERSION.SDK_INT<31||context.getSystemService(AlarmManager.class).canScheduleExactAlarms()).put("liveTimer",Notices.timerStatus(context));
         return new JSONObject().put("overlay",isOverlay).put("prefs",store.preferences()).put("status",status).put("free",!store.managed(System.currentTimeMillis())).put("gate",GuardService.live==null?new JSONObject():GuardService.live.state()).put("purposes",store.purposes(isOverlay&&GuardService.live!=null&&!GuardService.live.gatePkg.isEmpty()?GuardService.live.gatePkg:"phone")).put("allPurposes",store.rows("SELECT * FROM purposes ORDER BY rowid")).put("notes",store.rows("SELECT * FROM notes ORDER BY updated DESC")).put("chats",store.rows("SELECT * FROM chats ORDER BY updated DESC")).put("rules",store.rows("SELECT * FROM rules ORDER BY label")).put("models",new JSONArray(store.settings.getString("models","[]"))).put("accounts",LockyApp.app.auth.accounts()).put("connection",LockyApp.app.auth.connection()).put("busy",LockyApp.app.chat.busy.get()).put("activeChat",LockyApp.app.chat.active).put("chatError",LockyApp.app.chat.error).put("ruleSeen",new JSONArray(store.settings.getString("rule-seen","[]"))).put("dictionary",store.settings.getString("dictionary","")).put("savedChat",store.settings.getString("last-chat","")).put("savedNote",store.settings.getString("last-note",""));
     }
     JSONArray apps() throws Exception {

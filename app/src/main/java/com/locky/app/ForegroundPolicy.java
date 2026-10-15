@@ -18,5 +18,11 @@ final class ForegroundPolicy {
         if(best==null)return new Result("",false);
         return system.contains(best.pkg)?new Result("",true):new Result(best.pkg,false);
     }
+    // ADDED can be delivered late for the keyguard window already observed while
+    // locked. Only a distinct window interrupts that in-flight unlock; after focus
+    // settles, the same shade ID must again be treated as a normal interruption.
+    static boolean newSystemInterruption(boolean unlocking,Set<Integer> keyguardIds,int id){
+        return !unlocking||!keyguardIds.contains(id);
+    }
     private static int score(Window w){return w.focused?2:w.active?1:0;}
 }
