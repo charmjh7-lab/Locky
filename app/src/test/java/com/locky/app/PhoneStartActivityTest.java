@@ -60,6 +60,8 @@ public class PhoneStartActivityTest {
         store.note(new JSONObject().put("id","kept").put("title","메모").put("body","기존 내용").put("mode","text").put("checks",new JSONArray()));
         store.settings.edit().putString("last-screen","brief").putString("phone-start-session",new JSONObject().put("screen","chat").put("chat","actual-chat").put("quickQuestion","초안").put("chatReturn","unlock").toString()).commit();
         PhoneStartActivity phone=open(1);assertEquals("actual-chat",phone.host.pendingChat);assertEquals("chat",phone.host.pendingScreen);
+        phone.host.handle("test","remember",new JSONObject().put("screen","chat").put("chat","other-saved-chat").put("chatReturn","chats").put("chatsReturn","unlock").put("quickQuestion","초안").toString());
+        assertEquals("other-saved-chat",phone.host.pendingChat);
         assertEquals("brief",store.settings.getString("last-screen",""));assertEquals("초안",phone.host.phoneSession().getString("quickQuestion"));assertEquals("기존 내용",store.rows("SELECT * FROM notes WHERE id='kept'").getJSONObject(0).getString("body"));
     }
 }

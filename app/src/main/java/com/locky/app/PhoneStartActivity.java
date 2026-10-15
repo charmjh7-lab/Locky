@@ -26,7 +26,7 @@ public final class PhoneStartActivity extends Activity {
         getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(UiTheme.background(this)));
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(),false);
         cycle=Math.max(getIntent().getLongExtra("cycle",0),saved==null?0:saved.getLong("cycle"));
-        chosen=saved!=null&&saved.getBoolean("chosen");
+        chosen=saved!=null&&saved.getLong("cycle")==cycle&&saved.getBoolean("chosen");
         host=new WebHost(this,WebHost.Role.PHONE_START);setContentView(host.root);
         JSONObject session=host.phoneSession();
         String screen=session.optString("screen","unlock");
@@ -39,9 +39,10 @@ public final class PhoneStartActivity extends Activity {
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);acceptCycle(intent.getLongExtra("cycle",cycle));trace("onNewIntent webview=reused");}
     @Override protected void onStart(){super.onStart();trace("onStart");}
     @Override protected void onResume(){
-        super.onResume();resumed=true;dictionaryJourney=false;
+        super.onResume();resumed=true;
         trace("onResume webview=reused");host.resume();host.ensurePurposeDay();
         GuardService g=GuardService.live;if(g!=null){g.pauseForActivity();g.useUtility("notes".equals(host.pendingScreen)?"메모":Set.of("chat","chats").contains(host.pendingScreen)?"ChatGPT":"첫 화면");}
+        dictionaryJourney=false;
         // No navigation/full refresh here. The retained document updates its own data.
     }
     @Override protected void onPause(){resumed=false;trace("onPause");host.evaluate("flushMemo();remember()");host.pause();super.onPause();}

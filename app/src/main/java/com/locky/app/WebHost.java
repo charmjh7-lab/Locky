@@ -265,7 +265,7 @@ final class WebHost {
                 if(v!=view)return true;
                 hostTrace("renderer gone observed; recovery requested");
                 // Recreation is reserved for an actually dead renderer, never a slow visual callback.
-                cancelInitialWatch();ready=false;everRendered=false;loadFailed=false;initialRetries=0;showLoading();
+                cancelInitialWatch();ready=false;everRendered=false;loadFailed=false;initialRetries=0;renderedRevision=-1;renderedScreen="";showLoading();
                 root.removeView(v);v.removeJavascriptInterface("Native");v.destroy();if(!closed)main.post(WebHost.this::createView);return true;
             }
         });
@@ -341,7 +341,7 @@ final class WebHost {
             case "utility":if(g!=null)g.useUtility(a.getString("name"));else store.event("utility",a.getString("name"),context.getPackageName(),"",0);break;
             case "open":if(role==Role.PHONE_START&&!Set.of("unlock","notes","chats","chat").contains(a.optString("screen"))){openMain(a.getString("screen"));}else if(isOverlay&&g!=null)g.openMain(a.getString("screen"),a.optString("chat"));else if(a.optString("screen").equals("chat")&&!a.optString("chat").isEmpty())openChat(a.getString("chat"));else screen(a.getString("screen"));break;
             case "dismiss":if(role==Role.PHONE_START)((PhoneStartActivity)context).dismiss();else if(isOverlay&&g!=null)g.stopApp();else if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);break;
-            case "remember":if(role==Role.PHONE_START){if(!((PhoneStartActivity)context).chosen)store.settings.edit().putString("phone-start-session",a.toString()).apply();pendingScreen=a.optString("screen","unlock");}else if(!isOverlay){if(a.has("briefTarget"))store.settings.edit().putString("last-brief",a.getJSONObject("briefTarget").toString()).apply();pendingScreen=a.optString("screen","home");store.settings.edit().putString("chat-return",a.optString("chatReturn","chats")).putString("chats-return",a.optString("chatsReturn","home")).putString("last-screen",a.optString("screen","home")).putString("last-chat",a.optString("chat")).putString("last-note",a.optString("note")).apply();}break;
+            case "remember":if(role==Role.PHONE_START){if(!((PhoneStartActivity)context).chosen)store.settings.edit().putString("phone-start-session",a.toString()).apply();pendingScreen=a.optString("screen","unlock");pendingChat="chat".equals(pendingScreen)?a.optString("chat"):"";}else if(!isOverlay){if(a.has("briefTarget"))store.settings.edit().putString("last-brief",a.getJSONObject("briefTarget").toString()).apply();pendingScreen=a.optString("screen","home");store.settings.edit().putString("chat-return",a.optString("chatReturn","chats")).putString("chats-return",a.optString("chatsReturn","home")).putString("last-screen",a.optString("screen","home")).putString("last-chat",a.optString("chat")).putString("last-note",a.optString("note")).apply();}break;
             case "dictionaries":out=Links.dictionaries(context);break;
             case "dictionaryChoice":store.settings.edit().putString("dictionary",a.getString("id")).apply();break;
             case "exit":if(role==Role.PHONE_START)((PhoneStartActivity)context).moveTaskToBack(true);else if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);break;
