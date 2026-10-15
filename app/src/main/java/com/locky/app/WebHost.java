@@ -200,8 +200,8 @@ final class WebHost {
         WebView candidate=view;long navigation=navigationGeneration;String name=pendingScreen,chat=pendingChat;
         main.post(()->{
             if(closed||!ready||candidate!=view||navigation!=navigationGeneration)return;
-            String navJs="chat".equals(name)&&!chat.isEmpty()?"openChatById("+JSONObject.quote(chat)+","+navigation+")":"navigate("+JSONObject.quote(name)+","+navigation+")";
-            navJs="document.documentElement.dataset.theme=\'"+(isDarkTheme()?"dark":"light")+"\';"+navJs;
+            String navigationCall="chat".equals(name)&&!chat.isEmpty()?"openChatById("+JSONObject.quote(chat)+","+navigation+")":"navigate("+JSONObject.quote(name)+","+navigation+")";
+            final String navJs="document.documentElement.dataset.theme=\'"+(isDarkTheme()?"dark":"light")+"\';"+navigationCall;
             String snapshot=handoffState;handoffState=null;
             if(snapshot!=null&&!snapshot.isEmpty())
                 candidate.evaluateJavascript("restoreDictionaryStartState("+JSONObject.quote(snapshot)+")",
