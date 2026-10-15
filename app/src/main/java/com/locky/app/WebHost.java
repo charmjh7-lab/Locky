@@ -21,7 +21,7 @@ final class WebHost {
     final android.widget.FrameLayout root;final View loadingView;WebView view;final Context context;final Store store;final boolean isOverlay;final Handler main=new Handler(Looper.getMainLooper());volatile String pendingScreen="home",paintedScreen="",pendingChat="";boolean ready=false,closed=false;
     // DOM completion, Chromium frame preparation and Android drawing are separate states.
     String renderedScreen="";long navigationGeneration,visualGeneration,visualPending=-1,visualCompleted=-1;
-    boolean frameReady,presentationActive,everRendered,loadFailed;int initialRetries;
+    boolean frameReady,presentationActive,everRendered,loadFailed,renderingActive;int initialRetries;
     private Runnable initialWatch,visualWatch;int visualRetryCount;
     Runnable firstFrameCallback,frameAvailableCallback;
     WebHost(Context c,boolean overlay){context=c;store=Store.get(c);isOverlay=overlay;presentationActive=!overlay;root=new android.widget.FrameLayout(c);root.setBackgroundColor(UiTheme.background(c));hosts.add(new WeakReference<>(this));
@@ -31,7 +31,14 @@ final class WebHost {
             v.setPadding(bars.left,bars.top,bars.right,Math.max(bars.bottom,ime.bottom));
             evaluate("insetsChanged("+insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime())+")");return androidx.core.view.WindowInsetsCompat.CONSUMED;
         });
-        root.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){public void onViewAttachedToWindow(View v){androidx.core.view.ViewCompat.requestApplyInsets(v);main.post(()->{applyTheme();redraw();requestVisualState();});}public void onViewDetachedFromWindow(View v){resetVisualState();}});
+        root.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){
+            public void onViewAttachedToWindow(View v){
+                androidx.core.view.ViewCompat.requestApplyInsets(v);
+                main.post(()->{if(closed||!root.isAttachedToWindow())return;applyTheme();
+                    if(root.getVisibility()==View.VISIBLE){resumeEngine();redraw();requestVisualState();}});
+            }
+            public void onViewDetachedFromWindow(View v){renderingActive=false;resetVisualState();}
+        });
         if(overlay){
             android.widget.LinearLayout waiting=new android.widget.LinearLayout(c);waiting.setOrientation(android.widget.LinearLayout.VERTICAL);
             waiting.setGravity(Gravity.CENTER);waiting.setPadding(32,24,32,24);waiting.setBackgroundColor(UiTheme.background(c));
@@ -70,7 +77,9 @@ final class WebHost {
         if(closed||source!=view||!ready||navigation!=navigationGeneration)return;
         if(isOverlay&&!pendingScreen.equals(screen))return;
         if(!isOverlay)pendingScreen=screen;
-        if(!screen.equals(renderedScreen))resetVisualState();
+        // Every explicit DOM render can change content even on the same screen.
+        // Simple unlock exposure never enters this path.
+        if(!renderedScreen.isEmpty())resetVisualState();
         renderedScreen=screen;everRendered=true;loadFailed=false;cancelInitialWatch();requestVisualState();
     }
     void redraw(){
@@ -79,21 +88,38 @@ final class WebHost {
     }
     void resumeOverlay(){if(isOverlay)resumeRendering();}
     void resume(){if(!isOverlay)resumeRendering();}
+    private boolean resumeEngine(){
+        if(renderingActive)return false;
+        view.onResume();view.resumeTimers();renderingActive=true;return true;
+    }
     private void resumeRendering(){
         if(closed||view==null)return;
-        // A visible root may still hold a suspended Chromium/Android surface.
-        if(!presentationActive){presentationActive=true;visualCompleted=-1;paintedScreen="";}
-        view.onResume();view.resumeTimers();redraw();
+        boolean exposing=!presentationActive;
+        if(exposing){presentationActive=true;visualCompleted=-1;paintedScreen="";}
+        boolean resumed=resumeEngine();
+        if(resumed)redraw(); // A genuinely paused surface still needs the white-screen safeguard.
+        if(frameReady){
+            // The warm buffer is valid. Only confirm Android presentation, without relayout
+            // or a new Chromium visual callback / resume / DOM navigation.
+            if(exposing&&!resumed){view.invalidate();root.postInvalidateOnAnimation();}
+            return;
+        }
         if(!ready){watchInitialLoad();return;}
         if(pendingScreen.equals(renderedScreen))requestVisualState();
         else if(!everRendered)watchInitialLoad();
     }
-    void pause(){presentationActive=false;resetVisualState();if(view!=null)view.onPause();}
+    void pause(){
+        boolean invalidate=presentationActive||renderingActive||frameReady||visualPending!=-1;
+        presentationActive=false;
+        if(invalidate)resetVisualState();
+        if(view!=null&&renderingActive){view.onPause();renderingActive=false;}
+    }
     void prepareOverlay(){
         if(closed||!isOverlay||view==null)return;
         presentationActive=false;paintedScreen="";
-        // Prepare the attached, transparent window without exposing it on the keyguard.
-        view.onResume();view.resumeTimers();redraw();
+        if(resumeEngine())redraw();
+        // Keeping an attached prepared view hidden is not a Chromium pause/resume cycle.
+        if(frameReady)return;
         if(ready&&pendingScreen.equals(renderedScreen))requestVisualState();else watchInitialLoad();
     }
     void requestVisualState(){
@@ -165,6 +191,7 @@ final class WebHost {
     }
     void createView(){
         if(closed)return;
+        renderingActive=false;
         view=new WebView(context){@Override protected void onDraw(Canvas canvas){super.onDraw(canvas);didDraw(this);}};
         // Scope the compositor workaround to WebView; keep native controls/windows unchanged.
         view.setLayerType(View.LAYER_TYPE_SOFTWARE,null);

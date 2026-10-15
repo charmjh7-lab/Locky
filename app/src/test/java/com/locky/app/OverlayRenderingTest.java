@@ -20,12 +20,15 @@ public class OverlayRenderingTest {
     WebHost host;FrameView view;
     static class FrameView extends WebView {
         final List<VisualStateCallback> frames=new ArrayList<>();final List<Long> ids=new ArrayList<>();
-        final List<String> scripts=new ArrayList<>();int loads,resumes;
+        final List<String> scripts=new ArrayList<>();int loads,resumes,pauses,layouts,timers;
         FrameView(Activity c){super(c);}
         @Override public void postVisualStateCallback(long id,VisualStateCallback callback){ids.add(id);frames.add(callback);}
         @Override public void evaluateJavascript(String script,ValueCallback<String> callback){scripts.add(script);if(callback!=null)callback.onReceiveValue("null");}
         @Override public void loadUrl(String url){loads++;}
         @Override public void onResume(){resumes++;}
+        @Override public void onPause(){pauses++;}
+        @Override public void resumeTimers(){timers++;}
+        @Override public void requestLayout(){layouts++;super.requestLayout();}
         void complete(int i){frames.get(i).onComplete(ids.get(i));}
     }
     @Before public void setup(){
@@ -65,10 +68,31 @@ public class OverlayRenderingTest {
         assertTrue(host.frameReady);assertEquals(View.VISIBLE,view.getVisibility());
         assertEquals(View.GONE,host.loadingView.getVisibility());assertEquals(2,view.frames.size());
         view.complete(0);assertTrue(host.frameReady);
-        host.resumeOverlay();assertEquals(2,view.frames.size());assertTrue(view.resumes>1);
+        host.resumeOverlay();assertEquals(2,view.frames.size());assertEquals(1,view.resumes);
     }
     @Test public void failedInitialLoadCanRetryBeforeReadyButSuccessfulPageCannotReload(){
         host.ready=false;host.loadFailed=true;host.retryInitialLoad();assertSame(view,host.view);assertEquals(1,view.loads);assertFalse(host.ready);
         host.ready=true;rendered();host.loadFailed=true;host.retryInitialLoad();assertEquals(1,view.loads);
     }
+    @Test public void repeatedWarmHideAndExposeDoesNotResumeRelayoutOrRevalidateTheFrame(){
+        rendered();view.complete(0);host.prepareOverlay();view.scripts.clear();
+        int resumes=view.resumes,timers=view.timers,layouts=view.layouts;long visual=host.visualGeneration,navigation=host.navigationGeneration;
+        for(int n=0;n<10;n++){host.prepareOverlay();host.resumeOverlay();host.resumeOverlay();}
+        assertTrue(host.frameReady);assertEquals(visual,host.visualGeneration);assertEquals(navigation,host.navigationGeneration);
+        assertEquals(resumes,view.resumes);assertEquals(timers,view.timers);assertEquals(layouts,view.layouts);
+        assertEquals(1,view.frames.size());assertTrue(view.scripts.isEmpty());assertEquals(0,view.loads);
+    }
+    @Test public void genuinePauseStillResumesAndRequestsANewFrameWithoutReloading(){
+        rendered();view.complete(0);host.pause();host.pause();
+        assertEquals(1,view.pauses);assertFalse(host.frameReady);host.resumeOverlay();
+        assertEquals(2,view.resumes);assertEquals(2,view.frames.size());assertEquals(0,view.loads);
+        view.complete(1);assertTrue(host.frameReady);
+    }
+    @Test public void changedDomOnTheSameScreenNeedsItsOwnFrameRatherThanReusingTheOldReadyFlag(){
+        rendered();view.complete(0);long visual=host.visualGeneration,navigation=host.navigationGeneration;
+        rendered();assertFalse(host.frameReady);assertTrue(host.visualGeneration>visual);assertEquals(navigation,host.navigationGeneration);
+        assertEquals(2,view.frames.size());view.complete(0);assertFalse(host.frameReady);
+        view.complete(1);assertTrue(host.frameReady);assertSame(view,host.view);assertEquals(0,view.loads);
+    }
+
 }
