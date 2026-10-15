@@ -31,7 +31,7 @@ final class WebHost {
             v.setPadding(bars.left,bars.top,bars.right,Math.max(bars.bottom,ime.bottom));
             evaluate("insetsChanged("+insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime())+")");return androidx.core.view.WindowInsetsCompat.CONSUMED;
         });
-        root.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){public void onViewAttachedToWindow(View v){androidx.core.view.ViewCompat.requestApplyInsets(v);main.post(()->{redraw();requestVisualState();});}public void onViewDetachedFromWindow(View v){resetVisualState();}});
+        root.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){public void onViewAttachedToWindow(View v){androidx.core.view.ViewCompat.requestApplyInsets(v);main.post(()->{applyTheme();redraw();requestVisualState();});}public void onViewDetachedFromWindow(View v){resetVisualState();}});
         if(overlay){
             android.widget.LinearLayout waiting=new android.widget.LinearLayout(c);waiting.setOrientation(android.widget.LinearLayout.VERTICAL);
             waiting.setGravity(Gravity.CENTER);waiting.setPadding(32,24,32,24);waiting.setBackgroundColor(UiTheme.background(c));
@@ -49,7 +49,7 @@ final class WebHost {
     }
     void applyTheme(){
         root.setBackgroundColor(UiTheme.background(context));
-        if(context instanceof Activity)UiTheme.window((Activity)context);
+        if(context instanceof Activity&&root.isAttachedToWindow())UiTheme.window((Activity)context);
         if(loadingView instanceof android.widget.LinearLayout){
             loadingView.setBackgroundColor(UiTheme.background(context));
             android.widget.LinearLayout waiting=(android.widget.LinearLayout)loadingView;

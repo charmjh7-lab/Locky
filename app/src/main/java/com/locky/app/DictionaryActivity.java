@@ -29,7 +29,6 @@ public final class DictionaryActivity extends Activity {
     }
     @Override public void onCreate(Bundle saved){
         super.onCreate(saved);
-        UiTheme.window(this);
         getWindow().setWindowAnimations(0);
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(),false);
         guard=GuardService.live;

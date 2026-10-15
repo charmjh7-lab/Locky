@@ -6,7 +6,7 @@ android {
     signingConfigs { personal { storeFile file('../signing/personal.p12'); storePassword 'locky-personal'; keyAlias 'locky'; keyPassword 'locky-personal' } }
     buildTypes { debug { signingConfig signingConfigs.personal }; release { signingConfig signingConfigs.personal; minifyEnabled false } }
     buildFeatures { buildConfig true }
-    testOptions { unitTests.includeAndroidResources = true }
+    testOptions { unitTests.includeAndroidResources = true; unitTests.all { testLogging { exceptionFormat = 'full' } } }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17; coreLibraryDesugaringEnabled true }
     packaging { resources.excludes += ['META-INF/DEPENDENCIES', 'META-INF/LICENSE*', 'META-INF/NOTICE*'] }
 }

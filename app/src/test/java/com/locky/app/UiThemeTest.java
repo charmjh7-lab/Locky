@@ -19,14 +19,16 @@ public class UiThemeTest {
     @Before public void setup(){Store.instance=null;GuardService.live=null;}
     @After public void cleanup(){if(host!=null){host.close();host.store.close();}Store.instance=null;}
     @Test public void initialNightSurfaceAndSystemBarsAgree(){
-        Activity activity=Robolectric.buildActivity(Activity.class).setup().get();
-        host=new WebHost(activity,true);
+        Activity activity=Robolectric.buildActivity(Activity.class).setup().visible().get();
+        host=new WebHost(activity,true);activity.setContentView(host.root);
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
         assertTrue(UiTheme.dark(activity));
         assertFalse(activity.getResources().getBoolean(R.bool.light_system_bars));
         int background=UiTheme.background(activity);
         assertEquals(background,((ColorDrawable)host.root.getBackground()).getColor());
         assertEquals(background,((ColorDrawable)host.loadingView.getBackground()).getColor());
-        assertEquals(background,activity.getWindow().getNavigationBarColor());
+        // Android 15 can enforce transparent system bars; the decor fills them.
+        assertEquals(background,((ColorDrawable)activity.getWindow().getDecorView().getBackground()).getColor());
     }
     @Test public void themeAndFontChangeRetainDocumentAndNavigation(){
         Activity activity=Robolectric.buildActivity(Activity.class).setup().get();
