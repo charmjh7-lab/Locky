@@ -20,7 +20,7 @@ final class WebHost {
     static final List<WeakReference<WebHost>> hosts=new CopyOnWriteArrayList<>();
     final android.widget.FrameLayout root;final View loadingView;WebView view;final Context context;final Store store;final boolean isOverlay;final Handler main=new Handler(Looper.getMainLooper());volatile String pendingScreen="home",paintedScreen="",pendingChat="";boolean ready=false,closed=false;
     // DOM completion, Chromium frame preparation and Android drawing are separate states.
-    String renderedScreen="";long navigationGeneration,renderedRevision=-1,visualGeneration,visualPending=-1,visualCompleted=-1;
+    String renderedScreen="",presentationUtility="";long navigationGeneration,renderedRevision=-1,visualGeneration,visualPending=-1,visualCompleted=-1;
     // frameReady: drawable DOM revision, not a display fence. presentationActive: requested
     // presentation, not proof of composition. didDraw is an observation, never an exposure gate.
     boolean frameReady,presentationActive,everRendered,loadFailed,renderingActive;int initialRetries;
@@ -83,7 +83,7 @@ final class WebHost {
         if(ready)evaluate("themeChanged("+UiTheme.dark(context)+");viewportChanged()");
     }
     void resetVisualState(String reason){if(BuildConfig.DEBUG)trace("invalidate "+reason+" ready="+frameReady+" generation="+(visualGeneration+1));if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}++visualGeneration;visualPending=-1;visualCompleted=-1;frameReady=false;paintedScreen="";visualRetryCount=0;}
-    void showLoading(){preparingStart=false;++startPreparation;cancelInitialWatch();resetVisualState("document");renderedRevision=-1;renderedScreen="";if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);if(isOverlay&&view!=null)view.setVisibility(View.INVISIBLE);}
+    void showLoading(){presentationUtility="";preparingStart=false;++startPreparation;cancelInitialWatch();resetVisualState("document");renderedRevision=-1;renderedScreen="";if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);if(isOverlay&&view!=null)view.setVisibility(View.INVISIBLE);}
     void rendered(WebView source,String screen,long navigation,long revision){
         if(closed||source!=view||!ready||navigation!=navigationGeneration||revision<0||revision<renderedRevision)return;
         if(isOverlay&&!pendingScreen.equals(screen))return;
@@ -120,6 +120,8 @@ final class WebHost {
         root.requestLayout();view.requestLayout();invalidateFrame();
     }
     void invalidateFrame(){if(!closed&&view!=null){view.invalidate();root.postInvalidateOnAnimation();}}
+    boolean hasPresentedDocument(){return presentationActive&&renderingActive&&view!=null&&view.isAttachedToWindow()
+        &&root.getVisibility()==View.VISIBLE&&view.getVisibility()==View.VISIBLE&&pendingScreen.equals(renderedScreen);}
     void resumeOverlay(){if(isOverlay)resumeRendering();}
     void resume(){if(!isOverlay)resumeRendering();}
     private boolean resumeEngine(){
@@ -198,6 +200,9 @@ final class WebHost {
         long generation=visualGeneration;String screen=renderedScreen;
         main.post(()->{if(!closed&&source==view&&presentationActive&&frameReady&&generation==visualGeneration&&visualCompleted!=generation&&root.isShown()){
             visualCompleted=generation;paintedScreen=screen;if(BuildConfig.DEBUG)trace("view-draw generation="+generation);
+            // Recording may write SQLite. Keep it out of immediate navigation and do it
+            // only after this presentation actually drew, independently of request storage.
+            if(!presentationUtility.isEmpty()){String name=presentationUtility;presentationUtility="";GuardService g=GuardService.live;if(g!=null&&g.overlay==this)g.useUtility(name);}
             if(firstFrameCallback!=null){Runnable r=firstFrameCallback;firstFrameCallback=null;r.run();}
         }});
     }
@@ -256,6 +261,17 @@ final class WebHost {
         pendingScreen=name;if(!"chat".equals(name))pendingChat="";++navigationGeneration;showLoading();
         if(ready)dispatchScreen();watchInitialLoad();
     }
+    void presented(WebView source,String screen,long previous,long navigation,String chat){
+        if(closed||source!=view||!ready||previous!=navigationGeneration||navigation!=previous+1
+            ||!Set.of("chat","chats","unlock").contains(screen))return;
+        GuardService g=GuardService.live;
+        if(isOverlay&&(g==null||g.overlay!=this||!"unlock".equals(g.gate)))return;
+        // JS has already built the next screen in this document. Do not navigate/load,
+        // hide the WebView or show the native loading surface. rendered(revision) owns validation.
+        navigationGeneration=navigation;pendingScreen=screen;pendingChat="chat".equals(screen)?chat:"";
+        preparingStart=false;++startPreparation;cancelInitialWatch();
+        if(isOverlay){g.unlockTransition=false;presentationUtility="unlock".equals(screen)?"첫 화면":"ChatGPT";}
+    }
     private void dispatchScreen(){
         WebView candidate=view;long navigation=navigationGeneration;String name=pendingScreen,chat=pendingChat;
         main.post(()->{
@@ -277,6 +293,7 @@ final class WebHost {
             if(closed||source!=view)return;
             if(!action.matches("[A-Za-z]+")||raw.length()>1000000){answer(id,null,"요청을 처리할 수 없습니다.");return;}
             if("rendered".equals(action)){main.post(()->{try{JSONObject frame=new JSONObject(raw);rendered(source,frame.optString("screen"),frame.optLong("navigation",-1),frame.optLong("revision",-1));}catch(JSONException ignored){}});return;}
+            if("present".equals(action)){main.post(()->{try{JSONObject frame=new JSONObject(raw);presented(source,frame.optString("screen"),frame.optLong("previous",-1),frame.optLong("navigation",-1),frame.optString("chat"));}catch(JSONException ignored){}});return;}
             if(Set.of("choose","grant","extend","stop","utility","open","permission","dictionary","linkTest","signin","cancelLogin","exit","dismiss").contains(action))main.post(()->handle(id,action,raw));
             else LockyApp.app.work.execute(()->handle(id,action,raw));
         }
@@ -285,7 +302,7 @@ final class WebHost {
         JSONObject a=new JSONObject(raw);Object out=new JSONObject();GuardService g=GuardService.live;
         switch(action){
             case "state":out=state();break;
-            case "tick":out=new JSONObject().put("gate",g==null?new JSONObject():g.state()).put("free",!store.managed(System.currentTimeMillis())).put("busy",LockyApp.app.chat.busy.get()).put("chatError",LockyApp.app.chat.error).put("connection",LockyApp.app.auth.connection());break;
+            case "tick":out=new JSONObject().put("gate",g==null?new JSONObject():g.state()).put("free",!store.managed(System.currentTimeMillis())).put("busy",LockyApp.app.chat.busy.get()).put("activeChat",LockyApp.app.chat.active).put("chatError",LockyApp.app.chat.error).put("connection",LockyApp.app.auth.connection());break;
             case "apps":out=apps();break;
             case "usageApps":out=usageApps();break;
             case "excludeUsage":{Set<String> excluded=new HashSet<>(store.settings.getStringSet("usage-excluded",Set.of()));String target=a.getString("pkg");if(a.getBoolean("excluded"))excluded.add(target);else excluded.remove(target);store.settings.edit().putStringSet("usage-excluded",excluded).apply();if(g!=null)g.policyChanged();break;}
@@ -338,7 +355,8 @@ final class WebHost {
                 break;
             }
             case "newChat":out=new JSONObject().put("id",store.newChat());break;
-            case "messages":out=store.rows("SELECT * FROM messages WHERE chat=? ORDER BY id",a.getString("id"));break;
+            case "quickSend":out=LockyApp.app.chat.quickSend(a.getString("request"),a.getString("text"),store.settings.getString("model",""),a.optBoolean("retry"));break;
+            case "messages":out=store.messages(a.getString("id"));break;
             case "deleteChat":if(LockyApp.app.chat.busy.get()&&LockyApp.app.chat.active.equals(a.getString("id")))throw new IllegalStateException("답변을 멈춘 후 삭제해 주세요.");store.deleteChat(a.getString("id"));break;
             case "send":LockyApp.app.chat.send(a.getString("id"),a.getString("text"),store.settings.getString("model",""));break;
             case "cancelResponse":LockyApp.app.auth.cancel();break;
@@ -356,6 +374,7 @@ final class WebHost {
     void saveSettings(JSONObject a) throws Exception {
         var e=store.settings.edit();if(a.has("enabled"))e.putBoolean("enabled",a.getBoolean("enabled"));
         if(a.has("floatingTimer"))e.putBoolean("floatingTimer",a.getBoolean("floatingTimer"));
+        if(a.has("startUnderKeyguard"))e.putBoolean("start-under-keyguard",a.getBoolean("startUnderKeyguard"));
         if(a.has("themeMode")){String value=a.getString("themeMode");if(!Set.of("system","light","dark").contains(value))throw new IllegalArgumentException("화면 테마를 다시 선택해 주세요.");e.putString("theme-mode",value);}
         if(a.has("start")||a.has("end")){int start=a.optInt("start",store.settings.getInt("start",540)),end=a.optInt("end",store.settings.getInt("end",1260));if(start<0||start>1439||end<0||end>1439||start==end)throw new IllegalArgumentException("서로 다른 시작·종료 시간을 선택해 주세요.");e.putInt("start",start).putInt("end",end);}
         if(a.has("reminders")){JSONArray input=a.getJSONArray("reminders"),values=new JSONArray();Set<Integer> seen=new HashSet<>();for(int i=0;i<input.length();i++){int m=input.getInt(i);if(m>=1&&m<=180&&seen.add(m))values.put(m);}e.putString("reminders",values.toString());}
@@ -363,7 +382,7 @@ final class WebHost {
         if(a.has("model")){String model=a.getString("model");JSONArray models=new JSONArray(store.settings.getString("models","[]"));boolean valid=false;for(int i=0;i<models.length();i++)if(models.getJSONObject(i).getString("slug").equals(model))valid=true;if(!valid)throw new IllegalArgumentException("연결된 계정의 모델을 선택해 주세요.");e.putString("model",model);}e.apply();
     }
     JSONObject state() throws Exception {
-        JSONObject status=new JSONObject().put("accessibility",GuardService.live!=null).put("usage",UsageReader.allowed(context)).put("notifications",context.getSystemService(NotificationManager.class).areNotificationsEnabled()).put("exact",Build.VERSION.SDK_INT<31||context.getSystemService(AlarmManager.class).canScheduleExactAlarms()).put("liveTimer",Notices.timerStatus(context));
+        JSONObject status=new JSONObject().put("accessibility",GuardService.live!=null).put("drawOverlays",Settings.canDrawOverlays(context)).put("usage",UsageReader.allowed(context)).put("notifications",context.getSystemService(NotificationManager.class).areNotificationsEnabled()).put("exact",Build.VERSION.SDK_INT<31||context.getSystemService(AlarmManager.class).canScheduleExactAlarms()).put("liveTimer",Notices.timerStatus(context));
         return new JSONObject().put("overlay",isOverlay).put("prefs",store.preferences()).put("status",status).put("free",!store.managed(System.currentTimeMillis())).put("gate",GuardService.live==null?new JSONObject():GuardService.live.state()).put("purposes",store.purposes(isOverlay&&GuardService.live!=null&&!GuardService.live.gatePkg.isEmpty()?GuardService.live.gatePkg:"phone")).put("allPurposes",store.rows("SELECT * FROM purposes ORDER BY rowid")).put("notes",store.rows("SELECT * FROM notes ORDER BY updated DESC")).put("chats",store.rows("SELECT * FROM chats ORDER BY updated DESC")).put("rules",store.rows("SELECT * FROM rules ORDER BY label")).put("models",new JSONArray(store.settings.getString("models","[]"))).put("accounts",LockyApp.app.auth.accounts()).put("connection",LockyApp.app.auth.connection()).put("busy",LockyApp.app.chat.busy.get()).put("activeChat",LockyApp.app.chat.active).put("chatError",LockyApp.app.chat.error).put("ruleSeen",new JSONArray(store.settings.getString("rule-seen","[]"))).put("dictionary",store.settings.getString("dictionary","")).put("savedChat",store.settings.getString("last-chat","")).put("savedNote",store.settings.getString("last-note",""));
     }
     JSONArray apps() throws Exception {
@@ -379,6 +398,10 @@ final class WebHost {
     }
     String icon(Drawable d){Bitmap b=Bitmap.createBitmap(48,48,Bitmap.Config.ARGB_8888);d.setBounds(0,0,48,48);d.draw(new Canvas(b));java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();b.compress(Bitmap.CompressFormat.PNG,100,out);b.recycle();return "data:image/png;base64,"+android.util.Base64.encodeToString(out.toByteArray(),android.util.Base64.NO_WRAP);}
     void permission(String name){
+        if(name.equals("drawOverlays")){
+            if(isOverlay&&GuardService.live!=null)GuardService.live.hideOverlay();
+            context.startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:"+context.getPackageName())).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));return;
+        }
         if(isOverlay&&GuardService.live!=null){GuardService.live.openMain("setup");return;}
         if(name.equals("liveTimer")||name.equals("timerChannel")){context.startActivity(Notices.timerSettings(context,name.equals("liveTimer")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));return;}
         if(name.equals("notification")&&Build.VERSION.SDK_INT>=33&&context instanceof Activity){((Activity)context).requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS},4);return;}

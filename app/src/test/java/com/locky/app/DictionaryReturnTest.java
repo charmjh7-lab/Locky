@@ -18,6 +18,7 @@ import static org.junit.Assert.*;
 public class DictionaryReturnTest {
     GuardService g;int attached,detached;
     @Before public void setup(){
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(false);
         Store.instance=null;g=Robolectric.buildService(GuardService.class).create().get();
         g.store=Store.get(g);GuardService.live=g;
         g.store.settings.edit().clear().commit();g.foreground=g.getPackageName();g.interactive=true;g.overlayVisible=true;g.gate="unlock";
@@ -103,4 +104,11 @@ public class DictionaryReturnTest {
         g.dictionaryOpening=true;java.util.List<String> results=new java.util.ArrayList<>();g.openDictionary("중복",results::add);
         assertEquals(1,results.size());assertNotNull(results.get(0));
     }
+    @Test public void applicationStartUsesTheSameDictionaryHandoffAndReturnsToItsWindow(){
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true);
+        g.overlayLayout.type=WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+        firstSearchAndRepeatedPopupReuseTheOnlyWebViewAndAnswerAfterDispatch();
+        assertEquals(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,g.overlayLayout.type);
+    }
+
 }

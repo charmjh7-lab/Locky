@@ -22,6 +22,7 @@ public class GateRestoreTest {
     }
     GuardService g;int adds,removes,updates;KeyguardManager keyguard;
     @Before public void setup(){
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(false);
         LockActions.accepted=true;LockActions.snapshots=0;LockActions.actions.clear();Store.instance=null;g=Robolectric.buildService(GuardService.class).create().get();g.store=Store.get(g);GuardService.live=g;
         g.segmentWall=System.currentTimeMillis();g.segmentElapsed=android.os.SystemClock.elapsedRealtime();
         keyguard=g.getSystemService(KeyguardManager.class);
@@ -157,4 +158,60 @@ public class GateRestoreTest {
         assertEquals(1f,g.overlayLayout.alpha,0);assertEquals(hidden+1,updates);
         g.completeUnlock();g.revealOverlay();assertEquals(hidden+1,updates);
     }
+    @Test public void applicationStartIsOpaqueBehindKeyguardButPassiveAndSecure(){
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true);
+        g.interactive=false;g.waitingUnlock=true;g.prepareUnlock();g.overlay.frameReady=true;g.revealOverlay();
+        assertEquals(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,g.overlayLayout.type);assertEquals(1f,g.overlayLayout.alpha,0);
+        assertNotNull(g.overlayLayout.token);
+        int passive=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+        assertEquals(passive,g.overlayLayout.flags&passive);assertFalse(g.overlay.presentationActive);
+        assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS,g.overlayWindow.getImportantForAccessibility());
+        assertTrue((g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_SECURE)!=0);
+        assertEquals(0,g.overlayLayout.flags&(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED|WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD));
+        int before=updates;g.interactive=true;Shadows.shadowOf(keyguard).setKeyguardLocked(false);g.completeUnlock();
+        assertEquals(1f,g.overlayLayout.alpha,0);assertEquals(0,g.overlayLayout.flags&passive);assertEquals(before+1,updates);
+        g.revealOverlay();assertEquals(before+1,updates);assertEquals(1,adds);assertEquals(0,removes);
+    }
+    @Test public void permissionAndGateRoleMigrateOnlyTheWindowAndRetainTheWebView(){
+        g.interactive=false;g.prepareUnlock();WebHost host=g.overlay;Object web=host.view;
+        assertEquals(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,g.overlayLayout.type);
+        g.hideOverlay();org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true);g.reconcileWindowPermission();
+        assertEquals(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,g.overlayLayout.type);assertSame(host,g.overlay);assertSame(web,g.overlay.view);
+        g.showGate("app","example.app");assertEquals(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,g.overlayLayout.type);assertSame(web,g.overlay.view);
+        g.hideOverlay();g.gate="unlock";g.reconcileWindowPermission();
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(false);g.reconcileWindowPermission();
+        assertEquals(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,g.overlayLayout.type);assertSame(web,g.overlay.view);
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true);g.store.settings.edit().putBoolean("start-under-keyguard",false).commit();g.reconcileWindowPermission();
+        assertEquals(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,g.overlayLayout.type);
+    }
+    @Test public void rejectedApplicationWindowFallsBackWithoutRepeatedAttempts(){
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true);final int[] attempts={0};
+        g.window=(WindowManager)Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{WindowManager.class},(p,m,a)->{
+            if(m.getName().equals("addView")&&((WindowManager.LayoutParams)a[1]).type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY){attempts[0]++;throw new SecurityException("permission changed");}return null;});
+        g.interactive=false;g.prepareUnlock();Object web=g.overlay.view;g.showGate("unlock","");
+        assertEquals(1,attempts[0]);assertEquals(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,g.overlayLayout.type);assertSame(web,g.overlay.view);
+    }
+    @Test public void ownApplicationOverlayIsNotMistakenForTheNotificationShade(){
+        org.robolectric.shadows.ShadowSettings.setCanDrawOverlays(true);unlockedStart();focusSurface();
+        var own=systemWindow();var root=android.view.accessibility.AccessibilityNodeInfo.obtain();root.setPackageName(g.getPackageName());Shadows.shadowOf(own).setRoot(root);
+        windows(own);g.observeForeground(null);assertFalse(g.systemPaused);assertEquals(1f,g.overlayLayout.alpha,0);
+        windows(systemWindow());g.observeForeground(null);assertTrue(g.systemPaused);assertEquals(0f,g.overlayLayout.alpha,0);
+    }
+    @Test public void inPlaceChatPresentationRetainsBothOverlayAndAnyExistingMainHost(){
+        LockyApp previous=LockyApp.app;LockyApp stub=new LockyApp();LockyApp.app=stub;
+        org.robolectric.android.controller.ActivityController<MainActivity> activity=null;
+        try{
+            g.interactive=true;g.showGate("unlock","");WebHost host=g.overlay;host.ready=true;host.frameReady=true;host.loadingView.setVisibility(View.GONE);Object web=host.view;
+            for(boolean warm:new boolean[]{false,true}){
+                if(warm)activity=Robolectric.buildActivity(MainActivity.class,new android.content.Intent().putExtra("screen","home")).create();
+                WebHost other=activity==null?null:activity.get().host;long nav=host.navigationGeneration;
+                host.presented(host.view,"chat",nav,nav+1,"same-chat");
+                assertEquals("chat",host.pendingScreen);assertEquals("same-chat",host.pendingChat);assertEquals(nav+1,host.navigationGeneration);assertSame(web,host.view);assertTrue(g.overlayVisible);assertEquals(View.GONE,host.loadingView.getVisibility());
+                assertNull(Shadows.shadowOf((Application)g.getApplication()).getNextStartedActivity());
+                if(warm)assertSame(other,activity.get().host);
+                host.presented(host.view,"unlock",nav+1,nav+2,"");
+            }
+        }finally{if(activity!=null)activity.destroy();stub.work.shutdownNow();LockyApp.app=previous;}
+    }
+
 }

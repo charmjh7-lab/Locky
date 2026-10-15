@@ -30,6 +30,10 @@ public final class GuardService extends AccessibilityService {
     DictionaryActivity dictionaryHost;boolean dictionaryOpening;
     java.util.function.Consumer<String> dictionaryResult;String dictionaryWord="";
     android.widget.FrameLayout overlayWindow;boolean unlockPrepared,unlockTransition,lockPending;
+    boolean applicationWindowFailed;
+    final AppOpsManager.OnOpChangedListener overlayPermission=(op,pkg)->main.post(()->{
+        if(store==null)return;applicationWindowFailed=false;reconcileWindowPermission();
+    });
     WebHost overlay;WindowManager window;WindowManager.LayoutParams overlayLayout;final Set<String> systemPackages=new HashSet<>();
     String homePackage="";
     volatile boolean pulseScheduled;volatile long pulseCount;
@@ -67,6 +71,7 @@ public final class GuardService extends AccessibilityService {
     }};
     @Override protected void onServiceConnected(){
         live=this;store=Store.get(this);window=getSystemService(WindowManager.class);floatingTimer=new FloatingTimer(this,window);interactive=getSystemService(PowerManager.class).isInteractive();wasManaged=store.managed(System.currentTimeMillis());
+        getSystemService(AppOpsManager.class).startWatchingMode(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW,getPackageName(),overlayPermission);
         ResolveInfo home=getPackageManager().resolveActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),PackageManager.MATCH_DEFAULT_ONLY);if(home!=null)homePackage=home.activityInfo.packageName;
         systemPackages.add("com.android.systemui");systemPackages.add("com.android.permissioncontroller");systemPackages.add("com.google.android.permissioncontroller");
         android.view.inputmethod.InputMethodManager ime=getSystemService(android.view.inputmethod.InputMethodManager.class);for(android.view.inputmethod.InputMethodInfo x:ime.getEnabledInputMethodList())systemPackages.add(x.getPackageName());
@@ -97,15 +102,21 @@ public final class GuardService extends AccessibilityService {
         if(store==null||!interactive||getSystemService(KeyguardManager.class).isKeyguardLocked())return;
         List<ForegroundPolicy.Window> candidates=new ArrayList<>();StringBuilder diagnostic=new StringBuilder();
         View surface=overlayWindow==null?null:overlayWindow;
-        boolean ownFocus=surface!=null&&surface.hasWindowFocus(),newSystemWindow=false;
+        boolean ownFocus=surface!=null&&surface.hasWindowFocus(),newSystemWindow=false,foreignFocus=false;
         for(AccessibilityWindowInfo w:getWindows()) {
+            String pkg="";
+            // SAW is reported as a system window. Exclude our own window, not real system UI.
+            if(w.getType()==AccessibilityWindowInfo.TYPE_APPLICATION||w.getType()==AccessibilityWindowInfo.TYPE_SYSTEM){AccessibilityNodeInfo root=w.getRoot();if(root!=null){CharSequence name=root.getPackageName();pkg=name==null?"":name.toString();root.recycle();}}
+            if(w.getType()==AccessibilityWindowInfo.TYPE_SYSTEM&&(pkg.equals(getPackageName())
+                ||(pkg.isEmpty()&&ownFocus&&w.isFocused()&&overlayLayout!=null&&overlayLayout.type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY&&"Locky".contentEquals(w.getTitle()==null?"":w.getTitle()))))continue;
             if(Build.VERSION.SDK_INT>=28&&event!=null&&event.getEventType()==AccessibilityEvent.TYPE_WINDOWS_CHANGED
                 &&(event.getWindowChanges()&AccessibilityEvent.WINDOWS_CHANGE_ADDED)!=0
                 &&event.getWindowId()==w.getId()&&w.getType()==AccessibilityWindowInfo.TYPE_SYSTEM
                 &&(w.isFocused()||w.isActive()))newSystemWindow=true;
-            String pkg="";
-            // Only obtain the window root's package; never traverse content or read text.
-            if(w.getType()==AccessibilityWindowInfo.TYPE_APPLICATION){AccessibilityNodeInfo root=w.getRoot();if(root!=null){CharSequence name=root.getPackageName();pkg=name==null?"":name.toString();root.recycle();}}
+            if(event!=null&&w.getType()==AccessibilityWindowInfo.TYPE_APPLICATION&&w.isFocused()&&!pkg.equals(getPackageName())){
+                foreignFocus|=(event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED&&pkg.contentEquals(event.getPackageName()==null?"":event.getPackageName()))
+                    ||(Build.VERSION.SDK_INT>=28&&event.getEventType()==AccessibilityEvent.TYPE_WINDOWS_CHANGED&&event.getWindowId()==w.getId()&&(event.getWindowChanges()&AccessibilityEvent.WINDOWS_CHANGE_FOCUSED)!=0);
+            }
             if(pkg.equals("com.samsung.android.sidegesturepad"))continue;
             android.graphics.Rect bounds=new android.graphics.Rect();w.getBoundsInScreen(bounds);boolean covering=bounds.height()>getResources().getDisplayMetrics().heightPixels/2;
             candidates.add(new ForegroundPolicy.Window(pkg,w.getType(),w.isFocused(),w.isActive(),w.getLayer(),w.isInPictureInPictureMode(),covering));diagnostic.append(pkg).append(":type=").append(w.getType()).append(",focus=").append(w.isFocused()).append(",active=").append(w.isActive()).append(",layer=").append(w.getLayer()).append(",cover=").append(covering).append(";");
@@ -147,6 +158,7 @@ public final class GuardService extends AccessibilityService {
         if(visible.pkg.isEmpty())return; // transient/root unavailable: do not trust background event senders
         String pkg=visible.pkg;
         if(pkg.contains("incallui")||pkg.equals("com.android.server.telecom")){unlockTransition=false;if(overlayVisible)hideOverlay();pauseSystem();return;}
+        if(foreignFocus&&!ownFocus&&overlayVisible&&overlay!=null&&Set.of("chat","chats").contains(overlay.pendingScreen))hideOverlay();
         switchForeground(pkg);
     }
     void pauseSystem(){
@@ -265,21 +277,50 @@ public final class GuardService extends AccessibilityService {
                 if(focused&&unlockTransition)observeForeground(null);
             });
             overlayWindow.addView(overlay.root,new android.widget.FrameLayout.LayoutParams(-1,-1));
-            window.addView(overlayWindow,gateLayout());
         }
+        ensureGateWindow();
         overlayVisible=true;
         // Reuse the DOM on repeated unlock/show events, but always restore the surface.
         if(!sameScreen)overlay.screen(type);
         revealOverlay();ensurePulse();
     }
     WindowManager.LayoutParams gateLayout(){
-        WindowManager.LayoutParams p=new WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,PixelFormat.OPAQUE);
+        return gateLayout(desiredWindowType());
+    }
+    boolean applicationStartAllowed(){return !applicationWindowFailed&&store.settings.getBoolean("start-under-keyguard",true)&&android.provider.Settings.canDrawOverlays(this);}
+    int desiredWindowType(){return "unlock".equals(gate)&&applicationStartAllowed()?WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY:WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY;}
+    void ensureGateWindow(){
+        int type=desiredWindowType();if(overlayLayout!=null&&overlayLayout.type==type)return;
+        if(type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY&&overlayLayout!=null&&overlayVisible&&interactive&&!waitingUnlock&&overlayLayout.alpha==1f)return;
+        if(overlayLayout!=null){overlayWindow.setVisibility(View.GONE);try{window.removeViewImmediate(overlayWindow);}catch(IllegalArgumentException ignored){}}
+        try{window.addView(overlayWindow,gateLayout(type));}
+        catch(SecurityException|WindowManager.BadTokenException e){
+            if(type!=WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)throw e;
+            applicationWindowFailed=true;window.addView(overlayWindow,gateLayout(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY));
+        }
+    }
+    void reconcileWindowPermission(){
+        if(overlay==null||dictionaryHost!=null||dictionaryOpening)return;
+        // Never migrate a visible start just because permission was granted. Revocation
+        // must recover immediately; promotion waits for screen-off or a hidden surface.
+        if(!interactive||!overlayVisible||overlayLayout==null||overlayLayout.alpha==0
+            ||(overlayLayout.type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY&&!applicationStartAllowed())){
+            ensureGateWindow();revealOverlay();
+        }
+    }
+    WindowManager.LayoutParams gateLayout(int type){
+        WindowManager.LayoutParams p=new WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.MATCH_PARENT,type,WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE|WindowManager.LayoutParams.FLAG_SECURE,PixelFormat.OPAQUE);
+        // AccessibilityService's WindowManager otherwise supplies its accessibility token.
+        // SAW must have its own token/layer, not become a child of that privileged surface.
+        if(type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)p.token=new Binder();
         p.alpha=0;p.gravity=Gravity.TOP|Gravity.START;p.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;p.setTitle("Locky");overlayLayout=p;return p;
     }
     void revealOverlay(){
         if(dictionaryHost!=null||dictionaryOpening)return;
+        if(overlayLayout!=null&&overlayLayout.type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY&&!applicationStartAllowed())ensureGateWindow();
         if(overlayVisible&&overlay!=null)setOverlayExposure(interactive&&!waitingUnlock&&!systemPaused
-            &&!getSystemService(KeyguardManager.class).isKeyguardLocked()&&!overlay.preparingStart&&(overlay.frameReady||(!overlay.everRendered&&overlay.loadFailed)));
+            &&!getSystemService(KeyguardManager.class).isKeyguardLocked()&&!overlay.preparingStart
+            &&(overlay.frameReady||overlay.hasPresentedDocument()||(!overlay.everRendered&&overlay.loadFailed)));
     }
     void setOverlayExposure(boolean exposed){setOverlayExposure(exposed,true);}
     void setOverlayExposure(boolean exposed,boolean prepareHidden){
@@ -295,10 +336,19 @@ public final class GuardService extends AccessibilityService {
         }
         int passive=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
         if(overlayLayout!=null){
-            float alpha=exposed?1f:0f;int flags=exposed?overlayLayout.flags&~passive:overlayLayout.flags|passive;
+            // A normal application overlay is hidden by Android's keyguard policy. Keep
+            // prepared pixels opaque below it; unlock changes input, not the pixel alpha.
+            boolean behindKeyguard=prepareHidden&&dictionaryHost==null&&!dictionaryOpening&&overlayVisible&&"unlock".equals(gate)
+                &&overlayLayout.type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY&&(!interactive||waitingUnlock||getSystemService(KeyguardManager.class).isKeyguardLocked())
+                &&overlay.frameReady&&!overlay.preparingStart;
+            float alpha=exposed||behindKeyguard?1f:0f;int flags=exposed?overlayLayout.flags&~passive:overlayLayout.flags|passive;
             if(overlayLayout.alpha!=alpha||overlayLayout.flags!=flags){
                 if(BuildConfig.DEBUG)WebHost.trace("window alpha="+overlayLayout.alpha+"->"+alpha+" flags="+overlayLayout.flags+"->"+flags);
-                overlayLayout.alpha=alpha;overlayLayout.flags=flags;window.updateViewLayout(surface,overlayLayout);
+                overlayLayout.alpha=alpha;overlayLayout.flags=flags;
+                try{window.updateViewLayout(surface,overlayLayout);}catch(SecurityException e){
+                    if(overlayLayout.type!=WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)throw e;
+                    applicationWindowFailed=true;ensureGateWindow();revealOverlay();return;
+                }
             }
         }
         // Hide private pixels and release input before doing any preparation on a locked phone.
@@ -354,7 +404,7 @@ public final class GuardService extends AccessibilityService {
     void openMain(String screen){openMain(screen,"");}
     void openMain(String screen,String chatId){useUtility(screen.equals("chats")||screen.equals("chat")?"ChatGPT":screen.equals("notes")?"메모":"Locky");hideOverlay();Intent launch=MainActivity.launchIntent(this).putExtra("screen",screen).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);if("chat".equals(screen)&&!chatId.isEmpty())launch.putExtra("chat",chatId);startActivity(launch);}
     void launch(JSONObject p) throws Exception {String pkg=p.optString("pkg"),uri=p.optString("uri");if(pkg.isEmpty()&&uri.isEmpty())return;Intent i=Links.intent(this,pkg,uri);if(i==null)throw new IllegalStateException("연결한 앱이나 동작을 열 수 없습니다. 목적 연결을 확인해 주세요.");startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}
-    void policyChanged(){main.post(()->{observeForeground(null);checkpoint();enforce();ensurePulse();WebHost.refreshAll();});}
+    void policyChanged(){main.post(()->{reconcileWindowPermission();observeForeground(null);checkpoint();enforce();ensurePulse();WebHost.refreshAll();});}
     JSONObject state() throws JSONException {String pkg=overlayVisible?gatePkg:sessionPkg;return new JSONObject().put("mode",gate).put("pkg",pkg).put("label",UsageReader.label(this,pkg)).put("purpose",purpose).put("daily",dailyRemaining(pkg)).put("session",sessionRemaining).put("activePkg",sessionPkg).put("free",!store.managed(System.currentTimeMillis())).put("paused",systemPaused||foreground.equals(getPackageName())).put("visible",overlayVisible);}
     final Runnable lockCompletion=()->{
         if(!lockPending)return;
@@ -374,6 +424,6 @@ public final class GuardService extends AccessibilityService {
         main.postDelayed(lockCompletion,1500); // Failure recovery only; never delays exposure or locking.
     }
     @Override public void onInterrupt(){}
-    @Override public void onDestroy(){hideFloatingTimer();checkpoint();live=null;interactive=false;overlayVisible=false;if(dictionaryHost!=null)dictionaryHost.returnToStart();main.removeCallbacksAndMessages(null);try{unregisterReceiver(screen);}catch(Exception ignored){}if(overlay!=null){try{window.removeViewImmediate(overlayWindow==null?overlay.root:overlayWindow);}catch(IllegalArgumentException ignored){}overlay.close();}Notices.cancelTimer(this);super.onDestroy();}
+    @Override public void onDestroy(){getSystemService(AppOpsManager.class).stopWatchingMode(overlayPermission);hideFloatingTimer();checkpoint();live=null;interactive=false;overlayVisible=false;if(dictionaryHost!=null)dictionaryHost.returnToStart();main.removeCallbacksAndMessages(null);try{unregisterReceiver(screen);}catch(Exception ignored){}if(overlay!=null){try{window.removeViewImmediate(overlayWindow==null?overlay.root:overlayWindow);}catch(IllegalArgumentException ignored){}overlay.close();}Notices.cancelTimer(this);super.onDestroy();}
 }
 

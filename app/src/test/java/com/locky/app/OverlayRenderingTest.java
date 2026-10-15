@@ -84,13 +84,13 @@ public class OverlayRenderingTest {
     }
     @Test public void genuinePauseStillResumesAndRequestsANewFrameWithoutReloading(){
         rendered();view.complete(0);host.pause();host.pause();
-        assertEquals(1,view.pauses);assertFalse(host.frameReady);host.resumeOverlay();
+        assertEquals(1,view.pauses);assertFalse(host.frameReady);assertFalse(host.hasPresentedDocument());host.resumeOverlay();
         assertEquals(2,view.resumes);assertEquals(2,view.frames.size());assertEquals(0,view.loads);
         view.complete(1);assertTrue(host.frameReady);
     }
     @Test public void changedDomOnTheSameScreenNeedsItsOwnFrameRatherThanReusingTheOldReadyFlag(){
         rendered();view.complete(0);long visual=host.visualGeneration,navigation=host.navigationGeneration;int layouts=view.layouts;
-        host.rendered(view,"unlock",navigation,2);assertFalse(host.frameReady);assertTrue(host.visualGeneration>visual);assertEquals(navigation,host.navigationGeneration);
+        host.rendered(view,"unlock",navigation,2);assertFalse(host.frameReady);assertTrue(host.hasPresentedDocument());assertTrue(host.visualGeneration>visual);assertEquals(navigation,host.navigationGeneration);
         assertEquals(2,view.frames.size());view.complete(0);assertFalse(host.frameReady);
         view.complete(1);assertTrue(host.frameReady);assertEquals(layouts,view.layouts);assertSame(view,host.view);assertEquals(0,view.loads);
     }

@@ -12,7 +12,7 @@ final class Store extends SQLiteOpenHelper {
     static Store get(Context c) { if(instance==null)synchronized(Store.class){if(instance==null)instance=new Store(c.getApplicationContext());}return instance; }
     final android.content.SharedPreferences settings;
     final Context context;
-    private Store(Context c) { super(c,"locky.db",null,2);context=c; settings=c.getSharedPreferences("locky-settings",0);if(!settings.contains("usage-excluded"))settings.edit().putStringSet("usage-excluded",new HashSet<>(Set.of("com.samsung.android.sidegesturepad"))).apply();setWriteAheadLoggingEnabled(true); }
+    private Store(Context c) { super(c,"locky.db",null,3);context=c; settings=c.getSharedPreferences("locky-settings",0);if(!settings.contains("usage-excluded"))settings.edit().putStringSet("usage-excluded",new HashSet<>(Set.of("com.samsung.android.sidegesturepad"))).apply();setWriteAheadLoggingEnabled(true); }
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE purposes(id TEXT PRIMARY KEY,label TEXT NOT NULL,pkg TEXT NOT NULL DEFAULT '',uri TEXT NOT NULL DEFAULT '',aimless INTEGER NOT NULL DEFAULT 0,scope TEXT NOT NULL DEFAULT '*')");
         db.execSQL("CREATE TABLE rules(pkg TEXT PRIMARY KEY,label TEXT NOT NULL,mode TEXT NOT NULL,minutes INTEGER NOT NULL)");
@@ -22,6 +22,7 @@ final class Store extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE notes(id TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT NOT NULL,checks TEXT NOT NULL,updated INTEGER NOT NULL,mode TEXT NOT NULL DEFAULT 'text')");
         db.execSQL("CREATE TABLE chats(id TEXT PRIMARY KEY,title TEXT NOT NULL,updated INTEGER NOT NULL)");
         db.execSQL("CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT,chat TEXT NOT NULL,role TEXT NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL,time INTEGER NOT NULL,citations TEXT NOT NULL DEFAULT '[]')");
+        createQuickRequests(db);
         seedPurposes(db);
     }
     private void seedPurposes(SQLiteDatabase db) {
@@ -31,6 +32,7 @@ final class Store extends SQLiteOpenHelper {
         for(String[] p:apps)db.execSQL("INSERT OR IGNORE INTO purposes(id,label,aimless,scope) VALUES(?,?,?,'app')",new Object[]{p[0],p[1],Integer.parseInt(p[2])});
     }
     @Override public void onUpgrade(SQLiteDatabase db,int old,int next) {
+        if(old<3)createQuickRequests(db);
         if(old<2) {
             db.execSQL("UPDATE purposes SET scope='phone' WHERE scope='*'");
             // Only seed the new app scope: never restore deleted phone presets.
@@ -101,6 +103,30 @@ final class Store extends SQLiteOpenHelper {
         ContentValues v=new ContentValues();v.put("id",n.optString("id",UUID.randomUUID().toString()));v.put("title",n.optString("title","메모"));v.put("body",n.optString("body"));v.put("checks",n.optJSONArray("checks")==null?"[]":n.getJSONArray("checks").toString());v.put("mode",n.optString("mode","text").equals("check")?"check":"text");v.put("updated",System.currentTimeMillis());put("notes",v);
     }
     synchronized String newChat() {String id=UUID.randomUUID().toString();ContentValues v=new ContentValues();v.put("id",id);v.put("title","새 대화");v.put("updated",System.currentTimeMillis());put("chats",v);return id;}
+    private void createQuickRequests(SQLiteDatabase db){db.execSQL("CREATE TABLE quick_requests(request TEXT PRIMARY KEY,chat TEXT NOT NULL,user INTEGER NOT NULL,reply INTEGER NOT NULL)");}
+    synchronized JSONObject quickRequest(String request,String text) throws Exception {
+        JSONArray found=rows("SELECT * FROM quick_requests WHERE request=?",request);if(found.length()==0)return null;
+        JSONObject result=found.getJSONObject(0);JSONArray user=rows("SELECT body FROM messages WHERE id=? AND chat=?",""+result.getLong("user"),result.getString("chat"));
+        if(user.length()==0)throw new java.io.IOException("삭제된 대화입니다. 새 질문을 시작해 주세요.");
+        if(!text.equals(user.getJSONObject(0).getString("body")))throw new java.io.IOException("다른 질문에 같은 전송 번호를 사용할 수 없습니다.");
+        return new JSONObject().put("id",result.getString("chat")).put("user",result.getLong("user")).put("reply",result.getLong("reply"));
+    }
+    synchronized JSONObject acceptQuickQuestion(String request,String text) throws Exception {
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try{
+            JSONObject existing=quickRequest(request,text);if(existing!=null){db.setTransactionSuccessful();return existing;}
+            ContentValues chat=new ContentValues();chat.put("id",request);chat.put("title","새 대화");chat.put("updated",System.currentTimeMillis());db.insertOrThrow("chats",null,chat);
+            long user=message(request,"user",text,"complete"),reply=message(request,"assistant","","streaming");
+            ContentValues entry=new ContentValues();entry.put("request",request);entry.put("chat",request);entry.put("user",user);entry.put("reply",reply);db.insertOrThrow("quick_requests",null,entry);
+            JSONObject result=new JSONObject().put("id",request).put("user",user).put("reply",reply);db.setTransactionSuccessful();return result;
+        }finally{db.endTransaction();}
+    }
+    synchronized long appendTurn(String chat,String text){
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try{message(chat,"user",text,"complete");long reply=message(chat,"assistant","","streaming");db.setTransactionSuccessful();return reply;}
+        finally{db.endTransaction();}
+    }
+    synchronized JSONArray messages(String chat) throws JSONException {return rows("SELECT m.*,q.request AS quickRequest FROM messages m LEFT JOIN quick_requests q ON q.reply=m.id WHERE m.chat=? ORDER BY m.id",chat);}
     synchronized long message(String chat,String role,String body,String status) {
         ContentValues v=new ContentValues();v.put("chat",chat);v.put("role",role);v.put("body",body);v.put("status",status);v.put("time",System.currentTimeMillis());long id=getWritableDatabase().insertOrThrow("messages",null,v);
         ContentValues title=new ContentValues();title.put("updated",System.currentTimeMillis());if(role.equals("user")) {try {if(rows("SELECT id FROM messages WHERE chat=? AND role='user'",chat).length()==1)title.put("title",body.substring(0,Math.min(30,body.length())));}catch(JSONException ignored){}}
@@ -110,6 +136,6 @@ final class Store extends SQLiteOpenHelper {
     synchronized void citations(long id,JSONArray links){ContentValues v=new ContentValues();v.put("citations",links.toString());getWritableDatabase().update("messages",v,"id=?",new String[]{""+id});}
     synchronized void deleteChat(String id) {SQLiteDatabase d=getWritableDatabase();d.beginTransaction();try {d.delete("messages","chat=?",new String[]{id});d.delete("chats","id=?",new String[]{id});d.setTransactionSuccessful();}finally{d.endTransaction();}}
     boolean managed(long time) {return settings.getBoolean("enabled",true)&&Rules.managed(Rules.minute(time,ZoneId.systemDefault()),settings.getInt("start",540),settings.getInt("end",1260));}
-    JSONObject preferences() throws JSONException {return new JSONObject().put("enabled",settings.getBoolean("enabled",true)).put("floatingTimer",settings.getBoolean("floatingTimer",true)).put("start",settings.getInt("start",540)).put("end",settings.getInt("end",1260)).put("reminders",new JSONArray(settings.getString("reminders","[30,20,10,5,1]"))).put("weeklyDay",settings.getInt("weeklyDay",7)).put("model",settings.getString("model","")).put("themeMode",UiTheme.mode(context));}
+    JSONObject preferences() throws JSONException {return new JSONObject().put("enabled",settings.getBoolean("enabled",true)).put("startUnderKeyguard",settings.getBoolean("start-under-keyguard",true)).put("floatingTimer",settings.getBoolean("floatingTimer",true)).put("start",settings.getInt("start",540)).put("end",settings.getInt("end",1260)).put("reminders",new JSONArray(settings.getString("reminders","[30,20,10,5,1]"))).put("weeklyDay",settings.getInt("weeklyDay",7)).put("model",settings.getString("model","")).put("themeMode",UiTheme.mode(context));}
     synchronized void cleanOldUsage() {long cutoff=System.currentTimeMillis()-180L*86400000;getWritableDatabase().delete("usage","end<?",new String[]{""+cutoff});getWritableDatabase().delete("events","time<?",new String[]{""+cutoff});}
 }

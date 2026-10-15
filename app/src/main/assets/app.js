@@ -10,6 +10,7 @@ let reshufflePurposeOnRender=true,purposePositions=new Map(),previousPurposePosi
 let normalHeight=0,normalWidth=0;
 let quickQuestionDraft='',dictionaryWordDraft='';
 let nativeNavigation=0,domRevision=0;
+const quickTurns=new Map();
 let nativeKeyboard=false,purposeScope='phone',restored=false,briefSeq=0,settingsTimer=null;
 let purposeStarting=false,briefData=null;const briefSort={apps:'desc',events:'desc',timeline:'desc'};
 Object.assign(shapes,{sortDown:'M4 5h12 M4 10h8 M4 15h4 M19 4v16 M15 16l4 4 4-4',sortUp:'M4 5h4 M4 10h8 M4 15h12 M19 20V4 M15 8l4-4 4 4'});
@@ -27,18 +28,20 @@ function header(back=false,title='Locky'){return `<div class="top">${back?`<butt
 function nav(){if(state?.overlay||['chat',...gated,'unlock'].includes(screen))return '';return `<div class="bottom"><nav class="nav" aria-label="주 메뉴">${[['home','home','시작'],['chats','chat','대화'],['brief','chart','브리핑'],['settings','settings','설정']].map(([s,i,l])=>`<button data-nav="${s}" class="${screen===s?'active':''}">${icon(i)}<span>${l}</span></button>`).join('')}</nav></div>`;}
 function startPolling(){clearInterval(poll);poll=null;if(['chat','chats','timer',...gated].includes(screen)&&document.visibilityState!=='hidden')poll=setInterval(()=>refresh(),1000);}
 function remember(){if(state&&!state.overlay&&!gated.includes(screen)&&screen!=='unlock')safe(()=>api('remember',{screen,chat:chatId,note:noteId}));}
-async function navigate(s,navigation=nativeNavigation){if(['home','unlock','app'].includes(s))reshufflePurposeOnRender=true;if(settingsTimer&&screen==='settings'){clearTimeout(settingsTimer);settingsTimer=null;await safe(saveReminders);}await flushMemo();if(navigation<nativeNavigation)return;nativeNavigation=navigation;closeSheet();screen=s;selected='';minutes=5;document.body.classList.toggle('start-screen',starts.includes(screen));window.scrollTo(0,0);await refresh(true);startPolling();remember();if(state&&['notes','chat','chats'].includes(s))safe(()=>api('utility',{name:s==='notes'?'메모':'ChatGPT'}));}
+async function navigate(s,navigation=null){const local=navigation===null;if(local)navigation=nativeNavigation;if(['home','unlock','app'].includes(s))reshufflePurposeOnRender=true;if(settingsTimer&&screen==='settings'){clearTimeout(settingsTimer);settingsTimer=null;await safe(saveReminders);}await flushMemo();if(navigation<nativeNavigation)return;nativeNavigation=navigation;if(local&&state?.overlay&&['chat','chats','unlock'].includes(s)&&s!==screen)presentScreen(s);closeSheet();screen=s;selected='';minutes=5;document.body.classList.toggle('start-screen',starts.includes(screen));window.scrollTo(0,0);await refresh(true);startPolling();remember();if(state&&['notes','chat','chats'].includes(s))safe(()=>api('utility',{name:s==='notes'?'메모':'ChatGPT'}));}
 async function refresh(force=false){if(refreshing){if(force)refreshAgain=true;return;}refreshing=true;try{
  if(!force&&state&&['chat','timer',...gated].includes(screen))Object.assign(state,await api('tick'));else state=await api('state');
+ for(const turn of quickTurns.values())if(!state.chats.some(c=>c.id===turn.id))state.chats.unshift({id:turn.id,title:turn.text.slice(0,30)});
  if(!restored){restored=true;chatId=chatId||state.savedChat||'';noteId=state.savedNote||noteId;}
  if(!force){if(screen==='chat'){await renderMessages(false);return;}if(screen==='timer'||gated.includes(screen)){updateTimers();return;}if(document.activeElement?.matches('input,textarea,select')||memoPending||memoSaving)return;if(screen==='chats'){const c=$('#connection');if(c){c.innerHTML=connectionHTML();bind(c);}return;}}
  const oldScroll=window.scrollY;render();if(!force)window.scrollTo(0,oldScroll);if(screen==='brief')loadBrief();if(screen==='apps')loadApps();if(screen==='usageApps')loadUsageApps();if(screen==='chat')renderMessages(force);
  }catch(e){toast(e.message);}finally{refreshing=false;if(refreshAgain){refreshAgain=false;refresh(true);}}}
-function openChatById(id,navigation=nativeNavigation){chatId=id;return navigate('chat',navigation);}
+function openChatById(id,navigation=null){chatId=id;return navigate('chat',navigation);}
+function presentScreen(name){const previous=nativeNavigation++;Native.request('0','present',JSON.stringify({screen:name,previous,navigation:nativeNavigation,chat:chatId}));}
 function signalRendered(){Native.request('0','rendered',JSON.stringify({screen,navigation:nativeNavigation,revision:domRevision}));}
 function nativeRestore(){if($('#app')?.childElementCount)signalRendered();else return refresh(true);}
 function render(){const previousPresetScroll=$('.preset-scroll')?.scrollTop||0;if($('#quickQuestion'))quickQuestionDraft=$('#quickQuestion').value;if($('#word'))dictionaryWordDraft=$('#word').value;let html='';switch(screen){case 'unlock':case 'home':html=home();break;case 'setup':html=setup();break;case 'settings':html=settings();break;case 'apps':html=appsPage();break;case 'usageApps':html=usageAppsPage();break;case 'app':case 'renew':case 'blocked':html=gate();break;case 'timer':html=timer();break;case 'notes':html=notesPage();break;case 'chats':html=chats();break;case 'chat':html=chat();break;case 'brief':html=brief();break;case 'week':briefDays=7;screen='brief';html=brief();break;default:screen='home';html=home();}
- document.body.classList.toggle('start-screen',starts.includes(screen));$('#app').innerHTML=html+nav();bind();if($('.preset-scroll'))$('.preset-scroll').scrollTop=previousPresetScroll;viewportChanged();++domRevision;signalRendered();}
+ document.body.classList.toggle('start-screen',starts.includes(screen));$('#app').innerHTML=html+nav();bind();if($('.preset-scroll'))$('.preset-scroll').scrollTop=previousPresetScroll;viewportChanged();if(screen==='chat'&&quickTurns.has(chatId))applyMessages(quickMessages(quickTurns.get(chatId)),true);++domRevision;signalRendered();}
 function dismissButton(){return `<button class="dismiss" data-act="dismiss">${icon('power')}그냥 끄기</button>`;}
 function home(){return `<main class="start-page ${state.overlay?'overlay-start':''}">${header(false,state.overlay?'휴대폰 시작':'Locky')}<div class="utility-space"><div class="quick-tools"><section class="mini-note">${memoHTML(false)}</section><section class="quick-chat"><div class="mini-head"><button data-act="openChat">${icon('chat')} ChatGPT</button><button class="iconbtn" data-act="openChat" aria-label="대화 목록">${icon('expand')}</button></div><textarea id="quickQuestion" placeholder="바로 질문하기" aria-label="바로 질문하기" maxlength="20000">${esc(quickQuestionDraft)}</textarea><button class="quick-send" data-act="quickSend" aria-label="질문 전송">${icon('send')}</button></section></div><form id="dictionaryForm" class="dictionary-bar"><button type="button" data-act="dictionaryChoice" aria-label="사전 선택">${icon('book')}</button><input id="word" value="${esc(dictionaryWordDraft)}" placeholder="사전에서 찾을 단어" aria-label="찾을 단어"><button type="submit" aria-label="사전 검색">${icon('search')}</button></form></div><section class="start-purposes" aria-labelledby="purposeQuestion"><div class="purpose-intro"><div class="sectionhead"><h2 id="purposeQuestion">무엇을 하려고 열었나요?</h2><button class="textbtn purpose-edit" data-act="managePurposes" aria-label="시작 목적 편집">편집</button></div></div>${purposeGrid(false)}</section><footer class="start-footer">${!state.status.accessibility?'<button class="textbtn" data-nav="setup">자동 관리를 위한 권한 설정</button>':''}${dismissButton()}</footer></main>`;}
 function prepareStart(){
@@ -112,8 +115,9 @@ function liveTimerSettings(){
  else message='관리 앱 사용을 시작하면 남은 시간을 표시합니다.';
  return `<section class="card" aria-label="실시간 타이머 설정"><h3>Now Bar · 실시간 타이머</h3><p class="small">${message}</p>${t.supported?'<p class="small muted">기기 정책에 따라 실시간 알림이 허용되어도 Now Bar에 표시되지 않을 수 있습니다.</p><button class="secondary" data-permission="liveTimer">실시간 알림 설정</button>':''}<button class="secondary" data-permission="timerChannel">남은 사용 시간 알림 설정</button></section>`;
 }
-function setup(){return `<main class="page">${header(false,'초기 설정')}<section class="card">${[['accessibility','첫 화면과 앱 관리','접근성 → 설치된 앱 → Locky'],['usage','앱 사용 기록','사용 정보 접근에서 Locky 허용'],['notification','타이머·브리핑 알림','알림을 허용하면 남은 시간을 표시해요'],['exact','시간 전환 알림','정확한 알람 허용']].map(([k,l,d])=>`<div class="permission"><div class="row"><strong>${l}</strong><button data-permission="${k}">${state.status[k==='notification'?'notifications':k]?'설정 확인':'허용'}</button></div><p>${d}</p></div>`).join('')}</section>${liveTimerSettings()}<div class="card"><h3>배터리 설정</h3><p class="small muted">삼성 절전 앱에서 Locky를 제외해 주세요. 접근성 설정이 막혀 있다면 앱 정보 메뉴에서 ‘제한된 설정 허용’을 먼저 켜 주세요.</p><button class="secondary" data-permission="battery">배터리 설정 열기</button></div><button class="primary" data-nav="home">시작</button></main>`;}
-function settings(){let p=state.prefs;return `<main class="page settings-page">${header(false,'설정')}<section class="settings-group"><div class="row"><h2>집중 시간</h2><button id="enabled" class="toggle ${p.enabled?'on':''}" role="switch" aria-checked="${p.enabled}" aria-label="집중 시간 관리">${p.enabled?'켜짐':'꺼짐'}</button></div><div class="split"><div><label for="startTime">집중 시작</label><input class="field" type="time" id="startTime" value="${time(p.start)}"></div><div><label for="endTime">자유 시간 시작</label><input class="field" type="time" id="endTime" value="${time(p.end)}"></div></div><p class="small muted">매일 반복 · 변경 즉시 적용</p></section><section class="settings-group"><h2>앱과 사용 목적</h2><button class="setting-link" data-nav="apps"><strong>관리할 앱</strong><span>${state.rules.length}개</span>${icon('arrow')}</button><button class="setting-link" data-nav="usageApps"><strong>사용시간 제외 앱</strong>${icon('arrow')}</button><button class="setting-link" data-act="managePurposes"><strong>목적 프리셋과 앱 연결</strong>${icon('arrow')}</button><button class="setting-link" data-act="dictionaryChoice"><strong>기본 사전</strong>${icon('arrow')}</button></section><section class="settings-group"><div class="row"><h2>화면 위 타이머</h2><button id="floatingTimer" class="toggle ${p.floatingTimer!==false?'on':''}" role="switch" aria-checked="${p.floatingTimer!==false}" aria-label="화면 위 타이머">${p.floatingTimer!==false?'켜짐':'꺼짐'}</button></div><p class="small muted">눌러서 시간·목적 확인, 길게 눌러 위치 이동</p></section><section class="settings-group"><h2>화면 테마</h2><label for="themeMode">표시 방식</label><select class="field" id="themeMode" aria-label="화면 테마"><option value="system" ${(p.themeMode||'system')==='system'?'selected':''}>기기 설정 따르기</option><option value="light" ${p.themeMode==='light'?'selected':''}>라이트 모드 고정</option><option value="dark" ${p.themeMode==='dark'?'selected':''}>다크 모드 고정</option></select></section><section class="settings-group"><h2>알림과 브리핑</h2><label>집중 시작 전 알림</label><div class="reminder-buttons">${[30,20,10,5,1].map(m=>`<button class="reminder ${p.reminders.includes(m)?'selected':''}" data-reminder="${m}" aria-pressed="${p.reminders.includes(m)}">${m}분</button>`).join('')}</div><label for="customReminders">추가 알림 · 분</label><input class="field" id="customReminders" inputmode="numeric" placeholder="예: 45, 15" value="${p.reminders.filter(n=>![30,20,10,5,1].includes(n)).join(', ')}"><label for="weeklyDay">주간 브리핑</label><select class="field" id="weeklyDay">${['월','화','수','목','금','토','일'].map((d,i)=>`<option value="${i+1}" ${p.weeklyDay===i+1?'selected':''}>${d}요일 · 자유 시간에</option>`).join('')}</select><button class="setting-link" data-nav="setup"><strong>권한·배터리 설정</strong>${icon('arrow')}</button></section><p class="small muted settings-footnote">설정은 자동 저장됩니다</p></main>`;}
+function setup(){return `<main class="page">${header(false,'초기 설정')}<section class="card">${[['accessibility','첫 화면과 앱 관리','접근성 → 설치된 앱 → Locky'],['usage','앱 사용 기록','사용 정보 접근에서 Locky 허용'],['notification','타이머·브리핑 알림','알림을 허용하면 남은 시간을 표시해요'],['exact','시간 전환 알림','정확한 알람 허용']].map(([k,l,d])=>`<div class="permission"><div class="row"><strong>${l}</strong><button data-permission="${k}">${state.status[k==='notification'?'notifications':k]?'설정 확인':'허용'}</button></div><p>${d}</p></div>`).join('')}</section>${startWindowSettings()}${liveTimerSettings()}<div class="card"><h3>배터리 설정</h3><p class="small muted">삼성 절전 앱에서 Locky를 제외해 주세요. 접근성 설정이 막혀 있다면 앱 정보 메뉴에서 ‘제한된 설정 허용’을 먼저 켜 주세요.</p><button class="secondary" data-permission="battery">배터리 설정 열기</button></div><button class="primary" data-nav="home">시작</button></main>`;}
+function startWindowSettings(){return `<section class="settings-group"><div class="row"><h2>잠금 해제 첫 화면</h2><button id="startUnderKeyguard" class="toggle ${state.prefs.startUnderKeyguard!==false?'on':''}" role="switch" aria-checked="${state.prefs.startUnderKeyguard!==false}" aria-label="잠금화면 뒤에서 시작화면 준비">${state.prefs.startUnderKeyguard!==false?'켜짐':'꺼짐'}</button></div><p class="small muted">다른 앱 위에 표시 권한으로 잠금화면 뒤에서 시작화면을 준비합니다. 앱 차단용 접근성 권한과 별개입니다. 기기에서 전환이 불안정하면 끄면 기존 표시 방식으로 돌아갑니다.</p><button class="secondary" data-permission="drawOverlays">${state.status.drawOverlays?'다른 앱 위에 표시 설정':'다른 앱 위에 표시 허용'}</button>${!state.status.drawOverlays?'<p class="small muted">허용하지 않아도 기존 시작화면과 앱 차단은 작동합니다.</p>':''}</section>`;}
+function settings(){let p=state.prefs;return `<main class="page settings-page">${header(false,'설정')}<section class="settings-group"><div class="row"><h2>집중 시간</h2><button id="enabled" class="toggle ${p.enabled?'on':''}" role="switch" aria-checked="${p.enabled}" aria-label="집중 시간 관리">${p.enabled?'켜짐':'꺼짐'}</button></div><div class="split"><div><label for="startTime">집중 시작</label><input class="field" type="time" id="startTime" value="${time(p.start)}"></div><div><label for="endTime">자유 시간 시작</label><input class="field" type="time" id="endTime" value="${time(p.end)}"></div></div><p class="small muted">매일 반복 · 변경 즉시 적용</p></section><section class="settings-group"><h2>앱과 사용 목적</h2><button class="setting-link" data-nav="apps"><strong>관리할 앱</strong><span>${state.rules.length}개</span>${icon('arrow')}</button><button class="setting-link" data-nav="usageApps"><strong>사용시간 제외 앱</strong>${icon('arrow')}</button><button class="setting-link" data-act="managePurposes"><strong>목적 프리셋과 앱 연결</strong>${icon('arrow')}</button><button class="setting-link" data-act="dictionaryChoice"><strong>기본 사전</strong>${icon('arrow')}</button></section><section class="settings-group"><div class="row"><h2>화면 위 타이머</h2><button id="floatingTimer" class="toggle ${p.floatingTimer!==false?'on':''}" role="switch" aria-checked="${p.floatingTimer!==false}" aria-label="화면 위 타이머">${p.floatingTimer!==false?'켜짐':'꺼짐'}</button></div><p class="small muted">눌러서 시간·목적 확인, 길게 눌러 위치 이동</p></section>${startWindowSettings()}<section class="settings-group"><h2>화면 테마</h2><label for="themeMode">표시 방식</label><select class="field" id="themeMode" aria-label="화면 테마"><option value="system" ${(p.themeMode||'system')==='system'?'selected':''}>기기 설정 따르기</option><option value="light" ${p.themeMode==='light'?'selected':''}>라이트 모드 고정</option><option value="dark" ${p.themeMode==='dark'?'selected':''}>다크 모드 고정</option></select></section><section class="settings-group"><h2>알림과 브리핑</h2><label>집중 시작 전 알림</label><div class="reminder-buttons">${[30,20,10,5,1].map(m=>`<button class="reminder ${p.reminders.includes(m)?'selected':''}" data-reminder="${m}" aria-pressed="${p.reminders.includes(m)}">${m}분</button>`).join('')}</div><label for="customReminders">추가 알림 · 분</label><input class="field" id="customReminders" inputmode="numeric" placeholder="예: 45, 15" value="${p.reminders.filter(n=>![30,20,10,5,1].includes(n)).join(', ')}"><label for="weeklyDay">주간 브리핑</label><select class="field" id="weeklyDay">${['월','화','수','목','금','토','일'].map((d,i)=>`<option value="${i+1}" ${p.weeklyDay===i+1?'selected':''}>${d}요일 · 자유 시간에</option>`).join('')}</select><button class="setting-link" data-nav="setup"><strong>권한·배터리 설정</strong>${icon('arrow')}</button></section><p class="small muted settings-footnote">설정은 자동 저장됩니다</p></main>`;}
 function appsPage(){return `<main class="page">${header(true,'관리할 앱')}<input id="appSearch" class="field" placeholder="앱 이름으로 검색" aria-label="앱 검색"><div id="appList" class="card"><p class="empty">불러오는 중</p></div></main>`;}
 async function getApps(){if(appsCache)return appsCache;if(!appsPromise)appsPromise=api('apps').then(items=>(appsCache=items,items)).finally(()=>{appsPromise=null;});return appsPromise;}
 async function loadApps(){await safe(async()=>{await getApps();renderApps();});}
@@ -248,11 +252,54 @@ function chatBody(text,rawRefs,id){
  return html;
 }
 
+function quickRequestId(){const bytes=crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;const h=[...bytes].map(b=>b.toString(16).padStart(2,'0')).join('');return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;}
+function startQuickQuestion(){
+ const text=$('#quickQuestion')?.value.trim();if(!text)return;
+ if(!state.accounts.some(a=>a.active&&a.connected)){toast('ChatGPT를 먼저 연결해 주세요.');safe(()=>navigate('chats'));return;}
+ if(state.busy||[...quickTurns.values()].some(t=>t.inFlight))throw Error('현재 질문을 처리하고 있습니다.');
+ const turn={id:quickRequestId(),text,accepted:false,inFlight:false,error:'',messages:null};quickTurns.set(turn.id,turn);
+ // No await before entering chat: memo saving and durable question acceptance run afterwards.
+ safe(flushMemo);chatId=turn.id;state.chats.unshift({id:turn.id,title:text.slice(0,30)});
+ presentScreen('chat');screen='chat';closeSheet();document.body.classList.remove('start-screen');window.scrollTo(0,0);render();startPolling();
+ submitQuickQuestion(turn);
+}
+function quickMessages(turn){
+ if(turn.messages)return turn.messages.map(m=>({...m,quickRetry:m.id===turn.reply&&m.status==='interrupted',quickError:m.id===turn.reply?turn.error:''}));
+ return [{id:turn.id+':user',role:'user',body:turn.text,status:'complete'},
+  {id:turn.id+':reply',role:'assistant',body:turn.error?'질문을 보내지 못했어요.':'질문을 보내고 있어요…',status:turn.error?'failed':'sending',quickRetry:!!turn.error,quickError:turn.error}];
+}
+function adoptQuickMessages(turn,result,box=$('#messages')){
+ const entries=box?.messageEntries;
+ if(entries&&chatId===turn.id)for(const [suffix,key] of [['user',result.user],['reply',result.reply]]){
+  const node=entries.get(turn.id+':'+suffix);if(node){entries.delete(turn.id+':'+suffix);entries.set(String(key),node);}
+ }
+ turn.user=result.user;turn.reply=result.reply;turn.accepted=true;
+}
+async function submitQuickQuestion(turn,retry=false){
+ if(turn.inFlight)return;const observed=turn.messages;turn.inFlight=true;turn.error='';
+ if(screen==='chat'&&chatId===turn.id)applyMessages(quickMessages(turn),false);
+ try{
+  const result=await api('quickSend',{request:turn.id,text:turn.text,retry});
+  adoptQuickMessages(turn,result);if(turn.messages===observed){turn.messages=result.messages;state.busy=result.busy;state.activeChat=turn.id;}
+  if(quickQuestionDraft===turn.text)quickQuestionDraft='';if($('#quickQuestion')?.value.trim()===turn.text)$('#quickQuestion').value='';
+ }catch(e){if(!turn.accepted)turn.error=e.message;else if(!turn.messages?.some(m=>m.status==='streaming'))turn.error=e.message;}
+ finally{turn.inFlight=false;if(screen==='chat'&&chatId===turn.id){applyMessages(quickMessages(turn),false);startPolling();}}
+}
 async function renderMessages(force){
  const box=$('#messages');if(!box)return;
  const id=chatId,request=box.messageRequest=(box.messageRequest||0)+1;
  const messages=await api('messages',{id});
  if(id!==chatId||screen!=='chat'||box!==$('#messages')||request!==box.messageRequest)return;
+ let turn=quickTurns.get(id);const reply=messages.find(m=>m.quickRequest===id);
+ if(reply){
+  const user=messages.find(m=>m.role==='user');
+  if(!turn){turn={id,text:user?.body||'',accepted:true,inFlight:false,error:''};quickTurns.set(id,turn);}
+  adoptQuickMessages(turn,{user:user.id,reply:reply.id},box);turn.messages=messages;
+ }
+ applyMessages(turn&&(!messages.length||reply)?quickMessages(turn):messages,force);
+}
+function applyMessages(messages,force){
+ const box=$('#messages');if(!box)return;
  const viewport=window.visualViewport?.height||innerHeight;
  const follow=window.scrollY+viewport>=document.documentElement.scrollHeight-150;
  const initial=!box.messageEntries,entries=box.messageEntries||new Map();
@@ -260,13 +307,13 @@ async function renderMessages(force){
  const anchorTop=anchor?.getBoundingClientRect().top,position=window.scrollY;
  const keep=new Map();let changed=false;
  for(const [i,m] of messages.entries()){
-   const key=String(m.id??i),signature=JSON.stringify([m.role,m.body,m.status,m.citations]);
+   const key=String(m.id??i),signature=JSON.stringify([m.role,m.body,m.status,m.citations||'[]',!!m.quickRetry,m.quickError||'']);
    let node=entries.get(key);
    if(!node){node=document.createElement('div');node.className='message '+m.role;}
    // Compare message data, never disclosure attributes changed by the reader.
    if(node.messageSignature!==signature){
      const expanded=new Set([...node.querySelectorAll('[data-source-toggle][aria-expanded="true"]')].map(el=>el.dataset.sourceToggle));
-     node.innerHTML=(m.role==='assistant'?'<div class="chat-markdown">'+chatBody(m.body||(m.status==='streaming'?'답변을 생각하고 있어요…':''),m.citations,m.id||i)+'</div>':'<div class="chat-plain">'+esc(m.body||'')+'</div>')+(m.status==='interrupted'?'<span class="small danger">완료하지 못한 답변</span>':'');
+     node.innerHTML=(m.role==='assistant'?'<div class="chat-markdown">'+chatBody(m.body||(m.status==='streaming'?'답변을 생각하고 있어요…':''),m.citations,m.id||i)+'</div>':'<div class="chat-plain">'+esc(m.body||'')+'</div>')+(m.status==='interrupted'?'<span class="small danger">완료하지 못한 답변</span>':'')+(m.quickError?'<p class="small danger">'+esc(m.quickError)+'</p>':'')+(m.quickRetry?'<button class="textbtn" data-act="retryQuick">다시 시도</button>':'');
      node.className='message '+m.role;node.messageSignature=signature;bind(node);changed=true;
      for(const toggle of node.querySelectorAll('[data-source-toggle]'))if(expanded.has(toggle.dataset.sourceToggle)){
        toggle.setAttribute('aria-expanded','true');node.querySelectorAll('.chat-source-list').forEach(panel=>{if(panel.id===toggle.dataset.sourceToggle)panel.hidden=false;});
@@ -284,7 +331,7 @@ async function renderMessages(force){
    else if(anchor?.isConnected)window.scrollBy(0,anchor.getBoundingClientRect().top-anchorTop);
    else window.scrollTo(0,position);
  }
- const button=$('.composer button');if(button){const action=state.busy?'cancelResponse':'send';if(button.dataset.act!==action){button.dataset.act=action;button.innerHTML=icon(state.busy?'close':'send');button.setAttribute('aria-label',state.busy?'답변 중지':'전송');}}
+ const button=$('.composer button');if(button){const pending=quickTurns.get(chatId);button.disabled=!!pending&&!pending.accepted;const action=state.busy?'cancelResponse':'send';if(button.dataset.act!==action){button.dataset.act=action;button.innerHTML=icon(state.busy?'close':'send');button.setAttribute('aria-label',state.busy?'답변 중지':'전송');}}
  if(state.chatError&&state.chatError!==renderMessages.lastError){renderMessages.lastError=state.chatError;toast(state.chatError);}
 }
 function brief(){return `<main class="page briefing-page">${header(state.overlay,'브리핑')}<div class="segmented"><button data-days="1" class="${briefDays===1?'active':''}">하루</button><button data-days="7" class="${briefDays===7?'active':''}">일주일</button></div><div class="row"><button class="iconbtn" data-act="previousBrief" aria-label="이전 날짜">${icon('back')}</button><span id="briefDate" class="small muted"></span><button class="iconbtn" data-act="nextBrief" ${briefOffset===0?'disabled':''} aria-label="다음 날짜">${icon('arrow')}</button></div><div id="briefContent"><p class="empty">기록을 모으는 중</p></div><div class="brief-export"><div><strong>하루 원본 기록</strong><p class="small muted">선택한 날짜 · JSON</p></div><div class="brief-export-actions"><button class="secondary" data-act="copyDay">복사</button><button class="secondary" data-act="saveDay">파일 저장</button></div></div></main>`;}
@@ -358,7 +405,7 @@ async function loadUsageApps(){usageCache=await api('usageApps');renderUsageApps
 function renderUsageApps(){let query=$('#usageSearch')?.value.trim().toLowerCase()||'';$('#usageList').innerHTML=usageCache.filter(a=>(a.label+' '+a.pkg).toLowerCase().includes(query)).sort((a,b)=>Number(b.excluded)-Number(a.excluded)||a.label.localeCompare(b.label)).map(a=>`<label class="app-row"><input class="manage-check" type="checkbox" data-exclude="${esc(a.pkg)}" ${a.excluded?'checked':''} ${a.system?'disabled':''}>${a.icon?`<img src="${esc(a.icon)}" alt="">`:icon('settings')}<span class="info"><strong>${esc(a.label)}</strong><p>${a.system?'시스템 앱 · 자동 제외':esc(a.pkg)}</p></span></label>`).join('');bind($('#usageList'));}
 async function accountSheet(){sheet(`<div class="sectionhead"><h2>ChatGPT 계정</h2><button class="iconbtn" data-act="closeSheet" aria-label="닫기">${icon('close')}</button></div>${state.accounts.map(a=>`<div class="app-row"><div class="info"><strong>${esc(a.email||a.client)}</strong><p>${a.active?'현재 계정 · ':''}${a.connected?'연결됨':'연결 해제됨'}</p></div><button class="textbtn" data-account="${esc(a.client)}">선택</button></div>`).join('')}<div class="stack" style="margin-top:20px"><button class="primary" data-act="signin">다른 계정 연결</button><button class="secondary" data-act="consent">요금제 사용 승인</button><button class="secondary danger" data-act="signout">현재 계정 연결 해제</button></div>`);}
 
-function confirmSheet(title,detail,action,args){sheet(`${sheetHead(title)}<p class="muted">${esc(detail)}</p><div class="sheet-actions"><button id="confirm" class="primary danger">삭제</button></div>`);$('#confirm').onclick=()=>safe(async()=>{await api(action,args);closeSheet();if(action==='deleteNote')noteId='';await refresh(true);});}
+function confirmSheet(title,detail,action,args){sheet(`${sheetHead(title)}<p class="muted">${esc(detail)}</p><div class="sheet-actions"><button id="confirm" class="primary danger">삭제</button></div>`);$('#confirm').onclick=()=>safe(async()=>{await api(action,args);closeSheet();if(action==='deleteNote')noteId='';if(action==='deleteChat')quickTurns.delete(args.id);await refresh(true);});}
 function captureMemo(){const body=$('#noteBody'),checks=$('#checks');if(!body&&!checks)return null;let old=currentNote();const values=checks?[...checks.querySelectorAll('.checkrow')].map(r=>({text:r.querySelector('[data-checktext]').value,done:r.querySelector('input[type=checkbox]').checked})):JSON.parse(old.checks||'[]');
  const note={id:old.id||crypto.randomUUID(),title:$('#noteTitle')?.value||old.title||'메모',body:body?body.value:old.body||'',checks:values,mode:old.mode||'text'};noteId=note.id;return note;}
 function insertCheckRow(after,text=''){
@@ -458,15 +505,16 @@ async function action(name,el){switch(name){case 'back':back();break;case 'close
  case 'newNote':await flushMemo();sheet(`${sheetHead('새 메모')}<div class="split"><button class="secondary" data-newnote="text">${icon('note')} 글 메모</button><button class="secondary" data-newnote="check">${icon('check')} 체크 메모</button></div>`);break;
  case 'addCheck':insertCheckRow(null,'');break;
  case 'deleteNote':await flushMemo();confirmSheet('메모 삭제','이 메모를 삭제할까요?','deleteNote',{id:noteId});break;
- case 'openChat':if(state?.overlay)await api('open',{screen:'chats'});else await navigate('chats');break;
- case 'quickSend':{const text=$('#quickQuestion')?.value.trim();if(!text)return;if(!state.accounts.some(a=>a.active&&a.connected)){toast('ChatGPT를 먼저 연결해 주세요.');if(state.overlay)await api('open',{screen:'chats'});else await navigate('chats');return;}if(state.busy)throw Error('현재 답변을 받고 있습니다.');const button=$('[data-act=quickSend]');if(button?.disabled)return;if(button)button.disabled=true;try{const c=await api('newChat');chatId=c.id;await api('send',{id:c.id,text});quickQuestionDraft='';if($('#quickQuestion'))$('#quickQuestion').value='';if(state.overlay)await api('open',{screen:'chat',chat:c.id});else await openChatById(c.id);}finally{if(button?.isConnected)button.disabled=false;}break;}
+ case 'openChat':await navigate('chats');break;
+ case 'quickSend':startQuickQuestion();break;
+ case 'retryQuick':{const turn=quickTurns.get(chatId);if(turn)await submitQuickQuestion(turn,true);break;}
  case 'dictionaryChoice':await dictionaryChoice();break;
  case 'signin':closeSheet();await api('signin');await refresh(true);break;case 'consent':closeSheet();await api('signin',{client:state.accounts.find(a=>a.active)?.client||'',consent:true});await refresh(true);break;
  case 'cancelLogin':await api('cancelLogin');await refresh(true);break;case 'models':await api('models');await refresh(true);break;
  case 'manageUsage':await api('linkTest',{uri:'https://chatgpt.com/settings/usage'});break;case 'accountSheet':await accountSheet();break;
  case 'signout':{let r=await api('signout');closeSheet();toast(r.message);await refresh(true);break;}
  case 'newChat':{const c=await api('newChat');chatId=c.id;await navigate('chat');break;}
- case 'send':{const text=$('#chatInput').value.trim();if(!text)return;await api('send',{id:chatId,text});$('#chatInput').value='';await refresh();break;}
+ case 'send':{const pending=quickTurns.get(chatId);if(pending&&!pending.accepted)return;const text=$('#chatInput').value.trim();if(!text)return;await api('send',{id:chatId,text});$('#chatInput').value='';await refresh();break;}
  case 'cancelResponse':await api('cancelResponse');break;
  case 'copyDay':await api('copyDay',{offset:briefOffset});toast('선택한 날짜의 원본 JSON을 복사했습니다.');break;case 'saveDay':await api('saveDay',{offset:briefOffset});toast('저장할 파일 위치를 선택해 주세요.');break;
   case 'previousBrief':briefOffset=Math.min(179,briefOffset+(briefDays===7?7:1));await refresh(true);break;case 'nextBrief':briefOffset=Math.max(0,briefOffset-(briefDays===7?7:1));await refresh(true);break;
@@ -511,6 +559,7 @@ function bind(root=$('#app')){
  if($('#noteMode'))$('#noteMode').onchange=()=>safe(async()=>{await flushMemo();let n=captureMemo(),mode=$('#noteMode').value;if(mode==='check'){n.checks=n.body.trim()?[{text:n.body,done:false},...n.checks]:n.checks;n.body='';}else {n.body=n.checks.map(c=>(c.done?'✓ ':'')+c.text).join('\n');n.checks=[];}n.mode=mode;await api('saveNote',n);await refresh(true);});
  if($('#appSearch'))$('#appSearch').oninput=renderApps;if($('#usageSearch'))$('#usageSearch').oninput=renderUsageApps;
  if($('#dictionaryForm'))$('#dictionaryForm').onsubmit=e=>{e.preventDefault();safe(lookup);};
+ if($('#startUnderKeyguard'))$('#startUnderKeyguard').onclick=()=>safe(async()=>{const enabled=state.prefs.startUnderKeyguard===false;await api('settings',{startUnderKeyguard:enabled});state.prefs.startUnderKeyguard=enabled;$('#startUnderKeyguard').classList.toggle('on',enabled);$('#startUnderKeyguard').setAttribute('aria-checked',enabled);$('#startUnderKeyguard').textContent=enabled?'켜짐':'꺼짐';});
  if($('#floatingTimer'))$('#floatingTimer').onclick=()=>safe(async()=>{const enabled=state.prefs.floatingTimer===false;await api('settings',{floatingTimer:enabled});state.prefs.floatingTimer=enabled;$('#floatingTimer').classList.toggle('on',enabled);$('#floatingTimer').setAttribute('aria-checked',enabled);$('#floatingTimer').textContent=enabled?'켜짐':'꺼짐';});
  if($('#enabled'))$('#enabled').onclick=()=>safe(async()=>{const enabled=!state.prefs.enabled;await api('settings',{enabled});state.prefs.enabled=enabled;$('#enabled').classList.toggle('on',enabled);$('#enabled').setAttribute('aria-checked',enabled);$('#enabled').textContent=enabled?'켜짐':'꺼짐';});
  ['startTime','endTime'].forEach(id=>{if($('#'+id))$('#'+id).onchange=()=>safe(async()=>{const start=timeVal($('#startTime').value),end=timeVal($('#endTime').value);await api('settings',{start,end});state.prefs.start=start;state.prefs.end=end;});});

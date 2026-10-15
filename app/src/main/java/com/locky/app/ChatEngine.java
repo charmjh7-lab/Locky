@@ -7,15 +7,39 @@ import java.io.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 final class ChatEngine {
-    final Store store; final ChatGPT auth; final AtomicBoolean busy=new AtomicBoolean();volatile String active="";volatile String error="";
-    ChatEngine(Context c,ChatGPT auth) {store=Store.get(c);this.auth=auth;}
-    void send(String id,String text,String model) throws Exception {
+    final Store store; final ChatGPT auth;final java.util.concurrent.Executor work; final AtomicBoolean busy=new AtomicBoolean();volatile String active="";volatile String error="";
+    ChatEngine(Context c,ChatGPT auth) {this(c,auth,LockyApp.app.work);}
+    ChatEngine(Context c,ChatGPT auth,java.util.concurrent.Executor work) {store=Store.get(c);this.auth=auth;this.work=work;}
+    void validate(String text,String model) throws IOException {
         if(text.trim().isEmpty()||text.length()>20000)throw new IOException("메시지를 1~20,000자로 입력해 주세요.");
         if(model.isEmpty())throw new IOException("ChatGPT 연결 후 모델을 선택해 주세요.");
-        if(store.rows("SELECT id FROM chats WHERE id=?",id).length()==0)throw new IOException("대화를 찾지 못했습니다.");
+    }
+    void reserve(String id) throws IOException {
         if(!busy.compareAndSet(false,true))throw new IOException("답변을 받고 있습니다. 잠시 기다려 주세요.");active=id;error="";
-        store.message(id,"user",text,"complete");long reply=store.message(id,"assistant","","streaming");
-        LockyApp.app.work.execute(()->{
+    }
+    synchronized void send(String id,String text,String model) throws Exception {
+        validate(text,model);
+        if(store.rows("SELECT id FROM chats WHERE id=?",id).length()==0)throw new IOException("대화를 찾지 못했습니다.");
+        reserve(id);long reply=-1;
+        try{reply=store.appendTurn(id,text);startResponse(id,reply,model);}
+        catch(Exception e){if(reply!=-1)store.updateMessage(reply,"","interrupted");busy.set(false);throw e;}
+    }
+    synchronized JSONObject quickSend(String request,String text,String model,boolean retry) throws Exception {
+        if(!java.util.UUID.fromString(request).toString().equals(request))throw new IOException("전송 번호를 확인해 주세요.");
+        JSONObject result=store.quickRequest(request,text);
+        boolean interrupted=result!=null&&store.rows("SELECT status FROM messages WHERE id=?",""+result.getLong("reply")).getJSONObject(0).getString("status").equals("interrupted");
+        if(result==null||(retry&&interrupted)){
+            validate(text,model);reserve(request);
+            try{
+                if(result==null)result=store.acceptQuickQuestion(request,text);
+                else {store.updateMessage(result.getLong("reply"),"","streaming");store.citations(result.getLong("reply"),new JSONArray());}
+                startResponse(result.getString("id"),result.getLong("reply"),model);
+            }catch(Exception e){if(result!=null)store.updateMessage(result.getLong("reply"),"","interrupted");busy.set(false);throw e;}
+        }
+        return result.put("busy",busy.get()&&active.equals(result.getString("id"))).put("messages",store.messages(result.getString("id")));
+    }
+    void startResponse(String id,long reply,String model){
+        work.execute(()->{
             StringBuilder result=new StringBuilder();JSONArray citations=new JSONArray();boolean completed=false;
             try {
                 JSONArray input=new JSONArray(),messages=store.rows("SELECT role,body,status FROM messages WHERE chat=? ORDER BY id",id);
