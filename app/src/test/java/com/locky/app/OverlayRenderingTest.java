@@ -20,7 +20,7 @@ public class OverlayRenderingTest {
     WebHost host;FrameView view;
     static class FrameView extends WebView {
         final List<VisualStateCallback> frames=new ArrayList<>();final List<Long> ids=new ArrayList<>();
-        final List<String> scripts=new ArrayList<>();final List<ValueCallback<String>> preparations=new ArrayList<>();int loads,resumes,pauses,layouts,timers;
+        final List<String> scripts=new ArrayList<>();final List<ValueCallback<String>> preparations=new ArrayList<>();int loads,resumes,pauses,layouts,timers,invalidations;
         FrameView(Activity c){super(c);}
         @Override public void postVisualStateCallback(long id,VisualStateCallback callback){ids.add(id);frames.add(callback);}
         @Override public void evaluateJavascript(String script,ValueCallback<String> callback){scripts.add(script);if("prepareStart()".equals(script)){preparations.add(callback);return;}if(callback!=null)callback.onReceiveValue("null");}
@@ -28,13 +28,15 @@ public class OverlayRenderingTest {
         @Override public void onResume(){resumes++;}
         @Override public void onPause(){pauses++;}
         @Override public void resumeTimers(){timers++;}
+        @Override public void invalidate(){invalidations++;super.invalidate();}
         @Override public void requestLayout(){layouts++;super.requestLayout();}
         void complete(int i){frames.get(i).onComplete(ids.get(i));}
     }
     @Before public void setup(){
         Store.instance=null;GuardService.live=null;
         Activity a=Robolectric.buildActivity(Activity.class).setup().visible().get();host=new WebHost(a,true);
-        assertEquals(View.LAYER_TYPE_SOFTWARE,host.view.getLayerType());
+        assertEquals(View.LAYER_TYPE_NONE,host.view.getLayerType());
+        assertTrue(host.view.getSettings().getOffscreenPreRaster());
         host.root.removeView(host.view);host.view.destroy();view=new FrameView(a);view.setVisibility(View.INVISIBLE);host.view=view;host.root.addView(view,0,new android.widget.FrameLayout.LayoutParams(-1,-1));a.setContentView(host.root);
         host.pendingScreen="unlock";host.ready=true;host.resumeOverlay();
     }
@@ -76,11 +78,11 @@ public class OverlayRenderingTest {
     }
     @Test public void repeatedWarmHideAndExposeDoesNotResumeRelayoutOrRevalidateTheFrame(){
         rendered();view.complete(0);host.prepareOverlay();view.scripts.clear();
-        int resumes=view.resumes,timers=view.timers,layouts=view.layouts;long visual=host.visualGeneration,navigation=host.navigationGeneration;
+        int resumes=view.resumes,timers=view.timers,layouts=view.layouts,invalidations=view.invalidations;long visual=host.visualGeneration,navigation=host.navigationGeneration;
         for(int n=0;n<10;n++){host.prepareOverlay();host.resumeOverlay();host.resumeOverlay();}
         assertTrue(host.frameReady);assertEquals(visual,host.visualGeneration);assertEquals(navigation,host.navigationGeneration);
         assertEquals(resumes,view.resumes);assertEquals(timers,view.timers);assertEquals(layouts,view.layouts);
-        assertEquals(1,view.frames.size());assertTrue(view.scripts.isEmpty());assertEquals(0,view.loads);
+        assertEquals(invalidations,view.invalidations);assertEquals(1,view.frames.size());assertTrue(view.scripts.isEmpty());assertEquals(0,view.loads);
     }
     @Test public void genuinePauseStillResumesAndRequestsANewFrameWithoutReloading(){
         rendered();view.complete(0);host.pause();host.pause();

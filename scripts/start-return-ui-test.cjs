@@ -37,11 +37,42 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.locator('.preset-scroll').evaluate(el=>el.scrollTop),await page.evaluate(()=>scrollBefore));
   await page.evaluate(()=>{receive(pendingMemo,{},null);window.holdMemo=false;nativeRestore();});await page.waitForFunction(()=>!memoSaving);
   assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='rendered').at(-1).args.revision),await page.evaluate(()=>preparedRevision));
+  // Unlock visibility and Activity-originated refreshes reuse the submitted DOM.
+  await page.evaluate(()=>{
+   window.stableRevision=domRevision;window.stableSignals=calls.filter(c=>c.action==='rendered').length;
+   window.stableNodes=['.start-page','#noteBody','#quickQuestion','#word','.start-footer'].map(s=>document.querySelector(s));
+   window.stateCalls=calls.filter(c=>c.action==='state').length;
+   window.mutations=[];window.observer=new MutationObserver(rows=>mutations.push(...rows));observer.observe(document.querySelector('#app'),{childList:true,subtree:true,characterData:true});
+   window.dispatchEvent(new Event('visibilitychange'));
+  });
+  assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='state').length),await page.evaluate(()=>stateCalls));
+  await page.evaluate(()=>refresh());await page.evaluate(()=>refresh(true));
+  assert.equal(await page.evaluate(()=>domRevision),await page.evaluate(()=>stableRevision));
+  assert.equal(await page.evaluate(()=>mutations.length),0);
+  assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='rendered').length),await page.evaluate(()=>stableSignals));
+  // Real data updates touch only changed regions and keep unrelated editors/buttons.
+  await page.evaluate(()=>{fixture=structuredClone(fixture);fixture.free=true;fixture.allPurposes[0].label='변경된 목적';fixture.allPurposes.push({id:'added',label:'새 목적',scope:'phone'});});
+  await page.evaluate(()=>refresh());
+  assert.equal(await page.evaluate(()=>stableNodes.every(el=>el.isConnected)),true);
+  assert.equal(await page.locator('[data-purpose="p0"]').textContent(),'변경된 목적');
+  assert.equal(await page.locator('[data-purpose="added"]').count(),1);
+  assert.equal(await page.evaluate(()=>document.querySelector('[data-purpose="p1"]')===buttons.get('p1')),true);
+  // Remote memo data arriving while focused is applied after editing, without losing the input.
+  await page.evaluate(()=>{document.querySelector('#noteBody').focus();fixture=structuredClone(fixture);fixture.notes[0].body='다른 화면에서 수정';});
+  await page.evaluate(()=>refresh());assert.equal(await page.locator('#noteBody').inputValue(),'보존할 메모');
+  await page.locator('#noteBody').blur();await page.evaluate(()=>refresh());
+  assert.equal(await page.locator('#noteBody').inputValue(),'다른 화면에서 수정');
+  assert.equal(await page.evaluate(()=>stableNodes[1]===document.querySelector('#noteBody')),true);
+  await page.evaluate(()=>{fixture=structuredClone(fixture);fixture.notes[0].body='보존할 메모';fixture.allPurposes=fixture.allPurposes.filter(p=>p.id!=='added');observer.disconnect();});await page.evaluate(()=>refresh());
   // A sheet and a single-purpose list are unchanged preparations, not new revisions.
   await page.evaluate(()=>{sheet('<p>열린 선택 화면</p>');window.noopBefore=domRevision;prepareStart();});
   assert.equal(await page.evaluate(()=>domRevision),await page.evaluate(()=>noopBefore));
   await page.evaluate(()=>{closeSheet();window.all=state.allPurposes;state.allPurposes=all.slice(0,1);render();window.noopBefore=domRevision;prepareStart();});
   assert.equal(await page.evaluate(()=>domRevision),await page.evaluate(()=>noopBefore));
+  await page.evaluate(()=>{window.beforeNavigation=domRevision;window.beforeSignals=calls.filter(c=>c.action==='rendered').length;return navigate('unlock',nativeNavigation+1);});
+  assert.equal(await page.evaluate(()=>domRevision),await page.evaluate(()=>beforeNavigation));
+  assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='rendered').length),await page.evaluate(()=>beforeSignals+1));
+  assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='rendered').at(-1).args.navigation),await page.evaluate(()=>nativeNavigation));
   await page.evaluate(()=>{state.allPurposes=all;render();});
   const word='첫 단어 "<뜻>"',question='입력 중인 질문';await page.locator('#word').fill(word);await page.locator('#quickQuestion').fill(question);
   await page.locator('.preset-scroll').evaluate(el=>el.scrollTop=80);const scroll=await page.locator('.preset-scroll').evaluate(el=>el.scrollTop);
@@ -79,6 +110,6 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.locator('[data-purpose]').first().evaluate(el=>el.click());await page.waitForFunction(()=>!purposeStarting);
   assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='grant').at(-1).args.minutes),8);
   assert.equal(await page.evaluate(()=>calls.filter(x=>['dismiss','stop','choose'].includes(x.action)).length),0);assert.deepEqual(errors,[]);
-  console.log('PASS: partial preset reorder, editor/button identity, focus/selection/scroll, nonblocking memo save, revision/no-op/sheet handling; deferred dispatch, success-only clearing, failure/retry, duplicate submit, newer edit, choice/cancel, repeated search, draft/scroll preservation and unlock reuse.');
+  console.log('PASS: unchanged unlock visibility/refresh keeps DOM/revision; changed data patches regions; explicit navigation re-acknowledges retained DOM; partial preset reorder, editor/button identity, focus/selection/scroll, nonblocking memo save, revision/no-op/sheet handling; deferred dispatch, success-only clearing, failure/retry, duplicate submit, newer edit, choice/cancel, repeated search, draft/scroll preservation and unlock reuse.');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

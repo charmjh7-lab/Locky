@@ -48,7 +48,7 @@ public final class MainActivity extends Activity {
             runOnUiThread(()->{rawExportWriting=false;rawExportStatus(resultMessage);});
         });
     }
-    @Override protected void onResume(){super.onResume();android.util.Log.i("LockyLifecycle","resume task="+getTaskId());host.resume();LockyApp.app.auth.foreground(true);Scheduler.schedule(this);if(GuardService.live!=null)GuardService.live.pauseForActivity();WebHost.refreshAll();if(!java.util.List.of("starting","checking","browser","returning","exchange","identity","saving").contains(LockyApp.app.auth.connection().optString("phase")))releaseLoginBrowser();}
+    @Override protected void onResume(){super.onResume();android.util.Log.i("LockyLifecycle","resume task="+getTaskId());host.resume();LockyApp.app.auth.foreground(true);Scheduler.schedule(this);if(GuardService.live!=null)GuardService.live.pauseForActivity();host.refresh();if(!java.util.List.of("starting","checking","browser","returning","exchange","identity","saving").contains(LockyApp.app.auth.connection().optString("phase")))releaseLoginBrowser();}
     @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(focused&&host!=null)host.resume();}
     @Override public void onConfigurationChanged(android.content.res.Configuration config){super.onConfigurationChanged(config);if(host!=null){host.applyTheme();host.resume();}}
     @Override protected void onPause(){LockyApp.app.auth.foreground(false);host.evaluate("remember()");host.pause();super.onPause();}
@@ -82,6 +82,6 @@ public final class MainActivity extends Activity {
         } catch(Exception e){launch.accept(null);}
     });}
     private String browserPackage;
-    void releaseLoginBrowser(){++browserGeneration;if(browserBound&&browserConnection!=null)try{unbindService(browserConnection);}catch(IllegalArgumentException ignored){}browserBound=false;browserConnection=null;browserPackage=null;LockyApp.app.authBrowser="";if(GuardService.live!=null)GuardService.live.policyChanged();}
+    void releaseLoginBrowser(){boolean changed=browserBound||browserConnection!=null||!LockyApp.app.authBrowser.isEmpty();++browserGeneration;if(browserBound&&browserConnection!=null)try{unbindService(browserConnection);}catch(IllegalArgumentException ignored){}browserBound=false;browserConnection=null;browserPackage=null;LockyApp.app.authBrowser="";if(changed&&GuardService.live!=null)GuardService.live.policyChanged();}
 
 }

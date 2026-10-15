@@ -389,7 +389,7 @@ public final class GuardService extends AccessibilityService {
     void addGateWindow(int type){
         WindowManager manager=managerFor(type);WindowManager.LayoutParams layout=gateLayout(type);
         manager.addView(overlayWindow,layout);gateWindow=manager;overlayLayout=layout;exposure=Exposure.WAITING;
-        WebHost.trace("window add accepted type="+type+" alpha=0 flags="+layout.flags);
+        WebHost.trace("window add accepted type="+type+" alpha=0 accelerated="+((layout.flags&WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED)!=0)+" flags="+layout.flags);
     }
     void removeGateWindow(String reason){
         if(overlayLayout==null)return;
@@ -403,10 +403,11 @@ public final class GuardService extends AccessibilityService {
         ensureGateWindow();revealOverlay();
     }
     WindowManager.LayoutParams gateLayout(int type){
-        WindowManager.LayoutParams p=new WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.MATCH_PARENT,type,WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE|WindowManager.LayoutParams.FLAG_SECURE,PixelFormat.OPAQUE);
+        WindowManager.LayoutParams p=new WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.MATCH_PARENT,type,WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE|WindowManager.LayoutParams.FLAG_SECURE|WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,PixelFormat.OPAQUE);
         // The primary-display SAW stays touchable/nonfocusable across keyguard teardown.
         // Android keeps it below keyguard; GateSurface also rejects all locked/unready input.
         if(type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)p.flags&=~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+        p.windowAnimations=0; // No Locky enter/show animation layered over keyguard.
         p.alpha=0;p.gravity=Gravity.TOP|Gravity.START;p.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;p.setTitle("Locky");return p;
     }
     boolean keyguardPlacementSafe(){

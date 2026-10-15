@@ -25,7 +25,7 @@ final class WebHost {
     // presentation, not proof of composition. didDraw is an observation, never an exposure gate.
     boolean retainedFrame; // Valid pixels survive a DOM revision, never document loss or detach.
     boolean frameReady,presentationActive,everRendered,loadFailed,renderingActive;int initialRetries;
-    boolean preparingStart;long startPreparation,observedDrawGeneration=-1;Boolean insetKeyboard;
+    boolean preparingStart;long startPreparation,observedDrawGeneration=-1,commitRequestedGeneration=-1;Boolean insetKeyboard;
     private Runnable initialWatch,visualWatch;int visualRetryCount;
     Runnable firstFrameCallback,frameAvailableCallback;
     // Bounded Logcat plus opt-in private recording. Never log user content or package names.
@@ -142,9 +142,8 @@ final class WebHost {
         boolean resumed=resumeEngine();
         if(resumed)redraw(); // A genuinely paused surface still needs the white-screen safeguard.
         if(frameReady){
-            // The warm buffer is valid. Only confirm Android presentation, without relayout
-            // or a new Chromium visual callback / resume / DOM navigation.
-            if(exposing&&!resumed)invalidateFrame();
+            // The validated document stays active. Policy unhide may reuse its buffer;
+            // do not force another draw/layout/Chromium callback to mark input active.
             return;
         }
         if(!ready){watchInitialLoad();return;}
@@ -204,6 +203,15 @@ final class WebHost {
         invalidateFrame();
     }
     void didDraw(WebView source){
+        // Diagnostic only: HWUI submission is stronger evidence than onDraw, but
+        // still does not establish SurfaceFlinger/OEM display composition.
+        if(!closed&&source==view&&tracing()&&Build.VERSION.SDK_INT>=29&&source.isHardwareAccelerated()
+            &&commitRequestedGeneration!=visualGeneration){
+            long generation=visualGeneration;commitRequestedGeneration=generation;
+            source.getViewTreeObserver().registerFrameCommitCallback(()->{
+                if(!closed&&source==view)hostTrace("frame-commit observed generation="+generation+" current="+visualGeneration+" display=unconfirmed");
+            });
+        }
         if(!closed&&source==view&&tracing()&&observedDrawGeneration!=visualGeneration){observedDrawGeneration=visualGeneration;hostTrace("onDraw observed generation="+visualGeneration+" presentationActive="+presentationActive+" frameReady="+frameReady);}
         if(closed||source!=view||!presentationActive||!frameReady||!root.isShown()||visualCompleted==visualGeneration)return;
         long generation=visualGeneration;String screen=renderedScreen;
@@ -243,12 +251,22 @@ final class WebHost {
     void createView(){
         if(closed)return;
         renderingActive=false;insetKeyboard=null;
-        view=new WebView(context){@Override protected void onDraw(Canvas canvas){super.onDraw(canvas);didDraw(this);}};
-        // Scope the compositor workaround to WebView; keep native controls/windows unchanged.
-        view.setLayerType(View.LAYER_TYPE_SOFTWARE,null);
+        view=new WebView(context){
+            @Override protected void onDraw(Canvas canvas){super.onDraw(canvas);didDraw(this);}
+            @Override protected void onWindowVisibilityChanged(int visibility){
+                super.onWindowVisibilityChanged(visibility);
+                hostTrace("window visibility observed="+visibility+" attached="+isAttachedToWindow()+" accelerated="+isHardwareAccelerated());
+            }
+        };
+        // The prepared overlay must submit through its accelerated window, rather
+        // than forcing a CPU bitmap redraw when keyguard unhides the surface.
+        // Keep the existing Activity workaround outside the unlock path.
+        if(!isOverlay)view.setLayerType(View.LAYER_TYPE_SOFTWARE,null);
         root.addView(view,0,new android.widget.FrameLayout.LayoutParams(-1,-1));
         if(isOverlay){view.setVisibility(View.INVISIBLE);if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);}
-        WebSettings s=view.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(false);s.setAllowFileAccess(false);s.setAllowContentAccess(false);s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);s.setMediaPlaybackRequiresUserGesture(true);s.setSupportMultipleWindows(false);applyTheme();
+        WebSettings s=view.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(false);s.setAllowFileAccess(false);s.setAllowContentAccess(false);s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);s.setMediaPlaybackRequiresUserGesture(true);s.setSupportMultipleWindows(false);
+        if(isOverlay)s.setOffscreenPreRaster(true); // One display-sized attached overlay, prepared behind keyguard.
+        applyTheme();
         WebViewAssetLoader loader=new WebViewAssetLoader.Builder().addPathHandler("/assets/",new WebViewAssetLoader.AssetsPathHandler(context)).build();
         view.setWebViewClient(new WebViewClient(){
             @Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){return loader.shouldInterceptRequest(r.getUrl());}
@@ -292,7 +310,8 @@ final class WebHost {
     }
     void evaluate(String js){WebView candidate=view;main.post(()->{if(!closed&&ready&&candidate==view&&(candidate.getParent()!=null||!isOverlay))candidate.evaluateJavascript(js,null);});}
     void close(){closed=true;ready=false;setPreparingStart(false);resetVisualState("close");main.removeCallbacksAndMessages(null);root.removeView(view);view.removeJavascriptInterface("Native");view.destroy();hosts.removeIf(r->r.get()==null||r.get()==this);}
-    static void refreshAll(){for(var r:hosts){WebHost h=r.get();if(h!=null)h.evaluate("refresh()");}}
+    void refresh(){evaluate("refresh()");}
+    static void refreshAll(){for(var r:hosts){WebHost h=r.get();if(h!=null)h.refresh();}}
     static JSONObject dictionaryLaunched(){try{return new JSONObject().put("launched",true);}catch(JSONException e){throw new IllegalStateException(e);}}
     void answer(String id,Object value,String error){evaluate("receive("+JSONObject.quote(id)+","+(value==null?"null":value.toString())+","+(error==null?"null":JSONObject.quote(error))+")");}
     final class Bridge {
@@ -387,6 +406,10 @@ final class WebHost {
             case "permission":permission(a.getString("name"));break;
             default:throw new IllegalArgumentException("지원하지 않는 요청입니다.");
         }
+        // Real shared-data writes, rather than Activity/visibility callbacks,
+        // notify the other document. Start pages apply only changed regions.
+        if(Set.of("purpose","removePurpose","saveNote","deleteNote").contains(action))
+            for(var ref:hosts){WebHost peer=ref.get();if(peer!=null&&peer!=this)peer.refresh();}
         answer(id,out,null);
     }catch(Exception e){answer(id,null,ChatGPT.safeError(e));}}
     JSONObject resolvePurpose(JSONObject a) throws Exception {if(a.has("label"))return store.purpose(a,a.optString("scope","phone"));JSONArray p=store.rows("SELECT * FROM purposes WHERE id=?",a.getString("id"));if(p.length()==0)throw new IllegalStateException("사용 목적을 다시 선택해 주세요.");return p.getJSONObject(0);}

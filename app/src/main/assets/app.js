@@ -10,7 +10,7 @@ let seq=0,requests=new Map(),state=null,screen='home',selected='',minutes=5,chat
 let reshufflePurposeOnRender=true,purposePositions=new Map(),previousPurposePositions=new Map();
 let normalHeight=0,normalWidth=0;
 let quickQuestionDraft='',dictionaryWordDraft='';
-let nativeNavigation=0,domRevision=0;
+let nativeNavigation=0,domRevision=0,renderedRoute='',startNoteSnapshot=null;
 const quickTurns=new Map();
 let nativeKeyboard=false,purposeScope='phone',restored=false,briefSeq=0,settingsTimer=null;
 let purposeStarting=false,briefData=null;const briefSort={apps:'desc',events:'desc',timeline:'desc'};
@@ -29,11 +29,12 @@ function header(back=false,title='Locky'){return `<div class="top">${back?`<butt
 function nav(){if(state?.overlay||['chat',...gated,'unlock'].includes(screen))return '';return `<div class="bottom"><nav class="nav" aria-label="주 메뉴">${[['home','home','시작'],['chats','chat','대화'],['brief','chart','브리핑'],['settings','settings','설정']].map(([s,i,l])=>`<button data-nav="${s}" class="${screen===s?'active':''}">${icon(i)}<span>${l}</span></button>`).join('')}</nav></div>`;}
 function startPolling(){clearInterval(poll);poll=null;if(['chat','chats','timer',...gated].includes(screen)&&document.visibilityState!=='hidden')poll=setInterval(()=>refresh(),1000);}
 function remember(){if(state&&!state.overlay&&!gated.includes(screen)&&screen!=='unlock')safe(()=>api('remember',{screen,chat:chatId,note:noteId}));}
-async function navigate(s,navigation=null){const local=navigation===null;if(local)navigation=nativeNavigation;if(['home','unlock','app'].includes(s))reshufflePurposeOnRender=true;if(settingsTimer&&screen==='settings'){clearTimeout(settingsTimer);settingsTimer=null;await safe(saveReminders);}await flushMemo();if(navigation<nativeNavigation)return;nativeNavigation=navigation;if(local&&state?.overlay&&['chat','chats','unlock'].includes(s)&&s!==screen)presentScreen(s);closeSheet();screen=s;selected='';minutes=5;document.body.classList.toggle('start-screen',starts.includes(screen));window.scrollTo(0,0);await refresh(true);startPolling();remember();if(state&&['notes','chat','chats'].includes(s))safe(()=>api('utility',{name:s==='notes'?'메모':'ChatGPT'}));}
+async function navigate(s,navigation=null){const local=navigation===null;if(local)navigation=nativeNavigation;if(['home','unlock','app'].includes(s))reshufflePurposeOnRender=true;if(settingsTimer&&screen==='settings'){clearTimeout(settingsTimer);settingsTimer=null;await safe(saveReminders);}await flushMemo();if(navigation<nativeNavigation)return;const retainedNavigation=renderedRoute===s&&navigation!==nativeNavigation;nativeNavigation=navigation;if(local&&state?.overlay&&['chat','chats','unlock'].includes(s)&&s!==screen)presentScreen(s);closeSheet();screen=s;selected='';minutes=5;document.body.classList.toggle('start-screen',starts.includes(screen));window.scrollTo(0,0);const revision=domRevision;await refresh(true);if(retainedNavigation&&navigation===nativeNavigation&&renderedRoute===s&&revision===domRevision)signalRendered();startPolling();remember();if(state&&['notes','chat','chats'].includes(s))safe(()=>api('utility',{name:s==='notes'?'메모':'ChatGPT'}));}
 async function refresh(force=false){if(refreshing){if(force)refreshAgain=true;return;}refreshing=true;try{
  if(!force&&state&&['chat','timer',...gated].includes(screen))Object.assign(state,await api('tick'));else state=await api('state');
  for(const turn of quickTurns.values())if(!state.chats.some(c=>c.id===turn.id))state.chats.unshift({id:turn.id,title:turn.text.slice(0,30)});
  if(!restored){restored=true;chatId=chatId||state.savedChat||'';noteId=state.savedNote||noteId;}
+ if(['home','unlock'].includes(screen)&&renderedRoute===screen&&$('.start-page')){updateStart();return;}
  if(!force){if(screen==='chat'){await renderMessages(false);return;}if(screen==='timer'||gated.includes(screen)){updateTimers();return;}if(document.activeElement?.matches('input,textarea,select')||memoPending||memoSaving)return;if(screen==='chats'){const c=$('#connection');if(c){c.innerHTML=connectionHTML();bind(c);}return;}}
  const oldScroll=window.scrollY;render();if(!force)window.scrollTo(0,oldScroll);if(screen==='brief')loadBrief();if(screen==='apps')loadApps();if(screen==='usageApps')loadUsageApps();if(screen==='chat')renderMessages(force);
  }catch(e){toast(e.message);}finally{refreshing=false;if(refreshAgain){refreshAgain=false;refresh(true);}}}
@@ -42,7 +43,49 @@ function presentScreen(name){const previous=nativeNavigation++;Native.request('0
 function signalRendered(){Native.request('0','rendered',JSON.stringify({screen,navigation:nativeNavigation,revision:domRevision}));}
 function nativeRestore(){if($('#app')?.childElementCount)signalRendered();else return refresh(true);}
 function render(){const previousPresetScroll=$('.preset-scroll')?.scrollTop||0;if($('#quickQuestion'))quickQuestionDraft=$('#quickQuestion').value;if($('#word'))dictionaryWordDraft=$('#word').value;let html='';switch(screen){case 'unlock':case 'home':html=home();break;case 'setup':html=setup();break;case 'settings':html=settings();break;case 'apps':html=appsPage();break;case 'usageApps':html=usageAppsPage();break;case 'app':case 'renew':case 'blocked':html=gate();break;case 'timer':html=timer();break;case 'notes':html=notesPage();break;case 'chats':html=chats();break;case 'chat':html=chat();break;case 'brief':html=brief();break;case 'week':briefDays=7;screen='brief';html=brief();break;default:screen='home';html=home();}
- document.body.classList.toggle('start-screen',starts.includes(screen));$('#app').innerHTML=html+nav();bind();if($('.preset-scroll'))$('.preset-scroll').scrollTop=previousPresetScroll;viewportChanged();if(screen==='chat'&&quickTurns.has(chatId))applyMessages(quickMessages(quickTurns.get(chatId)),true);++domRevision;signalRendered();}
+ document.body.classList.toggle('start-screen',starts.includes(screen));$('#app').innerHTML=html+nav();bind();if($('.preset-scroll'))$('.preset-scroll').scrollTop=previousPresetScroll;viewportChanged();if(screen==='chat'&&quickTurns.has(chatId))applyMessages(quickMessages(quickTurns.get(chatId)),true);renderedRoute=screen;if(['home','unlock'].includes(screen))startNoteSnapshot=noteSnapshot();++domRevision;signalRendered();}
+// Refresh data without discarding the prepared start document or its editors.
+function noteSnapshot(){const n=currentNote();return {note:{id:n.id,title:n.title,body:n.body,checks:n.checks||'[]',mode:n.mode},count:state.notes.length};}
+function updateStart(){
+ let changed=false;
+ const pill=$('.start-page .top .pill'),label=state.free?'자유 시간':'집중 시간';
+ if(pill&&pill.textContent!==label){pill.textContent=label;changed=true;}
+ const grid=$('.start-purposes .reason-grid');
+ if(grid){
+  const template=document.createElement('template');template.innerHTML=purposeGrid(false);
+  const wanted=[...template.content.querySelectorAll('.purpose-item')];
+  const existing=new Map([...grid.children].map(el=>[el.querySelector('[data-purpose]')?.dataset.purpose,el]));
+  for(let i=0;i<wanted.length;i++){
+   const candidate=wanted[i],id=candidate.querySelector('[data-purpose]').dataset.purpose;
+   let node=existing.get(id);existing.delete(id);
+   if(!node){node=candidate;bind(node);}
+   else if(node.innerHTML!==candidate.innerHTML){node.innerHTML=candidate.innerHTML;bind(node);changed=true;}
+   if(grid.children[i]!==node){grid.insertBefore(node,grid.children[i]||null);changed=true;}
+  }
+  for(const node of existing.values()){node.remove();changed=true;}
+ }
+ // An unchanged note is not a reason to replace an input node. Never overwrite
+ // a local pending edit, including a check-list save captured during screen-off.
+ const note=$('.mini-note'),editing=note?.contains(document.activeElement);
+ if(note&&!editing&&!memoPending&&!memoSaving){
+  const snapshot=noteSnapshot(),old=startNoteSnapshot?.note,current=snapshot.note;
+  const content=n=>JSON.stringify(n&&[n.id,n.title,n.body,n.checks||'[]',n.mode]);
+  if(content(old)!==content(current)||startNoteSnapshot?.count!==snapshot.count){
+   if(old?.id===current.id&&old?.mode===current.mode&&current.mode!=='check'&&startNoteSnapshot?.count===snapshot.count){
+    const body=$('#noteBody'),heading=note.querySelector('.note-heading');
+    if(body&&body.value!==current.body){body.value=current.body||'';changed=true;}
+    if(heading&&old.title!==current.title){heading.innerHTML=icon('note')+' '+esc(current.title||'메모');changed=true;}
+   }else{note.innerHTML=memoHTML(false);bind(note);changed=true;}
+  }
+  startNoteSnapshot=snapshot;
+ }
+ const footer=$('.start-footer'),permission=footer?.querySelector('[data-nav="setup"]');
+ if(state.status.accessibility&&permission){permission.remove();changed=true;}
+ else if(!state.status.accessibility&&footer&&!permission){
+  const button=document.createElement('button');button.className='textbtn';button.dataset.nav='setup';button.textContent='자동 관리를 위한 권한 설정';footer.prepend(button);bind(footer);changed=true;
+ }
+ if(changed){viewportChanged();++domRevision;signalRendered();}
+}
 function dismissButton(){return `<button class="dismiss" data-act="dismiss">${icon('power')}그냥 끄기</button>`;}
 function home(){return `<main class="start-page ${state.overlay?'overlay-start':''}">${header(false,state.overlay?'휴대폰 시작':'Locky')}<div class="utility-space"><div class="quick-tools"><section class="mini-note">${memoHTML(false)}</section><section class="quick-chat"><div class="mini-head"><button data-act="openChat">${icon('chat')} ChatGPT</button><button class="iconbtn" data-act="openChat" aria-label="대화 목록">${icon('expand')}</button></div><textarea id="quickQuestion" placeholder="바로 질문하기" aria-label="바로 질문하기" maxlength="20000">${esc(quickQuestionDraft)}</textarea><button class="quick-send" data-act="quickSend" aria-label="질문 전송">${icon('send')}</button></section></div><form id="dictionaryForm" class="dictionary-bar"><button type="button" data-act="dictionaryChoice" aria-label="사전 선택">${icon('book')}</button><input id="word" value="${esc(dictionaryWordDraft)}" placeholder="사전에서 찾을 단어" aria-label="찾을 단어"><button type="submit" aria-label="사전 검색">${icon('search')}</button></form></div><section class="start-purposes" aria-labelledby="purposeQuestion"><div class="purpose-intro"><div class="sectionhead"><h2 id="purposeQuestion">무엇을 하려고 열었나요?</h2><button class="textbtn purpose-edit" data-act="managePurposes" aria-label="시작 목적 편집">편집</button></div></div>${purposeGrid(false)}</section><footer class="start-footer">${!state.status.accessibility?'<button class="textbtn" data-nav="setup">자동 관리를 위한 권한 설정</button>':''}${dismissButton()}</footer></main>`;}
 function prepareStart(){
@@ -585,7 +628,7 @@ function bind(root=$('#app')){
   if($('#model'))$('#model').onchange=()=>safe(()=>api('settings',{model:$('#model').value}));
 }
 function back(){if($('#sheet').innerHTML){closeSheet();return;}if(screen==='chat'){navigate('chats');return;}if(gated.includes(screen)){api('stop');return;}if(state?.overlay){navigate(state.gate.mode||'unlock');return;}if(screen==='apps'||screen==='usageApps'){navigate('settings');return;}if(screen==='home'||screen==='setup'){api('exit');return;}navigate('home');}
-window.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'){clearInterval(poll);poll=null;safe(flushMemo);remember();}else{startPolling();refresh();}});
+window.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'){clearInterval(poll);poll=null;safe(flushMemo);remember();}else{startPolling();if(screen==='unlock'&&renderedRoute==='unlock'&&$('#app')?.childElementCount)return;refresh();}});
 window.addEventListener('resize',()=>viewportChanged(nativeKeyboard));window.visualViewport?.addEventListener('resize',()=>viewportChanged(nativeKeyboard));window.visualViewport?.addEventListener('scroll',()=>viewportChanged());
 document.addEventListener('focusin',()=>{if(nativeKeyboard)viewportChanged(true);});
 

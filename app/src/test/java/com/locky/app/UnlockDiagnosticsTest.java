@@ -58,6 +58,24 @@ public class UnlockDiagnosticsTest {
         recorder.resumeCapture();recorder.confirmed(2038);recorder.record("window focus observed=true after long lock");
         assertEquals(1,recorder.status().getInt("cycles"));assertEquals(1,recorder.status().getInt("unlocks"));assertTrue(recorder.text().contains("after long lock"));
     }
+    @Test public void noisyObservationsCannotEvictPreparationWindowAndRenderEvidence() throws Exception {
+        recorder.setEnabled(true);recorder.begin();
+        String[] critical={"prepare-begin", "window add accepted type=2038", "alpha requested 0.0->1.0", "state requested WAITING->BEHIND_KEYGUARD input=blocked", "web=overlay dom changed=true revision=4"};
+        for(String event:critical)recorder.record(event);
+        for(int i=0;i<1000;i++){
+            recorder.record("keyguard window observed id=51 focused=true active=true");
+            recorder.record("reveal requested state=BEHIND_KEYGUARD type=2038 frameReady=true");
+            recorder.record("accessibility observed event=32 changes="+i+" window=51");
+        }
+        recorder.confirmed(2038);recorder.record("state requested BEHIND_KEYGUARD->INTERACTIVE input=TOUCH");
+        recorder.record("web=overlay view-draw observed generation=4");recorder.transitionEnded("stable-application-focus");recorder.flush();
+        String text=new UnlockDiagnostics(context).text();
+        for(String event:critical)assertTrue(text.contains(event));
+        assertTrue(text.contains("BEHIND_KEYGUARD->INTERACTIVE"));assertTrue(text.contains("view-draw observed"));
+        assertTrue(text.contains("stable-application-focus"));assertTrue(text.contains("동일 관찰 추가"));
+        assertTrue(text.contains("용량 초과 핵심 이벤트 생략 0"));
+        assertTrue(Files.size(recorder.file.getBaseFile().toPath())<=UnlockDiagnostics.MAX_BYTES);
+    }
     @Test public void basicLastWindowAndFailureStatusDoesNotRequireDiagnosticRecording() throws Exception {
         recorder.confirmed(2038);recorder.failure("add",new SecurityException("secret"));
         assertFalse(recorder.enabled());assertEquals("application",recorder.windowStatus().getString("lastUnlockWindow"));

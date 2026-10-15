@@ -24,6 +24,7 @@ final class UnlockDiagnostics {
     final Context context;final SharedPreferences prefs;final AtomicFile file;
     private final ScheduledExecutorService disk=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"LockyUnlockStore");t.setDaemon(true);return t;});
     private final List<JSONObject> cycles=new ArrayList<>();
+    private final Map<String,JSONObject> observations=new HashMap<>();
     private JSONObject current;private long origin,until;private int bytes;
     private boolean enabled;private ScheduledFuture<?> pending;private String storageError="";
     UnlockDiagnostics(Context c){
@@ -46,7 +47,7 @@ final class UnlockDiagnostics {
         if(!enabled)return;
         try{
             if(current!=null){current.put("captureEnd",System.currentTimeMillis());current.put("captureEndReason","next-screen-off");}
-            origin=SystemClock.elapsedRealtime();until=origin+30_000;
+            observations.clear();origin=SystemClock.elapsedRealtime();until=origin+30_000;
             current=new JSONObject().put("start",System.currentTimeMillis()).put("originElapsed",origin).put("events",new JSONArray()).put("dropped",0).put("app",BuildConfig.VERSION_NAME).put("android",Build.VERSION.RELEASE).put("sdk",Build.VERSION.SDK_INT).put("model",Build.MANUFACTURER+" "+Build.MODEL);
             cycles.add(current);trim();record("screen-off observed");
         }catch(JSONException ignored){}
@@ -81,24 +82,66 @@ final class UnlockDiagnostics {
             if(counter!=null)current.put(counter,current.optInt(counter)+1);
             boolean stateChanged=false;
             if(text.startsWith("state ")){JSONArray states=current.optJSONArray("states");if(states==null){states=new JSONArray();current.put("states",states);}if(states.length()<40){states.put(text.substring(6));stateChanged=true;}}
-            current.getJSONArray("events").put(row);bytes+=row.toString().getBytes(StandardCharsets.UTF_8).length+1;
+            // Compress repeated observations by source (not only adjacent rows).
+            // Counters above still count every request; changes remain chronological.
+            String key=observationKey(text);JSONObject prior=key==null?null:observations.get(key);
+            if(prior!=null&&text.equals(prior.optString("event"))){
+                bytes-=rowBytes(prior);prior.put("repeats",prior.optInt("repeats")+1).put("lastAt",row.getLong("at")).put("lastElapsed",row.getLong("elapsed"));bytes+=rowBytes(prior);
+                current.put("compressed",current.optInt("compressed")+1);trim();schedule();return;
+            }
+            if(key!=null){if(observations.size()>=64)observations.clear();observations.put(key,row);}
+            current.getJSONArray("events").put(row);bytes+=rowBytes(row);
             JSONArray events=current.getJSONArray("events");
-            if(events.length()>MAX_EVENTS){bytes-=events.getJSONObject(20).toString().getBytes(StandardCharsets.UTF_8).length+1;events.remove(20);current.put("dropped",current.optInt("dropped")+1);}
+            if(events.length()>MAX_EVENTS)evict(current);
             if(stateChanged)recount();
             trim();schedule();
         }catch(JSONException ignored){}
+    }
+    private static String observationKey(String text){
+        if(text.startsWith("keyguard window observed id=")||text.startsWith("system window observed id=")){
+            int end=text.indexOf(' ',text.indexOf("id=")+3);return end<0?text:text.substring(0,end);
+        }
+        if(text.startsWith("reveal requested"))return "reveal";
+        if(text.startsWith("system decision="))return "decision";
+        if(text.equals("duplicate unlock ignored")||text.startsWith("accessibility observed"))return text;
+        return null;
+    }
+    private static int priority(String text){
+        if(observationKey(text)!=null)return 0;
+        if(text.startsWith("web=")&&(text.contains("dom ")||text.contains("Draw observed")||text.contains("view-draw")||text.contains("frame-commit")||text.contains("visual ")||text.contains("visual-ready")||text.contains("frameReady=")||text.contains("visibility")||text.contains("attach")||text.contains("detach")||text.contains("recovery")))return 2;
+        if(text.startsWith("window ")||text.startsWith("alpha ")||text.contains("visibility requested")||text.startsWith("state ")||text.startsWith("input ")||text.startsWith("prepare-")||text.startsWith("unlock")||text.startsWith("keyguard observed")||text.contains("failure")||text.startsWith("fallback"))return 2;
+        return 1;
+    }
+    private static int rowBytes(JSONObject row){return row.toString().getBytes(StandardCharsets.UTF_8).length+1;}
+    private void evict(JSONObject cycle) throws JSONException {
+        JSONArray events=cycle.getJSONArray("events");if(events.length()==0)return;
+        int index=-1,best=3;
+        for(int i=0;i<events.length();i++){
+            int rank=priority(events.getJSONObject(i).optString("event"));
+            // Keep the first preparation evidence even if critical-only overflow occurs.
+            if(rank<best&&(i>=12||rank<2)){best=rank;index=i;if(rank==0)break;}
+        }
+        if(index<0)index=events.length()>12?12:0;
+        JSONObject removed=events.getJSONObject(index);bytes-=rowBytes(removed);events.remove(index);
+        observations.values().removeIf(value->value==removed);
+        cycle.put("dropped",cycle.optInt("dropped")+1);
+        if(best==2)cycle.put("criticalDropped",cycle.optInt("criticalDropped")+1);
     }
     private void recount(){bytes=0;for(JSONObject cycle:cycles)bytes+=cycle.toString().getBytes(StandardCharsets.UTF_8).length+1;}
     private void trim(){
         while(cycles.size()>MAX_CYCLES){cycles.remove(0);recount();}
         while(bytes>MAX_BYTES-4096&&cycles.size()>1){cycles.remove(0);recount();}
+        if(bytes>MAX_BYTES-4096&&!cycles.isEmpty())try{
+            JSONObject cycle=cycles.get(0);
+            while(bytes>MAX_BYTES-4096&&cycle.getJSONArray("events").length()>0)evict(cycle);
+        }catch(JSONException ignored){}
     }
     private synchronized String encode(){
         try{
             String data=new JSONObject().put("schema",1).put("cycles",new JSONArray(cycles)).toString();
             while(data.getBytes(StandardCharsets.UTF_8).length>MAX_BYTES&&!cycles.isEmpty()){
                 if(cycles.size()>1)cycles.remove(0);
-                else {JSONObject c=cycles.get(0);JSONArray events=c.getJSONArray("events");if(events.length()==0)break;events.remove(events.length()>20?20:0);c.put("dropped",c.optInt("dropped")+1);}
+                else {JSONObject c=cycles.get(0);if(c.getJSONArray("events").length()==0)break;evict(c);}
                 recount();data=new JSONObject().put("schema",1).put("cycles",new JSONArray(cycles)).toString();
             }
             return data;
@@ -112,7 +155,7 @@ final class UnlockDiagnostics {
         catch(IOException e){if(out!=null)file.failWrite(out);synchronized(this){storageError="진단 기록을 저장하지 못했습니다. 다시 내보내기를 시도해 주세요.";}}
     }
     void clear() throws Exception {
-        synchronized(this){cycles.clear();current=null;bytes=0;if(pending!=null){pending.cancel(false);pending=null;}}
+        synchronized(this){cycles.clear();observations.clear();current=null;bytes=0;if(pending!=null){pending.cancel(false);pending=null;}}
         // Runs on the bridge worker, never on the display thread. Serial ordering prevents old writes returning after deletion.
         disk.submit(()->{file.delete();synchronized(this){storageError="";}}).get(5,TimeUnit.SECONDS);
     }
@@ -128,7 +171,7 @@ final class UnlockDiagnostics {
     }
     synchronized String text(){
         StringBuilder out=new StringBuilder("Locky 잠금 해제 진단 · "+BuildConfig.VERSION_NAME+"\nAndroid "+Build.VERSION.RELEASE+" (SDK "+Build.VERSION.SDK_INT+") · "+Build.MANUFACTURER+" "+Build.MODEL+"\n내보낸 시각: "+timestamp(System.currentTimeMillis())+"\n");
-        out.append("요청(requested)과 앱/Android 콜백(observed)을 구분합니다. update accepted는 호출 성공이며 실제 화면 합성 완료를 뜻하지 않습니다. View draw/visual-ready도 합성 완료 증거가 아닙니다.\n메모·질문·답변·검색어·화면 텍스트는 수집하지 않습니다.\n");
+        out.append("요청(requested)과 앱/Android 콜백(observed)을 구분합니다. update accepted는 호출 성공이며 실제 화면 합성 완료를 뜻하지 않습니다. View draw/visual-ready 및 HWUI frame-commit(버퍼 제출)도 실제 디스플레이 합성 완료 증거가 아닙니다.\n메모·질문·답변·검색어·화면 텍스트는 수집하지 않습니다.\n");
         out.append("진단 기록: ").append(enabled?"켜짐":"꺼짐").append(" · 보관 ").append(cycles.size()).append("회 (최대 5회/약 200KB)\n");
         if(!storageError.isEmpty())out.append(storageError).append('\n');
         if(cycles.isEmpty())out.append("기록이 없습니다. 진단을 켠 뒤 화면을 끄고 잠금을 해제해 주세요.\n");
@@ -141,8 +184,9 @@ final class UnlockDiagnostics {
             out.append("기록 종료: ").append(stamp(c,"captureEnd")).append(" · 이유: ").append(c.optString("captureEndReason","기록 중/마지막 관찰 이후 대기")).append('\n');
             JSONArray rows=c.optJSONArray("events");if(rows==null)continue;
             out.append("창 생성 ").append(c.optInt("adds")).append(" / 제거 ").append(c.optInt("removes")).append(" / 갱신 요청 ").append(c.optInt("updates")).append(" / alpha 변경 요청 ").append(c.optInt("alphas")).append(" / 생략된 과다 이벤트 ").append(c.optInt("dropped")).append('\n');
+            out.append("중복 관찰 압축 ").append(c.optInt("compressed")).append(" / 용량 초과 핵심 이벤트 생략 ").append(c.optInt("criticalDropped")).append('\n');
             out.append("상태 순서: ").append(c.optJSONArray("states")==null?"[]":c.optJSONArray("states").toString()).append('\n');
-            for(int i=0;i<rows.length();i++){JSONObject r=rows.optJSONObject(i);out.append(timestamp(r.optLong("at"))).append(" +").append(r.optLong("elapsed")).append("ms ").append(r.optString("event")).append('\n');}
+            for(int i=0;i<rows.length();i++){JSONObject r=rows.optJSONObject(i);out.append(timestamp(r.optLong("at"))).append(" +").append(r.optLong("elapsed")).append("ms ").append(r.optString("event"));if(r.optInt("repeats")>0)out.append(" [동일 관찰 추가 ").append(r.optInt("repeats")).append("회 · 마지막 +").append(r.optLong("lastElapsed")).append("ms]");out.append('\n');}
         }
         return out.toString();
     }

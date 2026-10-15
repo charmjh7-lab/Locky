@@ -167,6 +167,8 @@ public class GateRestoreTest {
         g.interactive=false;g.waitingUnlock=true;g.prepareUnlock();g.overlay.frameReady=true;g.revealOverlay();
         assertEquals(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,g.overlayLayout.type);assertEquals(1f,g.overlayLayout.alpha,0);
         assertNull(g.overlayLayout.token);
+        assertTrue((g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED)!=0);
+        assertEquals(0,g.overlayLayout.windowAnimations);
         int passive=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
         assertEquals(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,g.overlayLayout.flags&passive);assertFalse(g.overlay.presentationActive);
         assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS,g.overlayWindow.getImportantForAccessibility());
