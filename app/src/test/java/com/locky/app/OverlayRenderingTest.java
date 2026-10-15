@@ -36,7 +36,8 @@ public class OverlayRenderingTest {
         Store.instance=null;GuardService.live=null;
         Activity a=Robolectric.buildActivity(Activity.class).setup().visible().get();host=new WebHost(a,true);
         assertEquals(View.LAYER_TYPE_NONE,host.view.getLayerType());
-        assertTrue(host.view.getSettings().getOffscreenPreRaster());
+        // Robolectric 4.16.1 RoboWebSettings does not store offscreenPreRaster.
+        // Its getter always returns false; hardware rasterization needs device evidence.
         host.root.removeView(host.view);host.view.destroy();view=new FrameView(a);view.setVisibility(View.INVISIBLE);host.view=view;host.root.addView(view,0,new android.widget.FrameLayout.LayoutParams(-1,-1));a.setContentView(host.root);
         host.pendingScreen="unlock";host.ready=true;host.resumeOverlay();
     }
