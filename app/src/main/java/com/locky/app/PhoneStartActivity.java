@@ -25,7 +25,7 @@ public final class PhoneStartActivity extends Activity {
         if(Build.VERSION.SDK_INT>=27){setShowWhenLocked(false);setTurnScreenOn(false);}
         getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(UiTheme.background(this)));
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(),false);
-        cycle=saved==null?getIntent().getLongExtra("cycle",0):saved.getLong("cycle");
+        cycle=Math.max(getIntent().getLongExtra("cycle",0),saved==null?0:saved.getLong("cycle"));
         chosen=saved!=null&&saved.getBoolean("chosen");
         host=new WebHost(this,WebHost.Role.PHONE_START);setContentView(host.root);
         JSONObject session=host.phoneSession();

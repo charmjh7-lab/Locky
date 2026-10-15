@@ -663,7 +663,7 @@ function bind(root=$('#app')){
   if($('#model'))$('#model').onchange=()=>safe(()=>api('settings',{model:$('#model').value}));
 }
 function back(){if($('#sheet').innerHTML){closeSheet();return;}if(screen==='chat'){navigate(chatReturn||'chats');return;}if(screen==='chats'){navigate(chatsReturn||'home');return;}if(gated.includes(screen)){api('stop');return;}if(state?.role==='PHONE_START'){if(screen!=='unlock')navigate('unlock');return;}if(state?.overlay){navigate(state.gate.mode||'app');return;}if(screen==='apps'||screen==='usageApps'){navigate('settings');return;}if(screen==='home'||screen==='setup'){api('exit');return;}navigate('home');}
-window.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'){clearInterval(poll);poll=null;safe(flushMemo);remember();}else{startPolling();if(screen==='unlock'&&renderedRoute==='unlock'&&$('#app')?.childElementCount)return;refresh();}});
+window.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'){clearInterval(poll);poll=null;safe(flushMemo);remember();}else{startPolling();if((state?.role==='PHONE_START'||screen==='unlock')&&$('#app')?.childElementCount)return;refresh();}});
 window.addEventListener('resize',()=>viewportChanged(nativeKeyboard));window.visualViewport?.addEventListener('resize',()=>viewportChanged(nativeKeyboard));window.visualViewport?.addEventListener('scroll',()=>viewportChanged());
 document.addEventListener('focusin',()=>{if(nativeKeyboard)viewportChanged(true);});
 

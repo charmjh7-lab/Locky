@@ -179,9 +179,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.2.8 · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
+          if [ "$GITHUB_REF_NAME" = "refactor/phone-start-activity-20261016" ]; then
+            gh release create "phone-start-preview-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.3.0 · PhoneStart Activity preview ${GITHUB_RUN_NUMBER}" --notes-file scripts/phone-start-release-notes.md --prerelease --latest=false
+          else
+            gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.2.8 · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
+          fi
       - name: Keep three successful automatic releases
-        if: ${{ success() && needs.ui.result == 'success' }}
+        if: ${{ success() && needs.ui.result == 'success' && github.ref == 'refs/heads/main' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/prune-releases.py
