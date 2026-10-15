@@ -61,7 +61,7 @@ public class RawExportTest {
         File target=File.createTempFile("locky-diagnostic-",".txt",activity.getCacheDir());Uri uri=Uri.parse("content://locky-export/document/diagnostic");
         Shadows.shadowOf(activity.getContentResolver()).registerOutputStream(uri,new FileOutputStream(target));
         activity.onActivityResult(picker.requestCode,Activity.RESULT_OK,new Intent().setData(uri));
-        awaitStatus("잠금 해제 진단 파일을 저장했습니다.");assertEquals(text,Files.readString(target.toPath(),StandardCharsets.UTF_8));target.delete();
+        awaitStatus("잠금 해제 진단 파일을 저장했습니다.");assertEquals(text,new String(Files.readAllBytes(target.toPath()),StandardCharsets.UTF_8));target.delete();
     }
     @Test public void repeatedRequestsDoNotReplacePendingExportAndCancelCleansBothStages() throws Exception {
         String first=RawExport.stage(activity,"{\"first\":1}"),second=RawExport.stage(activity,"{\"second\":2}");
