@@ -45,7 +45,7 @@ final class WebHost {
             dismiss.setOnClickListener(v->{GuardService g=GuardService.live;if(g!=null){if("unlock".equals(g.gate))g.dismissStart();else g.stopApp();}});
             loadingView=waiting;root.addView(waiting,new android.widget.FrameLayout.LayoutParams(-1,-1));
         }else loadingView=null;
-        createView();syncTheme();
+        createView();
     }
     boolean isDarkTheme(){return (context.getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK)==android.content.res.Configuration.UI_MODE_NIGHT_YES;}
     int themeBackground(){return isDarkTheme()?Color.rgb(16,24,23):Color.rgb(246,247,244);}
