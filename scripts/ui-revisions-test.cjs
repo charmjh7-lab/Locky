@@ -54,17 +54,24 @@ const briefing={days:1,date:'2026-10-14',start:1,total:660000,unlocks:2,aimless:
  assert(large.directBottom<=large.footerTop&&large.listContent>large.listHeight&&large.footerBottom<=large.height&&large.scroll<=large.height,JSON.stringify(large));
  assert.equal(large.background,'rgb(16, 23, 20)');
  await page.evaluate(()=>{document.documentElement.style.fontSize='';});
+ await page.setViewportSize({width:390,height:780});
+ await page.evaluate(()=>{screen='home';state.overlay=true;render();});
+ await page.waitForTimeout(50);
+ const toolsBefore=await page.locator('.quick-tools').boundingBox();
+ await page.locator('#quickQuestion').focus();
+ await page.evaluate(()=>insetsChanged(true));
+ await page.waitForTimeout(30);
  await page.setViewportSize({width:390,height:380});
- await page.evaluate(()=>{screen='home';state.overlay=true;render();insetsChanged(true);});
  await page.waitForTimeout(50);
  await page.locator('#quickQuestion').fill('키보드 중 질문 초안');
  await page.evaluate(()=>themeChanged(false));
  assert.equal(await page.locator('#quickQuestion').inputValue(),'키보드 중 질문 초안');
- const ime=await page.locator('.dismiss').boundingBox();assert(ime.y>=0&&ime.y+ime.height<=380,JSON.stringify(ime));
+ const ime=await page.locator('.dismiss').boundingBox();assert(ime.y>=380,JSON.stringify(ime));
+ assert(Math.abs((await page.locator('.quick-tools').boundingBox()).height-toolsBefore.height)<1);
  await page.locator('[data-act=direct]').click();await page.locator('#purposeLabel').fill('짧은 창에서 직접 입력');
  const save=await page.locator('#savePurpose').boundingBox();assert(save.y>=0&&save.y+save.height<=380,JSON.stringify(save));
  await page.locator('[data-act=closeSheet]').click();
- await page.evaluate(()=>{insetsChanged(false);delete document.documentElement.dataset.theme;});
+ await page.setViewportSize({width:390,height:780});await page.evaluate(()=>{insetsChanged(false);delete document.documentElement.dataset.theme;});
  await page.emulateMedia({colorScheme:'light'});
  await page.evaluate(()=>{screen='settings';render();});
  assert.equal(await page.locator('#themeMode').inputValue(),'system');
@@ -123,7 +130,7 @@ const briefing={days:1,date:'2026-10-14',start:1,total:660000,unlocks:2,aimless:
   assert.equal(await page.locator('.chat-md-link').count(),0);
   assert.equal(await page.locator('.inline-reference').count(),1);
   const visible=await page.locator('.message').innerText();assert(!visible.includes('edaily.co.kr')&&!visible.includes('출처')&&!visible.includes('(')&&!visible.includes(')'),visible);
-  const before=await page.evaluate(()=>({height:document.documentElement.scrollHeight,y:window.scrollY}));await page.locator('.inline-reference').click();assert.equal(await page.locator('.chat-source-item:visible').innerText(),'1\n기사 제목');const after=await page.evaluate(()=>({height:document.documentElement.scrollHeight,y:window.scrollY}));assert(Math.abs(after.height-before.height)<2&&Math.abs(after.y-before.y)<2,'Citation shifted: '+JSON.stringify({before,after}));
+  const before=await page.evaluate(()=>({height:document.documentElement.scrollHeight,y:window.scrollY}));await page.locator('.inline-reference').click();assert.equal(await page.locator('.chat-source-item:visible').innerText(),'1\n기사 제목');const after=await page.evaluate(()=>({height:document.documentElement.scrollHeight,y:window.scrollY}));assert.equal(await page.locator('.chat-source-list:visible').evaluate(el=>getComputedStyle(el).position),'static');
   await page.locator('.inline-reference').click();assert.equal(await page.locator('.chat-source-item:visible').count(),0);
  }
  // Link and marker can both have metadata; cleanup must not invalidate earlier offsets.

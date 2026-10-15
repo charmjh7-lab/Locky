@@ -248,10 +248,45 @@ function chatBody(text,rawRefs,id){
  return html;
 }
 
-async function renderMessages(force){let box=$('#messages');if(!box)return;const id=chatId,messages=await api('messages',{id});if(id!==chatId||screen!=='chat')return;const atBottom=window.innerHeight+window.scrollY>=document.body.scrollHeight-150;
- const html=messages.map((m,i)=>`<div class="message ${esc(m.role)}">${m.role==='assistant'?'<div class="chat-markdown">'+chatBody(m.body||(m.status==='streaming'?'답변을 생각하고 있어요…':''),m.citations,m.id||i)+'</div>':'<div class="chat-plain">'+esc(m.body||'')+'</div>'}${m.status==='interrupted'?'<span class="small danger">완료하지 못한 답변</span>':''}</div>`).join('')||'<p class="empty">무엇이 궁금한가요?</p>';
- if(box.innerHTML!==html){const expanded=new Set([...box.querySelectorAll('[data-source-toggle][aria-expanded="true"]')].map(el=>el.dataset.sourceToggle));box.innerHTML=html;bind(box);for(const sourceId of expanded){const trigger=[...box.querySelectorAll('[data-source-toggle]')].find(el=>el.dataset.sourceToggle===sourceId),panel=document.getElementById(sourceId);if(trigger&&panel){trigger.setAttribute('aria-expanded','true');panel.hidden=false;}}if(atBottom||force)window.scrollTo(0,document.body.scrollHeight);}const button=$('.composer button');if(button){button.dataset.act=state.busy?'cancelResponse':'send';button.innerHTML=icon(state.busy?'close':'send');button.setAttribute('aria-label',state.busy?'답변 중지':'전송');}
- if(state.chatError&&state.chatError!==renderMessages.lastError){renderMessages.lastError=state.chatError;toast(state.chatError);}}
+async function renderMessages(force){
+ const box=$('#messages');if(!box)return;
+ const id=chatId,request=box.messageRequest=(box.messageRequest||0)+1;
+ const messages=await api('messages',{id});
+ if(id!==chatId||screen!=='chat'||box!==$('#messages')||request!==box.messageRequest)return;
+ const viewport=window.visualViewport?.height||innerHeight;
+ const follow=window.scrollY+viewport>=document.documentElement.scrollHeight-150;
+ const initial=!box.messageEntries,entries=box.messageEntries||new Map();
+ const anchor=[...box.children].find(node=>node.classList.contains('message')&&node.getBoundingClientRect().bottom>0);
+ const anchorTop=anchor?.getBoundingClientRect().top,position=window.scrollY;
+ const keep=new Map();let changed=false;
+ for(const [i,m] of messages.entries()){
+   const key=String(m.id??i),signature=JSON.stringify([m.role,m.body,m.status,m.citations]);
+   let node=entries.get(key);
+   if(!node){node=document.createElement('div');node.className='message '+m.role;}
+   // Compare message data, never disclosure attributes changed by the reader.
+   if(node.messageSignature!==signature){
+     const expanded=new Set([...node.querySelectorAll('[data-source-toggle][aria-expanded="true"]')].map(el=>el.dataset.sourceToggle));
+     node.innerHTML=(m.role==='assistant'?'<div class="chat-markdown">'+chatBody(m.body||(m.status==='streaming'?'답변을 생각하고 있어요…':''),m.citations,m.id||i)+'</div>':'<div class="chat-plain">'+esc(m.body||'')+'</div>')+(m.status==='interrupted'?'<span class="small danger">완료하지 못한 답변</span>':'');
+     node.className='message '+m.role;node.messageSignature=signature;bind(node);changed=true;
+     for(const toggle of node.querySelectorAll('[data-source-toggle]'))if(expanded.has(toggle.dataset.sourceToggle)){
+       toggle.setAttribute('aria-expanded','true');node.querySelectorAll('.chat-source-list').forEach(panel=>{if(panel.id===toggle.dataset.sourceToggle)panel.hidden=false;});
+     }
+   }
+   if(box.children[i]!==node){box.insertBefore(node,box.children[i]||null);changed=true;}
+   keep.set(key,node);
+ }
+ const retained=new Set(keep.values());
+ for(const node of [...box.children])if(!retained.has(node)&&(messages.length||!node.classList.contains('empty'))){node.remove();changed=true;}
+ if(!messages.length&&!box.querySelector('.empty')){box.innerHTML='<p class="empty">무엇이 궁금한가요?</p>';changed=true;}
+ box.messageEntries=keep;
+ if(changed){
+   if(follow||(force&&initial))window.scrollTo(0,document.documentElement.scrollHeight);
+   else if(anchor?.isConnected)window.scrollBy(0,anchor.getBoundingClientRect().top-anchorTop);
+   else window.scrollTo(0,position);
+ }
+ const button=$('.composer button');if(button){const action=state.busy?'cancelResponse':'send';if(button.dataset.act!==action){button.dataset.act=action;button.innerHTML=icon(state.busy?'close':'send');button.setAttribute('aria-label',state.busy?'답변 중지':'전송');}}
+ if(state.chatError&&state.chatError!==renderMessages.lastError){renderMessages.lastError=state.chatError;toast(state.chatError);}
+}
 function brief(){return `<main class="page briefing-page">${header(state.overlay,'브리핑')}<div class="segmented"><button data-days="1" class="${briefDays===1?'active':''}">하루</button><button data-days="7" class="${briefDays===7?'active':''}">일주일</button></div><div class="row"><button class="iconbtn" data-act="previousBrief" aria-label="이전 날짜">${icon('back')}</button><span id="briefDate" class="small muted"></span><button class="iconbtn" data-act="nextBrief" ${briefOffset===0?'disabled':''} aria-label="다음 날짜">${icon('arrow')}</button></div><div id="briefContent"><p class="empty">기록을 모으는 중</p></div><div class="brief-export"><div><strong>하루 원본 기록</strong><p class="small muted">선택한 날짜 · JSON</p></div><div class="brief-export-actions"><button class="secondary" data-act="copyDay">복사</button><button class="secondary" data-act="saveDay">파일 저장</button></div></div></main>`;}
 function collapsible(rows,renderRow,count=4){return rows.slice(0,count).map(renderRow).join('')+(rows.length>count?`<details class="more-list"><summary>나머지 ${rows.length-count}개 펼치기</summary>${rows.slice(count).map(renderRow).join('')}</details>`:'');}
 async function loadBrief(){const sequence=++briefSeq;await safe(async()=>{const b=await api('brief',{days:briefDays,offset:briefOffset});if(!$('#briefContent')||sequence!==briefSeq)return;briefData=b;$('#briefDate').textContent=b.days===7?`${new Date(b.start).toLocaleDateString('ko-KR')} – ${b.date}`:b.date;renderBrief(b);});}
@@ -368,9 +403,32 @@ function layoutStart(){
  // On very low windows only the decision body scrolls; dismissal stays in the footer.
  if(decision)decision.style.maxHeight=Math.max(0,decisionHeight)+'px';
 }
-function viewportChanged(reveal=false){requestAnimationFrame(()=>{const v=window.visualViewport,h=v?.height||innerHeight,top=v?.offsetTop||0,editing=document.activeElement?.matches('input,textarea,select');const keyboard=nativeKeyboard||innerHeight-h>100||(editing&&normalWidth===innerWidth&&normalHeight-h>100);
- if(!normalHeight||normalWidth!==innerWidth||(!keyboard&&!editing)){normalHeight=h;normalWidth=innerWidth;}
- document.documentElement.style.setProperty('--viewport',h+'px');document.documentElement.style.setProperty('--rest-height',normalHeight+'px');document.documentElement.style.setProperty('--vtop',top+'px');document.body.classList.toggle('keyboard',!!keyboard);layoutStart();autoNoteHeight();const active=document.activeElement;if(reveal===true&&active?.matches('input,textarea,select'))active.scrollIntoView({block:'nearest',inline:'nearest'});});}
+let startKeyboardScroll=null;
+function viewportChanged(reveal=false){requestAnimationFrame(()=>{
+ const v=window.visualViewport,h=v?.height||innerHeight,top=v?.offsetTop||0,active=document.activeElement;
+ const editing=active?.matches('input,textarea,select');
+ const keyboard=nativeKeyboard||innerHeight-h>100||(editing&&normalWidth===innerWidth&&normalHeight-h>100);
+ if(!normalHeight||(!keyboard&&(normalWidth!==innerWidth||!editing))){normalHeight=h;normalWidth=innerWidth;}
+ const phoneStart=!!$('.preset-scroll'),wasInput=document.body.classList.contains('start-input');
+ if(phoneStart&&keyboard&&!wasInput)startKeyboardScroll=window.scrollY;
+ document.documentElement.style.setProperty('--viewport',h+'px');
+ document.documentElement.style.setProperty('--rest-height',normalHeight+'px');
+ document.documentElement.style.setProperty('--vtop',top+'px');
+ document.body.classList.toggle('keyboard',!!keyboard);
+ document.body.classList.toggle('start-input',phoneStart&&!!keyboard);
+ // Use the unobscured height for start layout breakpoints, not the IME viewport.
+ document.body.classList.toggle('compact-start',normalHeight<=650);
+ document.body.classList.toggle('short-start',normalHeight<=430);
+ layoutStart();autoNoteHeight();
+ if(wasInput&&(!keyboard||!phoneStart)&&startKeyboardScroll!==null){window.scrollTo(0,startKeyboardScroll);startKeyboardScroll=null;}
+ if(reveal===true&&editing){
+   if(phoneStart&&!active.closest('.sheet')){
+     const bounds=active.getBoundingClientRect(),bottom=top+h-12;
+     if(bounds.bottom>bottom)window.scrollBy(0,bounds.bottom-bottom);
+     else if(bounds.top<top)window.scrollBy(0,bounds.top-top-12);
+   }else active.scrollIntoView({block:'nearest',inline:'nearest'});
+ }
+ });}
 async function saveReminders(){if(!$('#customReminders'))return;settingsTimer=null;const values=[...document.querySelectorAll('[data-reminder].selected')].map(el=>Number(el.dataset.reminder));const extra=$('#customReminders')?.value.trim()||'';if(extra){const parsed=extra.split(',').map(v=>Number(v.trim()));if(parsed.some(n=>!Number.isInteger(n)||n<1||n>180))throw Error('추가 알림은 1~180분으로 입력해 주세요.');values.push(...parsed);}await api('settings',{reminders:values});Object.assign(state.prefs,{reminders:values});}
 async function lookup(){const word=$('#word')?.value.trim();if(!word)throw Error('찾을 단어를 입력해 주세요.');if(!state.dictionary){await dictionaryChoice(word);return;}await flushMemo();await api('dictionary',{word});}
 async function action(name,el){switch(name){case 'back':back();break;case 'closeSheet':closeSheet();break;case 'exit':await flushMemo();await api('exit');break;case 'dismiss':await flushMemo();await api('dismiss');break;
@@ -416,19 +474,10 @@ function bind(root=$('#app')){
  root.querySelectorAll('[data-pickapp]').forEach(el=>el.onclick=()=>{const selected=$('#purposeApp');if(!selected||selected.disabled)return;selected.value=el.dataset.pickapp;renderPurposeAppResults();});
   root.querySelectorAll('[data-url]').forEach(el=>el.onclick=()=>safe(()=>api('linkTest',{uri:el.dataset.url})));
   root.querySelectorAll('[data-brief-sort]').forEach(el=>el.onclick=e=>{e.preventDefault();e.stopPropagation();const key=el.dataset.briefSort;briefSort[key]=briefSort[key]==='desc'?'asc':'desc';if(briefData){renderBrief(briefData);$(`[data-brief-sort="${key}"]`)?.focus({preventScroll:true});}});
- root.querySelectorAll('[data-source-toggle]').forEach(el=>el.onclick=e=>{
-   e.preventDefault();const panel=document.getElementById(el.dataset.sourceToggle);if(!panel)return;
-   const opening=panel.hidden;
-   document.querySelectorAll('.chat-source-list:not([hidden])').forEach(other=>{other.hidden=true;const toggle=document.querySelector('[aria-controls="'+other.id+'"]');if(toggle)toggle.setAttribute('aria-expanded','false');});
-   panel.hidden=!opening;el.setAttribute('aria-expanded',String(opening));
-   if(opening){
-     panel.classList.remove('source-above');panel.style.left='0px';
-     const anchor=el.getBoundingClientRect(),body=panel.getBoundingClientRect();
-     const left=Math.max(12,Math.min(anchor.left,window.innerWidth-12-body.width));
-     panel.style.left=(left-anchor.left)+'px';
-     if(window.innerHeight-anchor.bottom<Math.min(panel.scrollHeight,280)+12&&anchor.top>Math.min(panel.scrollHeight,280)+12)panel.classList.add('source-above');
-   }
-  });
+ root.querySelectorAll('[data-source-toggle]').forEach(el=>el.onclick=()=>{
+   const panel=document.getElementById(el.dataset.sourceToggle);if(!panel)return;
+   panel.hidden=!panel.hidden;el.setAttribute('aria-expanded',String(!panel.hidden));
+ });
  root.querySelectorAll('[data-permission]').forEach(el=>el.onclick=()=>safe(()=>api('permission',{name:el.dataset.permission})));
  root.querySelectorAll('[data-account]').forEach(el=>el.onclick=()=>safe(async()=>{await api('account',{client:el.dataset.account});await api('models');closeSheet();await refresh(true);}));
  root.querySelectorAll('[data-days]').forEach(el=>el.onclick=()=>{briefDays=Number(el.dataset.days);briefOffset=0;refresh(true);});

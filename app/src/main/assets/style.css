@@ -34,17 +34,15 @@
 .segmented{display:flex;gap:4px;background:var(--pale);padding:4px;border-radius:10px;margin:4px 0 12px}.segmented button{flex:1;padding:9px;border-radius:7px;font-size:.875rem;min-height:44px;color:var(--muted)}.segmented .active{background:var(--white);color:var(--ink);font-weight:700}.statgrid{display:grid;grid-template-columns:1.35fr 1fr 1fr;gap:0;padding:24px 0 28px;margin:12px 0 24px;border-bottom:1px solid var(--line)}.stat{padding:0 12px;border-left:1px solid var(--line);display:flex;flex-direction:column;gap:10px;min-width:0}.stat:first-child{padding-left:0;border:0}.stat:last-child{padding-right:0}.stat b{font-size:2rem;display:block;line-height:1.2;letter-spacing:-.06em;font-weight:650;font-variant-numeric:tabular-nums}.stat:first-child b{font-size:2.5rem;color:var(--green)}.stat b small{font-size:.75rem;letter-spacing:0;margin-left:4px;font-weight:500;color:var(--muted)}.stat>span{font-size:.75rem;color:var(--muted);white-space:nowrap}.brief-insight{border-left:3px solid var(--green);padding:2px 0 2px 16px;margin:16px 0 28px}.brief-insight p{font-size:.9375rem;line-height:1.85;margin:10px 0 0}.briefing-page .section>.card,.brief-timeline{background:transparent;border:0;padding:0;margin:0;border-radius:0}.briefing-page .sectionhead{margin-bottom:0}.meter{height:4px;background:var(--pale);border-radius:2px;margin-top:12px;overflow:hidden}.meter span{display:block;height:100%;background:var(--green)}.usage-row{font-size:.9375rem;padding:12px 0}.usage-row strong{font-weight:550}.usage-row .row>span{font-size:.875rem;color:var(--muted);font-variant-numeric:tabular-nums}.event-row{display:flex;gap:16px;border-bottom:1px solid var(--line);padding:14px 0;font-size:.9375rem}.event-row time{font-size:.75rem;color:var(--muted);min-width:40px;padding-top:3px;font-variant-numeric:tabular-nums}.event-row div{display:flex;flex-direction:column;gap:4px;min-width:0;overflow-wrap:anywhere}.event-row strong{font-weight:550}.event-row span{font-size:.75rem;color:var(--muted)}summary{font-size:.875rem;color:var(--green);cursor:pointer;padding:12px 0;min-height:44px}.more-list{margin-top:8px}.brief-sort{color:var(--green)}.brief-timeline{border-top:1px solid var(--line);margin-top:24px}.brief-timeline>summary{display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:650}.brief-timeline>summary>span:before{content:'›';display:inline-block;margin-right:8px}.brief-timeline[open]>summary>span:before{transform:rotate(90deg)}.brief-export{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:24px 0;margin-top:16px;border-top:1px solid var(--line)}.brief-export strong{font-size:.875rem;font-weight:600}.brief-export p{margin:4px 0 0;font-size:.75rem}.brief-export-actions{display:flex;gap:8px}.brief-export-actions button{font-size:.8125rem;width:auto;padding:10px 12px}.empty{padding:28px 8px;text-align:center;color:var(--muted);font-size:.875rem}.bigtime{font-size:3.5rem;font-variant-numeric:tabular-nums;line-height:1.2;letter-spacing:-.06em}.timer-ring{text-align:center;padding:28px 16px;background:var(--pale);border-radius:12px;margin:24px 0}.timer-ring .bigtime{margin-top:10px}.divider{height:1px;background:var(--line);margin:20px 0}.leaf{background:var(--pale);padding:16px;margin:16px 0}
 /* Dialogs retain a visible close and sticky commit/cancel actions. */
 .dictionary-option{width:100%;display:flex;align-items:center;text-align:left;padding:16px 8px;min-height:56px;border-bottom:1px solid var(--line);gap:12px}.dictionary-option svg:last-child{margin-left:auto}#sheet:empty{display:none}#sheet{position:fixed;left:0;right:0;top:var(--vtop);height:var(--viewport);background:var(--scrim);z-index:20;display:flex;align-items:flex-end;justify-content:center}.sheet{width:min(740px,100%);max-height:100%;border-radius:18px 18px 0 0;background:var(--bg);padding:12px 20px 20px;overflow:auto;overscroll-behavior:contain;scroll-padding:72px 0 84px}.sheet>.sectionhead{position:sticky;top:-12px;background:var(--bg);z-index:2;padding:4px 0;margin-bottom:12px;border-bottom:1px solid var(--line);min-height:56px}.sheet .sectionhead h2{font-size:1.25rem}.sheet-actions{position:sticky;bottom:-20px;background:var(--bg);padding:12px 0 20px;margin:12px 0 -20px;display:flex;align-items:center;gap:8px;border-top:1px solid var(--line)}.sheet-actions .primary{flex:1}.sheet .reason-grid{margin-bottom:12px}.purpose-manage{padding-bottom:12px}.link-toggle{display:flex;align-items:center;gap:12px;font-size:.9375rem;min-height:48px}.link-toggle input{width:24px;height:24px;accent-color:var(--green)}.purpose-app-preview{display:flex;gap:12px;align-items:center;margin:12px 0;padding:12px;background:var(--pale);border-radius:10px;min-height:60px}.purpose-app-preview img{width:36px;height:36px;object-fit:contain;border-radius:8px}.purpose-app-preview span{display:flex;flex-direction:column;min-width:0;flex:1}.purpose-app-preview strong{font-size:.9375rem}.purpose-app-preview small{font-size:.75rem;color:var(--muted)}.purpose-app-results{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;max-height:220px;overflow-y:auto;overscroll-behavior:contain;padding:4px 0 8px}.purpose-app-row{display:flex;align-items:center;gap:8px;padding:10px 8px;border:1px solid var(--line);border-radius:8px;min-width:0;min-height:56px;background:var(--white);text-align:left}.purpose-app-row.selected{border-color:var(--green);background:var(--pale)}.purpose-app-row img{height:32px;width:32px;object-fit:contain;flex-shrink:0;border-radius:6px}.purpose-app-row span{min-width:0;display:flex;flex-direction:column;flex:1}.purpose-app-row strong{font-size:.8125rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.purpose-app-row small{font-size:.6875rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.purpose-app-row svg{width:16px;height:16px;color:var(--green)}#purposeAppCount{margin:8px 0 12px}#toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);max-width:90%;width:max-content;background:var(--ink);color:var(--bg);padding:12px 16px;border-radius:10px;font-size:.8125rem;z-index:30;display:none}
-.keyboard .bottom{display:none}.keyboard .start-page{height:var(--viewport)}.keyboard .notes-page{height:var(--viewport)}.keyboard .start-page>.start-purposes{padding-top:6px}.keyboard .start-page .top{min-height:32px}.keyboard .start-footer{padding-top:0}.keyboard .start-footer .dismiss{min-height:48px}.keyboard .start-purposes{max-height:42%;overflow:auto;overscroll-behavior:contain}.keyboard .purpose-intro h2{font-size:1rem}.keyboard .purpose-intro{margin-bottom:4px}
+.keyboard .bottom{display:none}.keyboard .notes-page{height:var(--viewport)}.keyboard .gate-page .top{min-height:32px}.keyboard .gate-page .start-footer{padding-top:0}.keyboard .gate-page .dismiss{min-height:48px}.keyboard .gate-page .start-purposes{max-height:42%;overflow:auto;overscroll-behavior:contain}
 @media(min-width:600px){.page,.start-page{padding-left:32px;padding-right:32px}.sheet{max-width:560px}.quick-tools{height:clamp(160px,24vh,210px)}.utility-space{padding:4px 20px}.purpose-intro h2{font-size:1.625rem}.reason{min-height:52px}.gate-info{padding-top:24px}.gate-app{font-size:2.5rem}.app-decision{gap:24px}.gate-page .start-purposes .reason-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-height:650px){.start-page{gap:6px;padding-top:4px;padding-bottom:8px}.start-page .top{min-height:36px}.quick-tools{height:124px;min-height:84px}.start-page:not(.gate-page)>.start-purposes{padding-top:10px}.purpose-intro h2{font-size:1.1875rem}.purpose-intro{margin-bottom:6px}.dismiss{min-height:54px}.gate-info{padding:8px 0 4px;gap:8px}.gate-app{font-size:1.75rem}.daily-budget{padding-top:4px}.daily-budget strong{font-size:1.25rem}.app-decision{gap:12px}.gate-page .start-footer{padding-top:8px}.gate-note{padding:12px;margin:6px 0}.block-detail{margin-top:12px;padding:16px 0}.minutes button{min-height:48px}}
+.compact-start .start-page{gap:6px;padding-top:4px;padding-bottom:8px}.compact-start .start-page .top{min-height:36px}.compact-start .quick-tools{height:124px;min-height:84px}.compact-start .start-page:not(.gate-page)>.start-purposes{padding-top:10px}.compact-start .purpose-intro h2{font-size:1.1875rem}.compact-start .purpose-intro{margin-bottom:6px}.compact-start .dismiss{min-height:54px}.compact-start .gate-info{padding:8px 0 4px;gap:8px}.compact-start .gate-app{font-size:1.75rem}.compact-start .daily-budget{padding-top:4px}.compact-start .daily-budget strong{font-size:1.25rem}.compact-start .app-decision{gap:12px}.compact-start .gate-page .start-footer{padding-top:8px}.compact-start .gate-note{padding:12px;margin:6px 0}.compact-start .block-detail{margin-top:12px;padding:16px 0}.compact-start .minutes button{min-height:48px}
 @media(max-width:350px){.page,.start-page{padding-left:14px;padding-right:14px}.utility-space{padding-left:8px;padding-right:8px}.quick-tools{gap:8px}.mini-note{padding-right:8px}.compact-note .mini-head .iconbtn{width:24px}.compact-note .mini-head .iconbtn[data-note-step]{display:none}.stat{padding:0 8px}.stat b{font-size:1.75rem}.stat:first-child b{font-size:2rem}.stat>span{font-size:.6875rem}.full-note{padding-left:10px;padding-right:10px}.note-actions{gap:2px}.note-actions select{padding:6px}.note-actions .iconbtn{width:36px}}
 @media(prefers-reduced-motion:no-preference){button{transition:background-color .12s}}
-/* With an IME, utilities scroll inside their own space while typing stays usable. */
-.keyboard .utility-space .quick-tools{min-height:140px;flex-shrink:0}
 
 /* Phone start: stable top-down chooser; only the presets move. */
 .start-page:not(.gate-page)>.utility-space{flex:0 0 auto;min-height:0;overflow:visible}
-.start-page:not(.gate-page) .quick-tools{height:clamp(190px,30vh,256px);min-height:0;flex:0 0 auto}
+.start-page:not(.gate-page) .quick-tools{height:clamp(190px,calc(var(--rest-height,var(--viewport)) * .3),256px);min-height:0;flex:0 0 auto}
 .start-page:not(.gate-page)>.start-purposes{
  margin-top:0;flex:1 1 auto;min-height:0;display:flex;flex-direction:column;
  overflow:hidden;padding-top:12px;border-top:1px solid var(--line)
@@ -63,39 +61,29 @@
  align-content:start;grid-auto-rows:minmax(48px,auto)
 }
 .start-page:not(.gate-page)>.start-footer{flex:0 0 auto;margin-top:0}
-/* Citation disclosure is a bounded layer, not a new paragraph pushing the conversation. */
+/* Sources expand in the reading flow; message updates own scroll preservation. */
 .chat-page .message{margin:14px 0 16px}
 .chat-page .message.assistant{padding:2px 0 6px}
 .chat-markdown p{margin:0 0 12px}
-.chat-source-group{position:relative;display:inline-block;vertical-align:baseline}
-.chat-source-list{
- position:absolute;left:0;top:calc(100% + 6px);bottom:auto;
- z-index:15;width:min(320px,calc(100vw - 24px));
- max-height:min(42vh,280px);overflow-y:auto;overscroll-behavior:contain;
- background:var(--white);border:1px solid var(--line);box-shadow:0 8px 24px #0002;
- padding:6px 10px;margin:0;white-space:normal
-}
-.chat-source-list.source-above{top:auto;bottom:calc(100% + 6px)}
-.chat-source-footer .chat-source-group{display:inline-block}
-@media(max-height:650px){
- .start-page:not(.gate-page) .quick-tools{height:148px;min-height:0}
- .start-page:not(.gate-page)>.start-purposes{padding-top:8px}
-}
-@media(max-height:430px){
- .start-page:not(.gate-page) .quick-tools{height:80px;min-height:0}
- .start-page:not(.gate-page) .mini-head{min-height:30px}
- .start-page:not(.gate-page) .mini-head button:not(.iconbtn){min-height:30px}
- .start-page:not(.gate-page) .mini-head .iconbtn{height:30px}
- .start-page:not(.gate-page) .note-actions{min-height:28px}
- .start-page:not(.gate-page) .note-actions .iconbtn{height:28px}
- .start-page:not(.gate-page) .dictionary-bar{min-height:44px}
- .start-page:not(.gate-page) .dictionary-bar button{height:42px}
- .start-page:not(.gate-page) .reason-picker>.reason.direct{min-height:42px}
- .start-page:not(.gate-page) .purpose-intro{margin-bottom:2px}
-}
-.keyboard .start-page:not(.gate-page)>.start-purposes{
- overflow:hidden;max-height:none;min-height:0;flex:1 1 auto;margin-top:0
-}
-.keyboard .start-page:not(.gate-page) .utility-space{overflow:visible}
-.keyboard .start-page:not(.gate-page) .quick-tools{height:clamp(72px,19vh,115px);min-height:0}
-.keyboard .start-page:not(.gate-page) .preset-scroll{overflow-y:auto}
+.chat-page{overflow-anchor:none}
+
+ .compact-start .start-page:not(.gate-page) .quick-tools{height:148px;min-height:0}
+ .compact-start .start-page:not(.gate-page)>.start-purposes{padding-top:8px}
+
+
+ .short-start .start-page:not(.gate-page) .quick-tools{height:80px;min-height:0}
+ .short-start .start-page:not(.gate-page) .mini-head{min-height:30px}
+ .short-start .start-page:not(.gate-page) .mini-head button:not(.iconbtn){min-height:30px}
+ .short-start .start-page:not(.gate-page) .mini-head .iconbtn{height:30px}
+ .short-start .start-page:not(.gate-page) .note-actions{min-height:28px}
+ .short-start .start-page:not(.gate-page) .note-actions .iconbtn{height:28px}
+ .short-start .start-page:not(.gate-page) .dictionary-bar{min-height:44px}
+ .short-start .start-page:not(.gate-page) .dictionary-bar button{height:42px}
+ .short-start .start-page:not(.gate-page) .reason-picker>.reason.direct{min-height:42px}
+ .short-start .start-page:not(.gate-page) .purpose-intro{margin-bottom:2px}
+
+/* Native IME insets still size the visible WebView for chat/dialogs. The phone
+   start retains its full layout behind that viewport instead of compressing. */
+.start-page:not(.gate-page){height:calc(var(--rest-height,var(--viewport)) - 70px)}
+.start-page.overlay-start:not(.gate-page){height:var(--rest-height,var(--viewport))}
+.start-input{overflow-y:auto;overscroll-behavior-y:contain}
