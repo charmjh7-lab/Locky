@@ -27,7 +27,7 @@ const briefing={
  timeline:[],usageAccess:true,recovered:0
 };
 function getFile(version,name){
- if(version==='before')return execFileSync('git',['show','HEAD^:app/src/main/assets/'+name],{encoding:'utf8'});
+ if(version==='before')return execFileSync('git',['show','0f98b084a4a38503a97160429b4474b4f3e5c9a1:app/src/main/assets/'+name],{encoding:'utf8'});
  return fs.readFileSync(path.join(assets,name),'utf8');
 }
 async function snap(browser,version,screen,theme,width,height,name){
