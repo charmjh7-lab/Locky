@@ -50,9 +50,17 @@ public class IntegrationTest {
         assertTrue((flags&Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS)!=0);
         assertEquals(0,flags&Intent.FLAG_ACTIVITY_CLEAR_TOP);
     }
-    @Test public void systemDictionaryPickerRemembersTargetAndDeliversEachWord() throws Exception {
+    @Test public void explicitDictionarySelectionRemembersTargetAndDeliversEachWord() throws Exception {
         Context c=ApplicationProvider.getApplicationContext();Store s=Store.get(c);UiDevice d=UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());String previous=s.settings.getString("dictionary","");
-        try{InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{try{Links.dictionaryPicker(c,"첫 검색어");}catch(Exception e){throw new RuntimeException(e);}});UiObject2 target=d.wait(Until.findObject(By.text("Locky test dictionary")),10000);assertNotNull("Native dictionary target missing",target);target.click();assertTrue(d.wait(Until.hasObject(By.text("사전 검색: 첫 검색어")),10000));long deadline=System.currentTimeMillis()+3000;while(s.settings.getString("dictionary","").isEmpty()&&System.currentTimeMillis()<deadline)Thread.sleep(100);assertTrue(s.settings.getString("dictionary","").startsWith("process:com.locky.fixture/"));d.pressHome();InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{try{Links.dictionary(c,"두 번째 검색어");}catch(Exception e){throw new RuntimeException(e);}});assertTrue("Remembered dictionary did not receive new word",d.wait(Until.hasObject(By.text("사전 검색: 두 번째 검색어")),10000));}finally{s.settings.edit().putString("dictionary",previous).commit();d.pressHome();}
+        try{
+            org.json.JSONArray choices=Links.dictionaries(c);String choice="";
+            for(int j=0;j<choices.length();j++){String id=choices.getJSONObject(j).getString("id");if(id.startsWith("process:com.locky.fixture/")){choice=id;break;}}
+            assertFalse("Fixture dictionary missing",choice.isEmpty());s.settings.edit().putString("dictionary",choice).commit();
+            for(String word:new String[]{"첫 검색어","두 번째 검색어"}){
+                InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{try{Links.dictionary(c,word);}catch(Exception e){throw new RuntimeException(e);}});
+                assertTrue(d.wait(Until.hasObject(By.text("사전 검색: "+word)),10000));d.pressHome();
+            }
+        }finally{s.settings.edit().putString("dictionary",previous).commit();d.pressHome();}
     }
 
     @Test public void storedPurposeMemoChatAndBudgetSurviveActivityRestart() throws Exception {

@@ -54,10 +54,10 @@ public class OverlayRenderingTest {
         WebView stale=new WebView(view.getContext());host.rendered(stale,"unlock",host.navigationGeneration);assertEquals(2,view.frames.size());stale.destroy();
     }
     @Test public void preparationDoesNotCountAsPresentationAndResumePreservesDocument(){
-        rendered();host.prepareOverlay();assertFalse(host.presentationActive);view.complete(0);view.complete(1);
+        rendered();host.prepareOverlay();assertFalse(host.presentationActive);view.complete(0);
         host.didDraw(view);Shadows.shadowOf(Looper.getMainLooper()).idle();assertEquals("",host.paintedScreen);
-        view.scripts.clear();host.resumeOverlay();assertSame(view,host.view);assertTrue(view.scripts.isEmpty());assertEquals(0,view.loads);assertEquals(3,view.frames.size());
-        view.complete(2);host.didDraw(view);Shadows.shadowOf(Looper.getMainLooper()).idle();assertEquals("unlock",host.paintedScreen);
+        view.scripts.clear();host.resumeOverlay();assertSame(view,host.view);assertTrue(view.scripts.isEmpty());assertEquals(0,view.loads);assertEquals(1,view.frames.size());
+        host.didDraw(view);Shadows.shadowOf(Looper.getMainLooper()).idle();assertEquals("unlock",host.paintedScreen);
     }
     @Test public void stalledVisualCallbackRestoresTheExistingDocumentWithoutReload(){
         rendered();Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(4));

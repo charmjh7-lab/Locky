@@ -23,7 +23,7 @@ final class WebHost {
     String renderedScreen="";long navigationGeneration,visualGeneration,visualPending=-1,visualCompleted=-1;
     boolean frameReady,presentationActive,everRendered,loadFailed;int initialRetries;
     private Runnable initialWatch,visualWatch;int visualRetryCount;
-    String handoffState;Runnable firstFrameCallback;
+    Runnable firstFrameCallback,frameAvailableCallback;
     WebHost(Context c,boolean overlay){context=c;store=Store.get(c);isOverlay=overlay;presentationActive=!overlay;root=new android.widget.FrameLayout(c);root.setBackgroundColor(UiTheme.background(c));hosts.add(new WeakReference<>(this));
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root,(v,insets)->{
             androidx.core.graphics.Insets bars=insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()|androidx.core.view.WindowInsetsCompat.Type.displayCutout());
@@ -42,7 +42,7 @@ final class WebHost {
             android.widget.LinearLayout.LayoutParams retryParams=new android.widget.LinearLayout.LayoutParams(-2,-2);retryParams.topMargin=18;waiting.addView(retry,retryParams);
             retry.setOnClickListener(v->{initialRetries=0;retryInitialLoad();});
             android.widget.Button dismiss=new android.widget.Button(c);dismiss.setText("그냥 끄기");waiting.addView(dismiss,new android.widget.LinearLayout.LayoutParams(-2,-2));
-            dismiss.setOnClickListener(v->{GuardService g=GuardService.live;if(g!=null){if("unlock".equals(g.gate))g.dismissStart();else g.stopApp();}});
+            dismiss.setOnClickListener(v->{GuardService g=GuardService.live;if(g!=null){try{if("unlock".equals(g.gate))g.dismissStart();else g.stopApp();}catch(IllegalStateException e){android.widget.Toast.makeText(context,e.getMessage(),android.widget.Toast.LENGTH_LONG).show();}}});
             loadingView=waiting;root.addView(waiting,new android.widget.FrameLayout.LayoutParams(-1,-1));
         }else loadingView=null;
         createView();
@@ -82,7 +82,7 @@ final class WebHost {
     private void resumeRendering(){
         if(closed||view==null)return;
         // A visible root may still hold a suspended Chromium/Android surface.
-        if(!presentationActive){presentationActive=true;resetVisualState();}
+        if(!presentationActive){presentationActive=true;visualCompleted=-1;paintedScreen="";}
         view.onResume();view.resumeTimers();redraw();
         if(!ready){watchInitialLoad();return;}
         if(pendingScreen.equals(renderedScreen))requestVisualState();
@@ -91,7 +91,7 @@ final class WebHost {
     void pause(){presentationActive=false;resetVisualState();if(view!=null)view.onPause();}
     void prepareOverlay(){
         if(closed||!isOverlay||view==null)return;
-        if(presentationActive)pause();
+        presentationActive=false;paintedScreen="";
         // Prepare the attached, transparent window without exposing it on the keyguard.
         view.onResume();view.resumeTimers();redraw();
         if(ready&&pendingScreen.equals(renderedScreen))requestVisualState();else watchInitialLoad();
@@ -99,8 +99,7 @@ final class WebHost {
     void requestVisualState(){
         if(closed||!ready||view==null||!view.isAttachedToWindow()||root.getVisibility()!=View.VISIBLE
             ||!pendingScreen.equals(renderedScreen)||frameReady||visualPending==visualGeneration)return;
-        // The dictionary host retains the original WebView and must continue
-        // painting beneath popup dictionaries while its Activity is paused.
+        // Keep preparing the attached document, including while its dictionary Activity is paused.
         WebView candidate=view;String screen=pendingScreen;long generation=visualGeneration,navigation=navigationGeneration;
         visualPending=generation;
         // A callback can stall after reattaching the same WebView. Retry once,
@@ -115,7 +114,7 @@ final class WebHost {
             else{
                 frameReady=true;candidate.setVisibility(View.VISIBLE);
                 if(loadingView!=null)loadingView.setVisibility(View.GONE);
-                redraw();
+                redraw();if(frameAvailableCallback!=null)frameAvailableCallback.run();
             }
         };
         main.postDelayed(visualWatch,1200);
@@ -127,7 +126,7 @@ final class WebHost {
             if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}
             visualPending=-1;frameReady=true;
             // This only makes a prepared frame drawable; onDraw records Android presentation.
-            candidate.setVisibility(View.VISIBLE);if(loadingView!=null)loadingView.setVisibility(View.GONE);redraw();
+            candidate.setVisibility(View.VISIBLE);if(loadingView!=null)loadingView.setVisibility(View.GONE);redraw();if(frameAvailableCallback!=null)frameAvailableCallback.run();
         }});
         redraw();
     }
@@ -149,7 +148,7 @@ final class WebHost {
             candidate.evaluateJavascript("typeof nativeRestore==='function'",result->{
                 if(closed||candidate!=view||everRendered)return;
                 if("true".equals(result)){if(!ready){ready=true;applyTheme();dispatchScreen();}else candidate.evaluateJavascript("nativeRestore()",null);}
-                else {loadFailed=true;retryInitialLoad();}
+                else {loadFailed=true;retryInitialLoad();if(frameAvailableCallback!=null)frameAvailableCallback.run();}
             });
             // Only an untouched, uninitialised document can be retried automatically, once.
             if(!ready&&initialRetries==0)main.postDelayed(()->{if(!closed&&candidate==view&&!ready&&!everRendered)retryInitialLoad();},500);
@@ -176,7 +175,7 @@ final class WebHost {
         view.setWebViewClient(new WebViewClient(){
             @Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){return loader.shouldInterceptRequest(r.getUrl());}
             @Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return true;}
-            @Override public void onReceivedError(WebView v,WebResourceRequest request,WebResourceError error){if(v==view&&request.isForMainFrame()&&!everRendered){loadFailed=true;watchInitialLoad();}}
+            @Override public void onReceivedError(WebView v,WebResourceRequest request,WebResourceError error){if(v==view&&request.isForMainFrame()&&!everRendered){loadFailed=true;watchInitialLoad();if(frameAvailableCallback!=null)frameAvailableCallback.run();}}
             @Override public void onPageFinished(WebView v,String url){if(closed||v!=view||loadFailed||ready)return;ready=true;applyTheme();dispatchScreen();}
             @Override public boolean onRenderProcessGone(WebView v,RenderProcessGoneDetail detail){
                 if(v!=view)return true;
@@ -198,17 +197,13 @@ final class WebHost {
         main.post(()->{
             if(closed||!ready||candidate!=view||navigation!=navigationGeneration)return;
             String navJs="chat".equals(name)&&!chat.isEmpty()?"openChatById("+JSONObject.quote(chat)+","+navigation+")":"navigate("+JSONObject.quote(name)+","+navigation+")";
-            String snapshot=handoffState;handoffState=null;
-            if(snapshot!=null&&!snapshot.isEmpty())
-                candidate.evaluateJavascript("restoreDictionaryStartState("+JSONObject.quote(snapshot)+")",
-                    ignored->{if(!closed&&ready&&candidate==view&&navigation==navigationGeneration)
-                        candidate.evaluateJavascript(navJs,null);});
-            else candidate.evaluateJavascript(navJs,null);
+            candidate.evaluateJavascript(navJs,null);
         });
     }
     void evaluate(String js){WebView candidate=view;main.post(()->{if(!closed&&ready&&candidate==view&&(candidate.getParent()!=null||!isOverlay))candidate.evaluateJavascript(js,null);});}
     void close(){closed=true;ready=false;resetVisualState();main.removeCallbacksAndMessages(null);root.removeView(view);view.removeJavascriptInterface("Native");view.destroy();hosts.removeIf(r->r.get()==null||r.get()==this);}
     static void refreshAll(){for(var r:hosts){WebHost h=r.get();if(h!=null)h.evaluate("refresh()");}}
+    static JSONObject dictionaryLaunched(){try{return new JSONObject().put("launched",true);}catch(JSONException e){throw new IllegalStateException(e);}}
     void answer(String id,Object value,String error){evaluate("receive("+JSONObject.quote(id)+","+(value==null?"null":value.toString())+","+(error==null?"null":JSONObject.quote(error))+")");}
     final class Bridge {
         final WebView source;
@@ -218,7 +213,7 @@ final class WebHost {
             if(closed||source!=view)return;
             if(!action.matches("[A-Za-z]+")||raw.length()>1000000){answer(id,null,"요청을 처리할 수 없습니다.");return;}
             if("rendered".equals(action)){main.post(()->{try{JSONObject frame=new JSONObject(raw);rendered(source,frame.optString("screen"),frame.optLong("navigation",-1));}catch(JSONException ignored){}});return;}
-            if(Set.of("choose","grant","extend","stop","utility","open","permission","dictionary","dictionaryPicker","linkTest","signin","cancelLogin","exit","dismiss").contains(action))main.post(()->handle(id,action,raw));
+            if(Set.of("choose","grant","extend","stop","utility","open","permission","dictionary","linkTest","signin","cancelLogin","exit","dismiss").contains(action))main.post(()->handle(id,action,raw));
             else LockyApp.app.work.execute(()->handle(id,action,raw));
         }
     }
@@ -241,10 +236,13 @@ final class WebHost {
             case "dismiss":if(isOverlay&&g!=null)g.dismissStart();else if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);break;
             case "remember":if(!isOverlay){pendingScreen=a.optString("screen","home");store.settings.edit().putString("last-screen",a.optString("screen","home")).putString("last-chat",a.optString("chat")).putString("last-note",a.optString("note")).apply();}break;
             case "dictionaries":out=Links.dictionaries(context);break;
-            case "dictionaryPicker":if(isOverlay&&g!=null)g.openDictionary(a.optString("word"),true);else Links.dictionaryPicker(context,a.optString("word"));break;
             case "dictionaryChoice":store.settings.edit().putString("dictionary",a.getString("id")).apply();break;
             case "exit":if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);break;
-            case "dictionary":if(g!=null)g.useUtility("사전");else store.event("utility","사전",context.getPackageName(),"",0);if(isOverlay&&g!=null)g.openDictionary(a.getString("word"),false);else Links.dictionary(context,a.getString("word"));break;
+            case "dictionary":
+                if(isOverlay&&g!=null){g.openDictionary(a.getString("word"),error->answer(id,error==null?dictionaryLaunched():null,error));return;}
+                Links.dictionary(context,a.getString("word"));
+                if(g!=null)g.useUtility("사전");else store.event("utility","사전",context.getPackageName(),"",0);
+                out=dictionaryLaunched();break;
             case "linkTest":Intent link=Links.intent(context,a.optString("pkg"),a.optString("uri"));if(link==null)throw new IllegalArgumentException("이 앱에서 지원하는 연결인지 확인해 주세요. 딥링크는 앱마다 달라요.");if(isOverlay&&g!=null)g.hideOverlay();context.startActivity(link.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));break;
             case "saveNote":store.note(a);break;
             case "deleteNote":store.getWritableDatabase().delete("notes","id=?",new String[]{a.getString("id")});break;

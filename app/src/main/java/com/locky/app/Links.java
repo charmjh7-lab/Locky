@@ -42,15 +42,6 @@ final class Links {
         Intent i=id.startsWith("process:")?process(word):id.startsWith("search:")?search(word):web(word);
         i.setComponent(ComponentName.unflattenFromString(id.substring(id.indexOf(':')+1)));return i;
     }
-    static void dictionaryPicker(Context c,String word) throws Exception {
-        JSONArray choices=dictionaries(c);if(choices.length()==0)throw new ActivityNotFoundException("검색어를 전달할 수 있는 사전이나 브라우저가 없습니다.");
-        ArrayList<Intent> types=new ArrayList<>();boolean hasProcess=false,hasSearch=false,hasWeb=false;
-        for(int j=0;j<choices.length();j++){String id=choices.getJSONObject(j).getString("id");hasProcess|=id.startsWith("process:");hasSearch|=id.startsWith("search:");hasWeb|=id.startsWith("web:");}
-        if(hasProcess)types.add(process(word));if(hasSearch)types.add(search(word));if(hasWeb)types.add(web(word));Intent primary=types.remove(0);
-        PendingIntent picked=PendingIntent.getBroadcast(c,52,new Intent(c,DictionaryChoiceReceiver.class).setAction("com.locky.app.DICTIONARY_CHOSEN"),PendingIntent.FLAG_UPDATE_CURRENT|(android.os.Build.VERSION.SDK_INT>=31?PendingIntent.FLAG_MUTABLE:0));
-        Intent chooser=Intent.createChooser(primary,"기본 사전 선택 · 다음부터 바로 검색",picked.getIntentSender());if(!types.isEmpty())chooser.putExtra(Intent.EXTRA_ALTERNATE_INTENTS,types.toArray(new Intent[0]));
-        if(c instanceof DictionaryActivity)((Activity)c).startActivityForResult(chooser,DictionaryActivity.REQUEST);else c.startActivity(chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-    }
     static boolean isolatedDaumPopup(Intent i) {
         return Intent.ACTION_PROCESS_TEXT.equals(i.getAction())
             && i.getComponent()!=null
@@ -66,7 +57,7 @@ final class Links {
     }
     static void dictionary(Context c,String word) throws Exception {
         String choice=Store.get(c).settings.getString("dictionary","");Intent i=choice.isEmpty()?null:dictionaryIntent(c,choice,word);
-        if(i==null){Store.get(c).settings.edit().remove("dictionary").apply();dictionaryPicker(c,word);return;}
+        if(i==null){Store.get(c).settings.edit().remove("dictionary").apply();throw new ActivityNotFoundException("사전을 다시 선택해 주세요.");}
         // Daum's popup must retain its isolated task flags; startActivityForResult
         // cannot be combined with NEW_TASK (Android immediately cancels its result).
         if(c instanceof DictionaryActivity && isolatedDaumPopup(i)) {
