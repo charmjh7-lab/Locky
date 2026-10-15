@@ -557,6 +557,6 @@ public final class GuardService extends AccessibilityService {
         main.postDelayed(lockCompletion,1500); // Failure recovery only; never delays exposure or locking.
     }
     @Override public void onInterrupt(){}
-    @Override public void onDestroy(){getSystemService(AppOpsManager.class).stopWatchingMode(overlayPermission);hideFloatingTimer();checkpoint();store.observe("service-destroyed",interactive);live=null;interactive=false;overlayVisible=false;if(dictionaryHost!=null)dictionaryHost.returnToStart();main.removeCallbacksAndMessages(null);try{unregisterReceiver(screen);}catch(Exception ignored){}if(overlay!=null){removeGateWindow("service-destroy");overlay.close();}Notices.cancelTimer(this);super.onDestroy();}
+    @Override public void onDestroy(){getSystemService(AppOpsManager.class).stopWatchingMode(overlayPermission);hideFloatingTimer();checkpoint();if(store!=null)store.observe("service-destroyed",interactive);live=null;interactive=false;overlayVisible=false;if(dictionaryHost!=null)dictionaryHost.returnToStart();main.removeCallbacksAndMessages(null);try{unregisterReceiver(screen);}catch(Exception ignored){}if(overlay!=null){removeGateWindow("service-destroy");overlay.close();}Notices.cancelTimer(this);super.onDestroy();}
 }
 
