@@ -1,0 +1,14 @@
+---
+name: interface-quality
+description: Review Locky's real UI for visual hierarchy, touch ergonomics, non-slop Korean copy, compositional balance, theme and regression without redesigning unrelated screens.
+---
+
+# Interface Quality — Locky
+
+일반적인 웹 대시보드나 랜딩페이지의 미학을 Locky에 강요하지 않는다. 먼저 DESIGN.md의 확정/선호/미결정 구분을 읽고, 해당 화면의 실제 app.js/style.css와 Android WebHost·GuardService 등 관련 코드를 확인한다. 사용자 경험과 원래의 작업 범위는 docs/CHANGE_SCOPE_POLICY.md가 우선한다.
+
+디자인 시작 전 화면에서 사람들이 무엇을 보고 무엇을 누르는지를 별도로 정한다. 가장 강조되는 정보/행동과 손가락으로 쉽게 조작해야 하는 대상은 다를 수 있다. 시작 화면에서는 상단 메모·ChatGPT·사전, 하단 목적 선택, 최하단 독립된 붉은 '그냥 끄기'를 유지한다. 도구창을 불필요하게 키워 빈 공간을 채우거나 목적 선택을 상단으로 옮기지 않는다.
+
+레이아웃을 기능 나열로 끝내지 않는다. 영역의 관계, 서체, 밀도, 간격, 대비, 정렬, 배경의 차이가 의도된 시각적 위계를 만드는지 확인한다. 모든 것을 둥근 카드로 둘러싸거나 비슷하게 강조하지 않는다. 단, 유용한 카드와 감성적 표현을 기계적으로 금지하지도 않는다. 문구 하나하나가 실제 상태·행동·정보·맥락적 감정에 기여하는지 검토한다. AI 슬롭의 핵심인 반복적인 빈말, 근거 없는 칭찬, 장식성 영문 표제와 중복 설명을 피한다.
+
+실제 앱 소스를 렌더링한 수정 전후 화면을 같은 데이터와 화면 크기로 비교한다. 작은/긴 화면, 키보드와 인셋, 폴더블, 라이트/다크, 많은 프리셋·긴 문구, 모달의 필수 버튼을 변경에 관련된 범위에서 확인한다. Playwright 수치 검사는 터치 영역·스크롤 회귀를 확인하지만 시각적 품질의 자동 판정은 아니다. 디자인이 좋아 보여도 실제 탭, 저장, 삭제, 종료, 복귀가 악화되면 완료할 수 없다. 사용자의 미적 최종 판단을 AI가 대신하지 않는다.

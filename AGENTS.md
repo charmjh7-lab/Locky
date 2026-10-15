@@ -18,3 +18,10 @@ GitHub Actions 사용량을 확인한다. 별도 요청 없이 APK·릴리스를
 ## 인간 중심 UX·UI 규칙(v4)
 
 UI·작업 경로를 수정할 때 `docs/UX_PROJECT_BRIEF.md`의 제품별 UX 목표를 참고하고, `docs/INTERACTION_COMPLETENESS.md`에 따라 실제 필요한 생성·열기·수정·삭제·취소·닫기·돌아가기와 저장 경로가 누락되지 않았는지 확인한다. 길고 스크롤 가능한 콘텐츠·키보드·작은 화면에서도 필수 조작이 보이거나 동등하게 쉽게 접근 가능해야 한다. 클릭에서 데이터 변경, 화면 갱신, 영속 저장·재진입까지 확인하고, `docs/HUMAN_UX_ACCEPTANCE.md`, `docs/UX_PRODUCT_QUALITY.md`, `docs/UI_DESIGN_GUIDE.md`, `docs/REPEATED_FAILURE_PATTERNS.md`, `docs/EXTERNAL_STANDARDS.md`의 관련 내용을 적용한다. 기존 교육·사용시간·보안·데이터 계약을 우선하며 형식적인 UI 개편 및 불필요한 전체 테스트를 피한다.
+
+
+## Locky 디자인 인수인계 및 품질 스킬
+
+2026-10-15에 정리된 Locky 고유의 확정 UX 결정과 미적 선호/미결정 구분은 루트 DESIGN.md를 읽는다. UI 개편 순서와 산출물·승인 경계는 docs/LOCKY_UI_HANDOFF.md를 참조한다. 이 문서들은 기존 docs/CHANGE_SCOPE_POLICY.md, docs/PRODUCT_PRINCIPLES.md, docs/UX_PROJECT_BRIEF.md를 대체하지 않는다. 현재 요청과 변경 범위가 우선이다.
+
+사용자에게 노출되는 기능·상태·Android 통합·저장에 관한 작업은 .agents/skills/product-quality/SKILL.md를 적용하고, 화면 배치·시각적 위계·테마·문구·상호작용 수정에는 .agents/skills/interface-quality/SKILL.md를 추가 적용한다. 단지 스킬을 설치/읽었다는 사실이나 녹색 테스트 결과만으로 사용성·시각 품질·삼성 실기기 호환성을 합격 처리하지 않는다. 실제 화면의 코드/렌더링과 사람이 확인할 사항을 구분한다.
