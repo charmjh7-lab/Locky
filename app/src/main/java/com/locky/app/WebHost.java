@@ -17,6 +17,8 @@ import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 final class WebHost {
+    enum Role { PHONE_START, MAIN, APP_GATE }
+    final Role role;
     static final List<WeakReference<WebHost>> hosts=new CopyOnWriteArrayList<>();
     final android.widget.FrameLayout root;final View loadingView;WebView view;final Context context;final Store store;final boolean isOverlay;final Handler main=new Handler(Looper.getMainLooper());volatile String pendingScreen="home",paintedScreen="",pendingChat="";boolean ready=false,closed=false;
     // DOM completion, Chromium frame preparation and Android drawing are separate states.
@@ -25,7 +27,7 @@ final class WebHost {
     // presentation, not proof of composition. didDraw is an observation, never an exposure gate.
     boolean retainedFrame; // Valid pixels survive a DOM revision, never document loss or detach.
     boolean frameReady,presentationActive,everRendered,loadFailed,renderingActive;int initialRetries;
-    boolean preparingStart;long startPreparation,observedDrawGeneration=-1,commitRequestedGeneration=-1;Boolean insetKeyboard;
+    long observedDrawGeneration=-1,commitRequestedGeneration=-1;Boolean insetKeyboard;
     private Runnable initialWatch,visualWatch;int visualRetryCount;
     Runnable firstFrameCallback,frameAvailableCallback;
     // Bounded Logcat plus opt-in private recording. Never log user content or package names.
@@ -34,8 +36,8 @@ final class WebHost {
     static void beginUnlockTrace(){if(UnlockDiagnostics.live!=null)UnlockDiagnostics.live.begin();if(tracing()){traceBudget=120;traceUntil=SystemClock.uptimeMillis()+30_000;++traceCycle;trace("screen-off");}}
     static void resumeUnlockTrace(){if(UnlockDiagnostics.live!=null)UnlockDiagnostics.live.resumeCapture();if(tracing()){traceUntil=SystemClock.uptimeMillis()+30_000;traceBudget=Math.max(traceBudget,80);}}
     static void trace(String event){if(UnlockDiagnostics.live!=null)UnlockDiagnostics.live.record(event);if(traceBudget>0&&SystemClock.uptimeMillis()<=traceUntil){--traceBudget;android.util.Log.d("LockyUnlock","cycle="+traceCycle+" "+SystemClock.uptimeMillis()+" "+event);}}
-    void hostTrace(String event){trace("web="+(isOverlay?"overlay":"activity")+" "+event);}
-    WebHost(Context c,boolean overlay){UnlockDiagnostics.get(c);context=c;store=Store.get(c);isOverlay=overlay;presentationActive=!overlay;root=new android.widget.FrameLayout(c);root.setBackgroundColor(UiTheme.background(c));hosts.add(new WeakReference<>(this));
+    void hostTrace(String event){trace("web="+role.name()+" "+event);}
+    WebHost(Context c,Role owner){UnlockDiagnostics.get(c);context=c;store=Store.get(c);role=owner;boolean overlay=owner==Role.APP_GATE;isOverlay=overlay;presentationActive=!overlay;root=new android.widget.FrameLayout(c);root.setBackgroundColor(UiTheme.background(c));hosts.add(new WeakReference<>(this));
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root,(v,insets)->{
             androidx.core.graphics.Insets bars=insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()|androidx.core.view.WindowInsetsCompat.Type.displayCutout());
             androidx.core.graphics.Insets ime=insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime());
@@ -51,21 +53,21 @@ final class WebHost {
                 hostTrace("view attach observed");
                 androidx.core.view.ViewCompat.requestApplyInsets(v);
                 main.post(()->{if(closed||!root.isAttachedToWindow())return;applyTheme();
-                    if(root.getVisibility()==View.VISIBLE){resumeEngine();redraw();requestVisualState();}});
+                    if(root.getVisibility()==View.VISIBLE){resumeEngine();redraw();if(role!=Role.PHONE_START)requestVisualState();}});
             }
             public void onViewDetachedFromWindow(View v){hostTrace("view detach observed");renderingActive=false;resetVisualState("detach");}
         });
         if(overlay){
             android.widget.LinearLayout waiting=new android.widget.LinearLayout(c);waiting.setOrientation(android.widget.LinearLayout.VERTICAL);
             waiting.setGravity(Gravity.CENTER);waiting.setPadding(32,24,32,24);waiting.setBackgroundColor(UiTheme.background(c));
-            android.widget.TextView title=new android.widget.TextView(c);title.setText("휴대폰 시작");title.setTextColor(UiTheme.ink(c));title.setTextSize(22);title.setGravity(Gravity.CENTER);waiting.addView(title);
+            android.widget.TextView title=new android.widget.TextView(c);title.setText("앱 사용 확인");title.setTextColor(UiTheme.ink(c));title.setTextSize(22);title.setGravity(Gravity.CENTER);waiting.addView(title);
             android.widget.TextView detail=new android.widget.TextView(c);detail.setText("시작화면을 준비하고 있습니다");detail.setTextColor(UiTheme.muted(c));detail.setTextSize(14);detail.setGravity(Gravity.CENTER);
             android.widget.LinearLayout.LayoutParams info=new android.widget.LinearLayout.LayoutParams(-2,-2);info.topMargin=16;waiting.addView(detail,info);
             android.widget.Button retry=new android.widget.Button(c);retry.setText("다시 불러오기");
             android.widget.LinearLayout.LayoutParams retryParams=new android.widget.LinearLayout.LayoutParams(-2,-2);retryParams.topMargin=18;waiting.addView(retry,retryParams);
             retry.setOnClickListener(v->{initialRetries=0;retryInitialLoad();});
             android.widget.Button dismiss=new android.widget.Button(c);dismiss.setText("그냥 끄기");waiting.addView(dismiss,new android.widget.LinearLayout.LayoutParams(-2,-2));
-            dismiss.setOnClickListener(v->{GuardService g=GuardService.live;if(g!=null){try{if("unlock".equals(g.gate))g.dismissStart();else g.stopApp();}catch(IllegalStateException e){android.widget.Toast.makeText(context,e.getMessage(),android.widget.Toast.LENGTH_LONG).show();}}});
+            dismiss.setOnClickListener(v->{GuardService g=GuardService.live;if(g!=null){try{g.stopApp();}catch(IllegalStateException e){android.widget.Toast.makeText(context,e.getMessage(),android.widget.Toast.LENGTH_LONG).show();}}});
             loadingView=waiting;root.addView(waiting,new android.widget.FrameLayout.LayoutParams(-1,-1));
         }else loadingView=null;
         createView();
@@ -87,34 +89,20 @@ final class WebHost {
         if(view!=null){view.getSettings().setTextZoom(Math.round(context.getResources().getConfiguration().fontScale*100));view.setBackgroundColor(UiTheme.background(context));if(Build.VERSION.SDK_INT>=29)view.setForceDarkAllowed(false);}
         if(ready)evaluate("themeChanged("+UiTheme.dark(context)+");viewportChanged()");
     }
-    void resetVisualState(String reason){if(!Set.of("dom","prepare-stalled","prepare-failed").contains(reason))retainedFrame=false;if(tracing())hostTrace("frameReady="+frameReady+"->false reason="+reason+" generation="+(visualGeneration+1));if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}++visualGeneration;visualPending=-1;visualCompleted=-1;frameReady=false;paintedScreen="";visualRetryCount=0;}
-    void showLoading(){presentationUtility="";setPreparingStart(false);++startPreparation;cancelInitialWatch();resetVisualState("document");renderedRevision=-1;renderedScreen="";if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);if(isOverlay&&view!=null)view.setVisibility(View.INVISIBLE);}
+    void resetVisualState(String reason){if(role==Role.PHONE_START)return;if(!"dom".equals(reason))retainedFrame=false;if(tracing())hostTrace("frameReady="+frameReady+"->false reason="+reason+" generation="+(visualGeneration+1));if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}++visualGeneration;visualPending=-1;visualCompleted=-1;frameReady=false;paintedScreen="";visualRetryCount=0;}
+    void showLoading(){if(role==Role.PHONE_START){cancelInitialWatch();return;}presentationUtility="";cancelInitialWatch();resetVisualState("document");renderedRevision=-1;renderedScreen="";if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);if(isOverlay&&view!=null)view.setVisibility(View.INVISIBLE);}
     void rendered(WebView source,String screen,long navigation,long revision){
         if(closed||source!=view||!ready||navigation!=navigationGeneration||revision<0||revision<renderedRevision)return;
         if(isOverlay&&!pendingScreen.equals(screen))return;
         if(!isOverlay)pendingScreen=screen;
+        if(role==Role.PHONE_START){renderedRevision=revision;renderedScreen=screen;everRendered=true;loadFailed=false;cancelInitialWatch();return;}
         boolean changed=revision!=renderedRevision||!screen.equals(renderedScreen);
         if(changed&&!renderedScreen.isEmpty())resetVisualState("dom");
         if(tracing())hostTrace("dom changed="+changed+" revision="+revision);
-        renderedRevision=revision;renderedScreen=screen;everRendered=true;loadFailed=false;if(!preparingStart)cancelInitialWatch();requestVisualState();
+        renderedRevision=revision;renderedScreen=screen;everRendered=true;loadFailed=false;cancelInitialWatch();requestVisualState();
     }
-    void setPreparingStart(boolean value){if(preparingStart!=value){hostTrace("preparingStart="+value);preparingStart=value;}}
+
     boolean hasUsableFrame(){return frameReady||retainedFrame;}
-    void prepareStart(){
-        // Loading/navigation already shuffles its initial DOM. A warm document needs only
-        // a preset reorder. Retain validated pixels while checking the updated revision.
-        if(closed||!ready||!everRendered||!"unlock".equals(renderedScreen))return;
-        setPreparingStart(true);long preparation=++startPreparation,navigation=navigationGeneration;WebView source=view;
-        // Reuse the liveness watchdog for a stalled reorder; it never discards the
-        // validated document or schedules an artificial unlock delay.
-        cancelInitialWatch();initialWatch=()->{
-            initialWatch=null;
-            if(closed||source!=view||navigation!=navigationGeneration||preparation!=startPreparation||!preparingStart)return;
-            setPreparingStart(false);++startPreparation;resetVisualState("prepare-stalled");requestVisualState();
-        };main.postDelayed(initialWatch,6000);
-        String order="null";try{preparedPurposeDay=java.time.LocalDate.now().toString();order=new JSONObject().put("date",preparedPurposeDay).put("scope","phone").put("purposes",store.purposes("phone")).toString();}catch(JSONException ignored){}
-        source.evaluateJavascript("prepareStart("+order+")",result->finishStartPreparation(source,navigation,preparation,result));
-    }
     // Data-only entry refresh for a phone locked across midnight. No window, loading,
     // readiness gate or WebView lifecycle changes; a visible page never runs this on a timer.
     void ensurePurposeDay(){
@@ -122,14 +110,6 @@ final class WebHost {
         try{String scope="app".equals(renderedScreen)&&GuardService.live!=null?GuardService.live.gatePkg:"phone";
             JSONObject order=new JSONObject().put("date",today).put("scope",scope).put("purposes",store.purposes(scope));preparedPurposeDay=today;evaluate("prepareStart("+order+")");
         }catch(JSONException e){android.util.Log.w("LockyBriefing","Daily purpose data unavailable");}
-    }
-    void finishStartPreparation(WebView source,long navigation,long preparation,String result){
-        if(closed||!preparingStart||source!=view||navigation!=navigationGeneration||preparation!=startPreparation)return;
-        setPreparingStart(false);cancelInitialWatch();
-        try{rendered(source,"unlock",navigation,Long.parseLong(result));}
-        catch(NumberFormatException e){resetVisualState("prepare-failed");requestVisualState();}
-        if(tracing())hostTrace("prepare-complete revision="+renderedRevision+" ready="+frameReady);
-        if(frameAvailableCallback!=null)frameAvailableCallback.run();
     }
     void redraw(){
         if(closed||view==null)return;
@@ -139,7 +119,7 @@ final class WebHost {
     boolean hasPresentedDocument(){return presentationActive&&renderingActive&&view!=null&&view.isAttachedToWindow()
         &&root.getVisibility()==View.VISIBLE&&view.getVisibility()==View.VISIBLE&&pendingScreen.equals(renderedScreen);}
     void resumeOverlay(){if(isOverlay)resumeRendering();}
-    void resume(){if(!isOverlay)resumeRendering();}
+    void resume(){if(role==Role.PHONE_START){if(!closed&&view!=null)resumeEngine();}else if(!isOverlay)resumeRendering();}
     private boolean resumeEngine(){
         if(renderingActive)return false;
         hostTrace("engine resume requested");view.onResume();view.resumeTimers();renderingActive=true;return true;
@@ -160,6 +140,7 @@ final class WebHost {
         else if(!everRendered)watchInitialLoad();
     }
     void pause(){
+        if(role==Role.PHONE_START){if(view!=null&&renderingActive){view.onPause();renderingActive=false;}return;}
         boolean invalidate=presentationActive||renderingActive||frameReady||visualPending!=-1;
         presentationActive=false;
         if(invalidate)resetVisualState("pause");
@@ -174,6 +155,7 @@ final class WebHost {
         if(ready&&pendingScreen.equals(renderedScreen))requestVisualState();else watchInitialLoad();
     }
     void requestVisualState(){
+        if(role==Role.PHONE_START)return;
         if(closed||!ready||view==null||!view.isAttachedToWindow()||root.getVisibility()!=View.VISIBLE
             ||!pendingScreen.equals(renderedScreen)||frameReady||visualPending==visualGeneration)return;
         // Keep preparing the attached document, including while its dictionary Activity is paused.
@@ -212,6 +194,7 @@ final class WebHost {
         invalidateFrame();
     }
     void didDraw(WebView source){
+        if(role==Role.PHONE_START)return;
         // Diagnostic only: HWUI submission is stronger evidence than onDraw, but
         // still does not establish SurfaceFlinger/OEM display composition.
         if(!closed&&source==view&&tracing()&&Build.VERSION.SDK_INT>=29&&source.isHardwareAccelerated()
@@ -267,14 +250,13 @@ final class WebHost {
                 hostTrace("window visibility observed="+visibility+" attached="+isAttachedToWindow()+" accelerated="+isHardwareAccelerated());
             }
         };
-        // The prepared overlay must submit through its accelerated window, rather
-        // than forcing a CPU bitmap redraw when keyguard unhides the surface.
-        // Keep the existing Activity workaround outside the unlock path.
-        if(!isOverlay)view.setLayerType(View.LAYER_TYPE_SOFTWARE,null);
+        // Keep MainActivity's existing renderer workaround; PhoneStartActivity uses
+        // the ordinary hardware-accelerated Activity window.
+        if(role==Role.MAIN)view.setLayerType(View.LAYER_TYPE_SOFTWARE,null);
         root.addView(view,0,new android.widget.FrameLayout.LayoutParams(-1,-1));
         if(isOverlay){view.setVisibility(View.INVISIBLE);if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);}
         WebSettings s=view.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(false);s.setAllowFileAccess(false);s.setAllowContentAccess(false);s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);s.setMediaPlaybackRequiresUserGesture(true);s.setSupportMultipleWindows(false);
-        if(isOverlay)s.setOffscreenPreRaster(true); // One display-sized attached overlay, prepared behind keyguard.
+        if(isOverlay)s.setOffscreenPreRaster(true); // App gate only; phone rendering belongs to Activity.
         applyTheme();
         WebViewAssetLoader loader=new WebViewAssetLoader.Builder().addPathHandler("/assets/",new WebViewAssetLoader.AssetsPathHandler(context)).build();
         view.setWebViewClient(new WebViewClient(){
@@ -290,7 +272,7 @@ final class WebHost {
                 root.removeView(v);v.removeJavascriptInterface("Native");v.destroy();if(!closed)main.post(WebHost.this::createView);return true;
             }
         });
-        view.addJavascriptInterface(new Bridge(view),"Native");view.setOnKeyListener((v,key,e)->{if(key==KeyEvent.KEYCODE_BACK&&e.getAction()==KeyEvent.ACTION_UP){evaluate("back()");return true;}return false;});
+        view.addJavascriptInterface(new Bridge(view),"Native");view.setOnKeyListener((v,key,e)->{if(key==KeyEvent.KEYCODE_BACK&&e.getAction()==KeyEvent.ACTION_UP){if(role==Role.PHONE_START)((PhoneStartActivity)context).onBackPressed();else evaluate("back()");return true;}return false;});
         hostTrace("document load requested");view.loadUrl("https://appassets.androidplatform.net/assets/index.html");watchInitialLoad();
     }
     void openChat(String id){pendingChat=id;screen("chat");}
@@ -302,12 +284,12 @@ final class WebHost {
         if(closed||source!=view||!ready||previous!=navigationGeneration||navigation!=previous+1
             ||!Set.of("chat","chats","unlock").contains(screen))return;
         GuardService g=GuardService.live;
-        if(isOverlay&&(g==null||g.overlay!=this||!"unlock".equals(g.gate)))return;
+        if(role==Role.APP_GATE)return;
         // JS has already built the next screen in this document. Do not navigate/load,
         // hide the WebView or show the native loading surface. rendered(revision) owns validation.
         navigationGeneration=navigation;pendingScreen=screen;pendingChat="chat".equals(screen)?chat:"";
-        setPreparingStart(false);++startPreparation;cancelInitialWatch();
-        if(isOverlay){g.endUnlockTransition("in-place-navigation");if(!"unlock".equals(screen))g.requestNavigationInput();presentationUtility="unlock".equals(screen)?"첫 화면":"ChatGPT";}
+        cancelInitialWatch();
+
     }
     private void dispatchScreen(){
         WebView candidate=view;long navigation=navigationGeneration;String name=pendingScreen,chat=pendingChat;
@@ -356,19 +338,19 @@ final class WebHost {
             case "excludeUsage":{Set<String> excluded=new HashSet<>(store.settings.getStringSet("usage-excluded",Set.of()));String target=a.getString("pkg");if(a.getBoolean("excluded"))excluded.add(target);else excluded.remove(target);store.settings.edit().putStringSet("usage-excluded",excluded).apply();if(g!=null)g.policyChanged();break;}
             case "purpose":out=store.purpose(a,a.optString("scope","phone"));break;
             case "removePurpose":store.getWritableDatabase().delete("purposes","id=?",new String[]{a.getString("id")});break;
-            case "choose":if(g!=null&&isOverlay)g.choosePhone(resolvePurpose(a));else {JSONObject p=resolvePurpose(a);store.event("unlock",p.getString("label"),"",p.optString("pkg"),0,p.optInt("aimless",0)==1);Intent i=Links.intent(context,p.optString("pkg"),p.optString("uri"));if(i!=null)context.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));else if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);}break;
+            case "choose":if(role==Role.PHONE_START)((PhoneStartActivity)context).choose(resolvePurpose(a));else if(role==Role.APP_GATE)throw new IllegalStateException("앱 사용시간을 선택해 주세요.");else {JSONObject p=resolvePurpose(a);store.event("unlock",p.getString("label"),"",p.optString("pkg"),0,p.optInt("aimless",0)==1);Intent i=Links.intent(context,p.optString("pkg"),p.optString("uri"));if(i!=null)context.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));else if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);}break;
             case "grant":if(g==null)throw new IllegalStateException("접근성 서비스를 먼저 켜 주세요.");g.allowApp(resolvePurpose(a),a.optInt("minutes",5));break;
             case "extend":if(g!=null)g.extend(a.optInt("minutes",5));break;
             case "stop":if(g!=null)g.stopApp();break;
             case "utility":if(g!=null)g.useUtility(a.getString("name"));else store.event("utility",a.getString("name"),context.getPackageName(),"",0);break;
-            case "open":if(isOverlay&&g!=null)g.openMain(a.getString("screen"),a.optString("chat"));else if(a.optString("screen").equals("chat")&&!a.optString("chat").isEmpty())openChat(a.getString("chat"));else screen(a.getString("screen"));break;
-            case "dismiss":if(isOverlay&&g!=null)g.dismissStart();else if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);break;
-            case "remember":if(!isOverlay){if(a.has("briefTarget"))store.settings.edit().putString("last-brief",a.getJSONObject("briefTarget").toString()).apply();pendingScreen=a.optString("screen","home");store.settings.edit().putString("chat-return",a.optString("chatReturn","chats")).putString("chats-return",a.optString("chatsReturn","home")).putString("last-screen",a.optString("screen","home")).putString("last-chat",a.optString("chat")).putString("last-note",a.optString("note")).apply();}break;
+            case "open":if(role==Role.PHONE_START&&!Set.of("unlock","notes","chats","chat").contains(a.optString("screen"))){openMain(a.getString("screen"));}else if(isOverlay&&g!=null)g.openMain(a.getString("screen"),a.optString("chat"));else if(a.optString("screen").equals("chat")&&!a.optString("chat").isEmpty())openChat(a.getString("chat"));else screen(a.getString("screen"));break;
+            case "dismiss":if(role==Role.PHONE_START)((PhoneStartActivity)context).dismiss();else if(isOverlay&&g!=null)g.stopApp();else if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);break;
+            case "remember":if(role==Role.PHONE_START){if(!((PhoneStartActivity)context).chosen)store.settings.edit().putString("phone-start-session",a.toString()).apply();pendingScreen=a.optString("screen","unlock");}else if(!isOverlay){if(a.has("briefTarget"))store.settings.edit().putString("last-brief",a.getJSONObject("briefTarget").toString()).apply();pendingScreen=a.optString("screen","home");store.settings.edit().putString("chat-return",a.optString("chatReturn","chats")).putString("chats-return",a.optString("chatsReturn","home")).putString("last-screen",a.optString("screen","home")).putString("last-chat",a.optString("chat")).putString("last-note",a.optString("note")).apply();}break;
             case "dictionaries":out=Links.dictionaries(context);break;
             case "dictionaryChoice":store.settings.edit().putString("dictionary",a.getString("id")).apply();break;
-            case "exit":if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);break;
+            case "exit":if(role==Role.PHONE_START)((PhoneStartActivity)context).moveTaskToBack(true);else if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);break;
             case "dictionary":
-                if(isOverlay&&g!=null){g.openDictionary(a.getString("word"),error->answer(id,error==null?dictionaryLaunched():null,error));return;}
+                if(role==Role.PHONE_START){((PhoneStartActivity)context).dictionary(a.getString("word"));out=dictionaryLaunched();break;}
                 Links.dictionary(context,a.getString("word"));
                 if(g!=null)g.useUtility("사전");else store.event("utility","사전",context.getPackageName(),"",0);
                 out=dictionaryLaunched();break;
@@ -415,7 +397,7 @@ final class WebHost {
             case "models":out=LockyApp.app.auth.models();store.settings.edit().putString("models",out.toString()).apply();break;
             case "account":LockyApp.app.auth.select(a.getString("client"));store.settings.edit().putString("model","").putString("models","[]").apply();break;
             case "signout":out=new JSONObject().put("message",LockyApp.app.auth.signOut());store.settings.edit().putString("model","").putString("models","[]").apply();break;
-            case "signin":if(isOverlay&&g!=null){g.openMain("chats");break;}LockyApp.app.auth.signIn(a.optString("client"),a.optBoolean("consent",false),new ChatGPT.SignIn(){public void browser(String url){if(context instanceof MainActivity)((MainActivity)context).loginBrowser(url);}public void progress(){refreshAll();}public void success(){main.post(()->{if(context instanceof MainActivity)((MainActivity)context).releaseLoginBrowser();});LockyApp.app.work.execute(()->{try{JSONArray models=LockyApp.app.auth.models();store.settings.edit().putString("models",models.toString()).apply();if(models.length()>0)store.settings.edit().putString("model",models.getJSONObject(0).getString("slug")).apply();}catch(Exception ignored){}refreshAll();});}public void error(String error){main.post(()->{if(context instanceof MainActivity)((MainActivity)context).releaseLoginBrowser();});refreshAll();}});break;
+            case "signin":if(role!=Role.MAIN){openMain("chats");break;}LockyApp.app.auth.signIn(a.optString("client"),a.optBoolean("consent",false),new ChatGPT.SignIn(){public void browser(String url){if(context instanceof MainActivity)((MainActivity)context).loginBrowser(url);}public void progress(){refreshAll();}public void success(){main.post(()->{if(context instanceof MainActivity)((MainActivity)context).releaseLoginBrowser();});LockyApp.app.work.execute(()->{try{JSONArray models=LockyApp.app.auth.models();store.settings.edit().putString("models",models.toString()).apply();if(models.length()>0)store.settings.edit().putString("model",models.getJSONObject(0).getString("slug")).apply();}catch(Exception ignored){}refreshAll();});}public void error(String error){main.post(()->{if(context instanceof MainActivity)((MainActivity)context).releaseLoginBrowser();});refreshAll();}});break;
             case "cancelLogin":LockyApp.app.auth.cancelLogin();if(context instanceof MainActivity)((MainActivity)context).releaseLoginBrowser();break;
             case "permission":permission(a.getString("name"));break;
             default:throw new IllegalArgumentException("지원하지 않는 요청입니다.");
@@ -431,7 +413,6 @@ final class WebHost {
         if(a.has("unlockDiagnostics"))UnlockDiagnostics.get(context).setEnabled(a.getBoolean("unlockDiagnostics"));
         var e=store.settings.edit();
         if(a.has("floatingTimer"))e.putBoolean("floatingTimer",a.getBoolean("floatingTimer"));
-        if(a.has("startUnderKeyguard"))e.putBoolean("start-under-keyguard",a.getBoolean("startUnderKeyguard"));
         if(a.has("themeMode")){String value=a.getString("themeMode");if(!Set.of("system","light","dark").contains(value))throw new IllegalArgumentException("화면 테마를 다시 선택해 주세요.");e.putString("theme-mode",value);}
         if(a.has("start")||a.has("end")){int start=a.optInt("start",store.settings.getInt("start",540)),end=a.optInt("end",store.settings.getInt("end",1260));if(start<0||start>1439||end<0||end>1439||start==end)throw new IllegalArgumentException("서로 다른 시작·종료 시간을 선택해 주세요.");}
         if(a.has("reminders")){JSONArray input=a.getJSONArray("reminders"),values=new JSONArray();Set<Integer> seen=new HashSet<>();for(int i=0;i<input.length();i++){int m=input.getInt(i);if(m>=1&&m<=180&&seen.add(m))values.put(m);}e.putString("reminders",values.toString());}
@@ -443,6 +424,12 @@ final class WebHost {
         if(a.has("enabled")||a.has("start")||a.has("end"))store.saveFocus(a.optBoolean("enabled",store.settings.getBoolean("enabled",true)),a.optInt("start",store.settings.getInt("start",540)),a.optInt("end",store.settings.getInt("end",1260)),"user");
         e.apply();
     }
+    JSONObject phoneSession(){try{return new JSONObject(store.settings.getString("phone-start-session","{}"));}catch(JSONException ignored){return new JSONObject();}}
+    void clearPhoneSession(){store.settings.edit().remove("phone-start-session").apply();}
+    void openMain(String screen){
+        Intent intent=MainActivity.launchIntent(context).putExtra("screen",screen).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        context.startActivity(intent);
+    }
     JSONObject purposeOrders() throws JSONException {
         Set<String> scopes=new HashSet<>(Set.of("phone","app"));JSONArray purposes=store.rows("SELECT DISTINCT scope FROM purposes"),rules=store.rows("SELECT pkg FROM rules");
         for(int i=0;i<purposes.length();i++)scopes.add(purposes.getJSONObject(i).getString("scope"));for(int i=0;i<rules.length();i++)scopes.add(rules.getJSONObject(i).getString("pkg"));
@@ -451,7 +438,7 @@ final class WebHost {
     }
     JSONObject state() throws Exception {
         JSONObject status=new JSONObject().put("accessibility",GuardService.live!=null).put("drawOverlays",Settings.canDrawOverlays(context)).put("startWindow",GuardService.live==null?UnlockDiagnostics.get(context).windowStatus().put("status","service-off"):GuardService.live.startWindowStatus()).put("unlockDiagnostics",UnlockDiagnostics.get(context).status()).put("usage",UsageReader.allowed(context)).put("notifications",context.getSystemService(NotificationManager.class).areNotificationsEnabled()).put("exact",Build.VERSION.SDK_INT<31||context.getSystemService(AlarmManager.class).canScheduleExactAlarms()).put("briefing",Notices.briefingStatus(context)).put("liveTimer",Notices.timerStatus(context));
-        return new JSONObject().put("savedBrief",new JSONObject(store.settings.getString("last-brief","{}"))).put("purposeDate",java.time.LocalDate.now().toString()).put("purposeOrders",purposeOrders()).put("chatReturn",store.settings.getString("chat-return","chats")).put("chatsReturn",store.settings.getString("chats-return","home")).put("overlay",isOverlay).put("prefs",store.preferences()).put("status",status).put("free",!store.managed(System.currentTimeMillis())).put("gate",GuardService.live==null?new JSONObject():GuardService.live.state()).put("purposes",store.purposes(isOverlay&&GuardService.live!=null&&!GuardService.live.gatePkg.isEmpty()?GuardService.live.gatePkg:"phone")).put("allPurposes",store.rows("SELECT * FROM purposes ORDER BY rowid")).put("notes",store.rows("SELECT * FROM notes ORDER BY updated DESC")).put("chats",store.rows("SELECT * FROM chats ORDER BY updated DESC")).put("rules",store.rows("SELECT * FROM rules ORDER BY label")).put("models",new JSONArray(store.settings.getString("models","[]"))).put("accounts",LockyApp.app.auth.accounts()).put("connection",LockyApp.app.auth.connection()).put("busy",LockyApp.app.chat.busy.get()).put("activeChat",LockyApp.app.chat.active).put("chatError",LockyApp.app.chat.error).put("ruleSeen",new JSONArray(store.settings.getString("rule-seen","[]"))).put("dictionary",store.settings.getString("dictionary","")).put("savedChat",store.settings.getString("last-chat","")).put("savedNote",store.settings.getString("last-note",""));
+        return new JSONObject().put("savedBrief",new JSONObject(store.settings.getString("last-brief","{}"))).put("purposeDate",java.time.LocalDate.now().toString()).put("purposeOrders",purposeOrders()).put("chatReturn",role==Role.PHONE_START?phoneSession().optString("chatReturn","unlock"):store.settings.getString("chat-return","chats")).put("chatsReturn",role==Role.PHONE_START?phoneSession().optString("chatsReturn","unlock"):store.settings.getString("chats-return","home")).put("role",role.name()).put("phoneSession",role==Role.PHONE_START?phoneSession():new JSONObject()).put("overlay",isOverlay).put("prefs",store.preferences()).put("status",status).put("free",!store.managed(System.currentTimeMillis())).put("gate",GuardService.live==null?new JSONObject():GuardService.live.state()).put("purposes",store.purposes(isOverlay&&GuardService.live!=null&&!GuardService.live.gatePkg.isEmpty()?GuardService.live.gatePkg:"phone")).put("allPurposes",store.rows("SELECT * FROM purposes ORDER BY rowid")).put("notes",store.rows("SELECT * FROM notes ORDER BY updated DESC")).put("chats",store.rows("SELECT * FROM chats ORDER BY updated DESC")).put("rules",store.rows("SELECT * FROM rules ORDER BY label")).put("models",new JSONArray(store.settings.getString("models","[]"))).put("accounts",LockyApp.app.auth.accounts()).put("connection",LockyApp.app.auth.connection()).put("busy",LockyApp.app.chat.busy.get()).put("activeChat",LockyApp.app.chat.active).put("chatError",LockyApp.app.chat.error).put("ruleSeen",new JSONArray(store.settings.getString("rule-seen","[]"))).put("dictionary",store.settings.getString("dictionary","")).put("savedChat",role==Role.PHONE_START?phoneSession().optString("chat"):store.settings.getString("last-chat","")).put("savedNote",role==Role.PHONE_START?phoneSession().optString("note"):store.settings.getString("last-note",""));
     }
     JSONArray apps() throws Exception {
         Intent launcher=new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);List<ResolveInfo> list=context.getPackageManager().queryIntentActivities(launcher,0);Set<String> seen=new HashSet<>();JSONArray out=new JSONArray();list.sort(Comparator.comparing(x->x.loadLabel(context.getPackageManager()).toString()));
@@ -470,6 +457,7 @@ final class WebHost {
             if(isOverlay&&GuardService.live!=null)GuardService.live.hideOverlay();
             context.startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:"+context.getPackageName())).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));return;
         }
+        if(role==Role.PHONE_START){openMain("setup");return;}
         if(isOverlay&&GuardService.live!=null){GuardService.live.openMain("setup");return;}
         if(name.equals("briefChannel")){context.startActivity(Notices.briefingSettings(context).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));return;}
         if(name.equals("liveTimer")||name.equals("timerChannel")){context.startActivity(Notices.timerSettings(context,name.equals("liveTimer")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));return;}

@@ -53,22 +53,18 @@ final class UnlockDiagnostics {
         }catch(JSONException ignored){}
     }
     synchronized void resumeCapture(){if(enabled&&current!=null){until=SystemClock.elapsedRealtime()+30_000;current.remove("captureEnd");current.remove("captureEndReason");}}
-    synchronized void confirmed(int type){
+    synchronized void confirmedActivity(){
         long now=System.currentTimeMillis();
-        prefs.edit().putString("unlock-last-window",windowName(type)).putLong("unlock-last-at",now).apply();
-        if(enabled&&current!=null)try{current.put("unlock",now).put("window",windowName(type));record("unlock confirmed observed type="+type);}catch(JSONException ignored){}
-    }
-    synchronized void transitionEnded(String reason){
-        if(enabled&&current!=null)try{current.put("transitionEnd",System.currentTimeMillis()).put("transitionEndReason",reason);}catch(JSONException ignored){}
-        if(enabled&&current!=null)schedule();
+        prefs.edit().putString("unlock-last-window","activity").putLong("unlock-last-at",now).apply();
+        if(enabled&&current!=null)try{current.put("unlock",now).put("window","activity");record("unlock confirmed Activity");}catch(JSONException ignored){}
     }
     void failure(String operation,Exception error){
         // Exception messages can include app/window information. Keep only controlled category and class.
         String value=operation+":"+error.getClass().getSimpleName();
         prefs.edit().putString("unlock-last-failure",value).putLong("unlock-last-failure-at",System.currentTimeMillis()).apply();
-        record("window failure "+value);
+        record("activity failure "+value);
     }
-    static String windowName(int type){return type==android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY?"application":type==android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY?"accessibility":"none";}
+
     synchronized void record(String event){
         if(!enabled||current==null)return;
         if(until>0&&SystemClock.elapsedRealtime()>until){
@@ -78,12 +74,8 @@ final class UnlockDiagnostics {
         try{
             String text=event.substring(0,Math.min(event.length(),500));
             JSONObject row=new JSONObject().put("at",System.currentTimeMillis()).put("elapsed",SystemClock.elapsedRealtime()-origin).put("event",text);
-            String counter=text.startsWith("window add ")?"adds":text.startsWith("window remove ")?"removes":text.startsWith("window update requested")?"updates":text.startsWith("alpha ")?"alphas":null;
-            if(counter!=null)current.put(counter,current.optInt(counter)+1);
-            boolean stateChanged=false;
-            if(text.startsWith("state ")){JSONArray states=current.optJSONArray("states");if(states==null){states=new JSONArray();current.put("states",states);}if(states.length()<40){states.put(text.substring(6));stateChanged=true;}}
             // Compress repeated observations by source (not only adjacent rows).
-            // Counters above still count every request; changes remain chronological.
+            // Changes remain chronological.
             String key=observationKey(text);JSONObject prior=key==null?null:observations.get(key);
             if(prior!=null&&text.equals(prior.optString("event"))){
                 bytes-=rowBytes(prior);prior.put("repeats",prior.optInt("repeats")+1).put("lastAt",row.getLong("at")).put("lastElapsed",row.getLong("elapsed"));bytes+=rowBytes(prior);
@@ -93,23 +85,17 @@ final class UnlockDiagnostics {
             current.getJSONArray("events").put(row);bytes+=rowBytes(row);
             JSONArray events=current.getJSONArray("events");
             if(events.length()>MAX_EVENTS)evict(current);
-            if(stateChanged)recount();
             trim();schedule();
         }catch(JSONException ignored){}
     }
     private static String observationKey(String text){
-        if(text.startsWith("keyguard window observed id=")||text.startsWith("system window observed id=")){
-            int end=text.indexOf(' ',text.indexOf("id=")+3);return end<0?text:text.substring(0,end);
-        }
-        if(text.startsWith("reveal requested"))return "reveal";
-        if(text.startsWith("system decision="))return "decision";
-        if(text.equals("duplicate unlock ignored")||text.startsWith("accessibility observed"))return text;
+        if(text.startsWith("accessibility observed"))return text;
         return null;
     }
     private static int priority(String text){
         if(observationKey(text)!=null)return 0;
         if(text.startsWith("web=")&&(text.contains("dom ")||text.contains("Draw observed")||text.contains("view-draw")||text.contains("frame-commit")||text.contains("visual ")||text.contains("visual-ready")||text.contains("frameReady=")||text.contains("visibility")||text.contains("attach")||text.contains("detach")||text.contains("recovery")))return 2;
-        if(text.startsWith("window ")||text.startsWith("alpha ")||text.contains("visibility requested")||text.startsWith("state ")||text.startsWith("input ")||text.startsWith("prepare-")||text.startsWith("unlock")||text.startsWith("keyguard observed")||text.contains("failure")||text.startsWith("fallback"))return 2;
+        if(text.startsWith("phone-activity ")||text.startsWith("unlock")||text.startsWith("keyguard observed")||text.contains("failure"))return 2;
         return 1;
     }
     private static int rowBytes(JSONObject row){return row.toString().getBytes(StandardCharsets.UTF_8).length+1;}
@@ -171,7 +157,7 @@ final class UnlockDiagnostics {
     }
     synchronized String text(){
         StringBuilder out=new StringBuilder("Locky 잠금 해제 진단 · "+BuildConfig.VERSION_NAME+"\nAndroid "+Build.VERSION.RELEASE+" (SDK "+Build.VERSION.SDK_INT+") · "+Build.MANUFACTURER+" "+Build.MODEL+"\n내보낸 시각: "+timestamp(System.currentTimeMillis())+"\n");
-        out.append("요청(requested)과 앱/Android 콜백(observed)을 구분합니다. update accepted는 호출 성공이며 실제 화면 합성 완료를 뜻하지 않습니다. View draw/visual-ready 및 HWUI frame-commit(버퍼 제출)도 실제 디스플레이 합성 완료 증거가 아닙니다.\n메모·질문·답변·검색어·화면 텍스트는 수집하지 않습니다.\n");
+        out.append("Activity 실행 요청과 실제 생명주기 콜백을 구분합니다. onCreate/onResume은 실제 삼성 화면 전환의 자연스러움을 보증하지 않습니다.\n메모·질문·답변·검색어·화면 텍스트는 수집하지 않습니다.\n");
         out.append("진단 기록: ").append(enabled?"켜짐":"꺼짐").append(" · 보관 ").append(cycles.size()).append("회 (최대 5회/약 200KB)\n");
         if(!storageError.isEmpty())out.append(storageError).append('\n');
         if(cycles.isEmpty())out.append("기록이 없습니다. 진단을 켠 뒤 화면을 끄고 잠금을 해제해 주세요.\n");
@@ -180,12 +166,9 @@ final class UnlockDiagnostics {
             out.append("\n=== 주기 ").append(++n).append(" · ").append(timestamp(c.optLong("start"))).append(" ===\n");
             out.append("환경: Locky ").append(c.optString("app")).append(" / Android ").append(c.optString("android")).append(" SDK ").append(c.optInt("sdk")).append(" / ").append(c.optString("model")).append('\n');
             out.append("잠금 해제 확인: ").append(stamp(c,"unlock")).append(" · 창: ").append(c.optString("window","아직 확인되지 않음")).append('\n');
-            out.append("전환 종료: ").append(stamp(c,"transitionEnd")).append(" · 이유: ").append(c.optString("transitionEndReason","미확인")).append('\n');
             out.append("기록 종료: ").append(stamp(c,"captureEnd")).append(" · 이유: ").append(c.optString("captureEndReason","기록 중/마지막 관찰 이후 대기")).append('\n');
             JSONArray rows=c.optJSONArray("events");if(rows==null)continue;
-            out.append("창 생성 ").append(c.optInt("adds")).append(" / 제거 ").append(c.optInt("removes")).append(" / 갱신 요청 ").append(c.optInt("updates")).append(" / alpha 변경 요청 ").append(c.optInt("alphas")).append(" / 생략된 과다 이벤트 ").append(c.optInt("dropped")).append('\n');
             out.append("중복 관찰 압축 ").append(c.optInt("compressed")).append(" / 용량 초과 핵심 이벤트 생략 ").append(c.optInt("criticalDropped")).append('\n');
-            out.append("상태 순서: ").append(c.optJSONArray("states")==null?"[]":c.optJSONArray("states").toString()).append('\n');
             for(int i=0;i<rows.length();i++){JSONObject r=rows.optJSONObject(i);out.append(timestamp(r.optLong("at"))).append(" +").append(r.optLong("elapsed")).append("ms ").append(r.optString("event"));if(r.optInt("repeats")>0)out.append(" [동일 관찰 추가 ").append(r.optInt("repeats")).append("회 · 마지막 +").append(r.optLong("lastElapsed")).append("ms]");out.append('\n');}
         }
         return out.toString();

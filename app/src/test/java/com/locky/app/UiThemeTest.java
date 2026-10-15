@@ -20,7 +20,7 @@ public class UiThemeTest {
     @After public void cleanup(){if(host!=null){host.close();host.store.close();}Store.instance=null;}
     @Test public void initialNightSurfaceAndSystemBarsAgree(){
         Activity activity=Robolectric.buildActivity(Activity.class).setup().visible().get();
-        host=new WebHost(activity,true);activity.setContentView(host.root);
+        host=new WebHost(activity,WebHost.Role.APP_GATE);activity.setContentView(host.root);
         Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
         assertTrue(UiTheme.dark(activity));
         assertFalse(activity.getResources().getBoolean(R.bool.light_system_bars));
@@ -32,7 +32,7 @@ public class UiThemeTest {
     }
     @Test public void themeAndFontChangeRetainDocumentAndNavigation(){
         Activity activity=Robolectric.buildActivity(Activity.class).setup().get();
-        host=new WebHost(activity,true);WebView original=host.view;
+        host=new WebHost(activity,WebHost.Role.APP_GATE);WebView original=host.view;
         host.pendingScreen="unlock";host.renderedScreen="unlock";long generation=host.navigationGeneration;
         Configuration next=new Configuration(activity.getResources().getConfiguration());
         next.uiMode=(next.uiMode&~Configuration.UI_MODE_NIGHT_MASK)|Configuration.UI_MODE_NIGHT_NO;next.fontScale=1.4f;
@@ -45,7 +45,7 @@ public class UiThemeTest {
     }
     @Test public void userThemeOverridePersistsWithoutRecreatingWebView() throws Exception {
         Activity activity=Robolectric.buildActivity(Activity.class).setup().get();
-        host=new WebHost(activity,true);
+        host=new WebHost(activity,WebHost.Role.APP_GATE);
         WebView original=host.view;
         host.saveSettings(new org.json.JSONObject().put("themeMode","light"));
         host.applyTheme();

@@ -4,7 +4,7 @@ A lightweight personal Android app for intentional phone use. Android 8+; design
 
 ## Features
 
-- Accessibility overlay prepared on screen-off, visible after unlock; tools and purposes remain available during free time.
+- PhoneStartActivity prepared on screen-off behind the Android keyguard, visible after normal unlock; managed-app gates remain accessibility overlays. Tools and purposes remain available during free time.
 - Fixed-size inline notes and direct questions on the compact start screen; separate text/check notes with a single editor scroll and pinned actions; local ChatGPT conversation list, new chats and deletion.
 - Official Continue with ChatGPT: system browser, loopback callback, PKCE, state, nonce, signature/issuer/audience validation, Android Keystore encrypted credentials; account-specific models and streaming Responses API.
 - Dictionary searches preserve the same start view and drafts behind popup dictionaries and restore it after full dictionary/chooser return. Remembered dictionary selection: explicit Android word processing activity, Samsung dictionary or Naver dictionary. Samsung's external search intent is not a stable API: the app may open at its home rather than prefill the word.
@@ -24,13 +24,13 @@ Briefing shows the ongoing day separately from completed dates and focus-window 
 
 ## Real platform limits
 
-This is a voluntary self-management app, not device-owner kiosk software. Disabling accessibility, force-stopping or uninstalling it can stop enforcement. Calls, system settings, keyboard and critical system UI are not blocked. Overlays cover a selected app and prevent using it; Locky does not kill its process. Launcher/system transitions, manufacturer service suspension and multi-window behavior require real-device checks. Screen-off preloading minimizes a flash after unlock, but Android/OEM scheduling cannot guarantee zero frames of the underlying app. Usage access recovers gaps when available; purposes are not invented for those gaps. Notification permission/Do Not Disturb and Doze can delay alerts; exact alarm permission improves scheduled transitions.
+This is a voluntary self-management app, not device-owner kiosk software. Disabling accessibility, force-stopping or uninstalling it can stop enforcement. Calls, system settings, keyboard and critical system UI are not blocked. Overlays cover a selected app and prevent using it; Locky does not kill its process. Launcher/system transitions, manufacturer service suspension and multi-window behavior require real-device checks. Screen-off Activity preparation uses the system-bound accessibility service. A single recovery request at confirmed unlock handles a preparation without lifecycle acknowledgement; Android/OEM background-launch policy and visual transitions still require real-device checks. Usage access recovers gaps when available; purposes are not invented for those gaps. Notification permission/Do Not Disturb and Doze can delay alerts; exact alarm permission improves scheduled transitions.
 
 ChatGPT integration follows the official personal/local-client OAuth documentation. It does not import conversations from ChatGPT. Connection and account quota require the user's actual approval on the device. No API key or subscription token is included in this repository. All local history is retained, and completed history is sent to maintain context; long chats can increase input usage.
 
 ## Build and release
 
-Version 1.1.0 (`versionCode 2`) upgrades the original signed installation without deleting records, notes, chats or purposes.
+The PhoneStart Activity preview uses versionCode 15 with the same package and personal signing key, and updates the existing installation without deleting records, notes, chats or purposes.
 
 JDK 21 (required by Android 16 JVM tests), Gradle 8.11.1, Android SDK 36. Java source/target compatibility and targetSdk remain 17 and 35 respectively. `gradle :app:testDebugUnitTest :app:lintDebug :app:assembleRelease`.
 

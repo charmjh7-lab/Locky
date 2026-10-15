@@ -114,8 +114,8 @@ final class Store extends SQLiteOpenHelper {
             while(c.moveToNext()){long a=c.getLong(0),b=c.getLong(1);if(a>cursor)gaps.add(new long[]{cursor,Math.min(a,to)});cursor=Math.max(cursor,b);if(cursor>=to)break;}
         }
         if(cursor<to)gaps.add(new long[]{cursor,to});
-        GuardService guard=GuardService.live;String surface=pkg.equals(context.getPackageName())?"internal":"external";
-        if(source.equals("accessibility")&&guard!=null&&guard.dictionaryHost!=null&&guard.utility.equals("사전")&&guard.dictionaryHost.packages.contains(pkg))surface="dictionary-tool";
+        String surface=pkg.equals(context.getPackageName())?"internal":"external";
+        if(source.equals("accessibility")&&PhoneStartActivity.current()!=null&&PhoneStartActivity.current().allowsDictionary(pkg))surface="dictionary-tool";
         for(long[] gap:gaps)appendUsage(gap[0],gap[1],pkg,label,managed,parent,source,surface);
     }
     private void appendUsage(long from,long to,String pkg,String label,boolean managed,long parent,String source,String surface) {
@@ -187,6 +187,6 @@ final class Store extends SQLiteOpenHelper {
     synchronized void citations(long id,JSONArray links){ContentValues v=new ContentValues();v.put("citations",links.toString());getWritableDatabase().update("messages",v,"id=?",new String[]{""+id});}
     synchronized void deleteChat(String id) {SQLiteDatabase d=getWritableDatabase();d.beginTransaction();try {d.delete("messages","chat=?",new String[]{id});d.delete("chats","id=?",new String[]{id});d.setTransactionSuccessful();}finally{d.endTransaction();}}
     boolean managed(long time) {return settings.getBoolean("enabled",true)&&Rules.managed(Rules.minute(time,ZoneId.systemDefault()),settings.getInt("start",540),settings.getInt("end",1260));}
-    JSONObject preferences() throws JSONException {return new JSONObject().put("enabled",settings.getBoolean("enabled",true)).put("startUnderKeyguard",settings.getBoolean("start-under-keyguard",true)).put("floatingTimer",settings.getBoolean("floatingTimer",true)).put("start",settings.getInt("start",540)).put("end",settings.getInt("end",1260)).put("reminders",new JSONArray(settings.getString("reminders","[30,20,10,5,1]"))).put("dailyBrief",settings.getBoolean("dailyBrief",true)).put("dailyBriefTime",settings.getInt("dailyBriefTime",540)).put("focusBrief",settings.getBoolean("focusBrief",true)).put("weeklyDay",settings.getInt("weeklyDay",7)).put("model",settings.getString("model","")).put("themeMode",UiTheme.mode(context));}
+    JSONObject preferences() throws JSONException {return new JSONObject().put("enabled",settings.getBoolean("enabled",true)).put("floatingTimer",settings.getBoolean("floatingTimer",true)).put("start",settings.getInt("start",540)).put("end",settings.getInt("end",1260)).put("reminders",new JSONArray(settings.getString("reminders","[30,20,10,5,1]"))).put("dailyBrief",settings.getBoolean("dailyBrief",true)).put("dailyBriefTime",settings.getInt("dailyBriefTime",540)).put("focusBrief",settings.getBoolean("focusBrief",true)).put("weeklyDay",settings.getInt("weeklyDay",7)).put("model",settings.getString("model","")).put("themeMode",UiTheme.mode(context));}
     synchronized void cleanOldUsage() {long cutoff=System.currentTimeMillis()-180L*86400000;getWritableDatabase().delete("service_observations","time<?",new String[]{""+cutoff});getWritableDatabase().delete("usage","end<?",new String[]{""+cutoff});getWritableDatabase().delete("events","time<?",new String[]{""+cutoff});}
 }

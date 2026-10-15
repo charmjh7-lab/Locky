@@ -3,12 +3,12 @@ name: Locky Android
 # 일반 push에서는 빌드 작업을 건너뛰며, 전체 검증은 수동 실행으로 유지합니다.
 on:
   push:
-    branches: [main]
+    branches: [main, refactor/phone-start-activity-20261016]
   workflow_dispatch:
 permissions:
   contents: write
 concurrency:
-  group: locky-main
+  group: locky-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   ui:
@@ -68,9 +68,18 @@ jobs:
         with:
           gradle-version: '8.11.1'
           cache-disabled: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Phone start and quick chat interactions
+        run: |
+          npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright
+          npx playwright install --with-deps chromium --only-shell
+          node scripts/phone-start-ui-test.cjs
+          node scripts/quick-chat-ui-test.cjs
       - name: Focused UI platform regressions, lint and signed release APK
         run: |
-          gradle :app:testDebugUnitTest --tests 'com.locky.app.DictionaryReturnTest' --tests 'com.locky.app.OverlayRenderingTest' --tests 'com.locky.app.GateRestoreTest' --tests 'com.locky.app.ForegroundPolicyTest' --tests 'com.locky.app.UnlockDiagnosticsTest' --tests 'com.locky.app.RawExportTest' --tests 'com.locky.app.QuickQuestionTest' --tests 'com.locky.app.UiThemeTest' --tests 'com.locky.app.FloatingTimerInteractionTest' :app:lintDebug :app:assembleRelease --no-daemon
+          gradle :app:testDebugUnitTest --tests 'com.locky.app.PhoneStartActivityTest' --tests 'com.locky.app.SessionReturnTest' --tests 'com.locky.app.DictionaryReturnTest' --tests 'com.locky.app.OverlayRenderingTest' --tests 'com.locky.app.GateRestoreTest' --tests 'com.locky.app.ForegroundPolicyTest' --tests 'com.locky.app.UnlockDiagnosticsTest' --tests 'com.locky.app.RawExportTest' --tests 'com.locky.app.QuickQuestionTest' --tests 'com.locky.app.UiThemeTest' --tests 'com.locky.app.FloatingTimerInteractionTest' :app:lintDebug :app:assembleRelease --no-daemon
       - name: Verify and publish directly installable APK
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -84,8 +93,12 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging distribution/Locky.apk > distribution/package.txt
           grep -q "name='com.locky.app'" distribution/package.txt
           (cd distribution && sha256sum Locky.apk > SHA256SUMS.txt)
-          gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.2.8 · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
-          python3 scripts/prune-releases.py
+          if [ "$GITHUB_REF_NAME" = "refactor/phone-start-activity-20261016" ]; then
+            gh release create "phone-start-preview-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.3.0 · PhoneStart Activity preview ${GITHUB_RUN_NUMBER}" --notes-file scripts/phone-start-release-notes.md --prerelease --latest=false
+          else
+            gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.2.8 · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
+            python3 scripts/prune-releases.py
+          fi
   visual-evidence:
     # Capture-only publication. The already verified APK release is not rebuilt.
     if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[ui-captures]') }}
