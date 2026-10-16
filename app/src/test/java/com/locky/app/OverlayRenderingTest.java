@@ -38,19 +38,19 @@ public class OverlayRenderingTest {
         assertEquals(View.LAYER_TYPE_NONE,host.view.getLayerType());
         // Robolectric 4.16.1 RoboWebSettings does not store offscreenPreRaster.
         // Its getter always returns false; hardware rasterization needs device evidence.
-        host.root.removeView(host.view);host.view.destroy();view=new FrameView(a);view.setVisibility(View.INVISIBLE);host.view=view;host.root.addView(view,0,new android.widget.FrameLayout.LayoutParams(-1,-1));a.setContentView(host.root);
+        host.root.removeView(host.view);host.view.destroy();view=new FrameView(a);host.view=view;host.root.addView(view,0,new android.widget.FrameLayout.LayoutParams(-1,-1));a.setContentView(host.root);
         host.pendingScreen="app";host.ready=true;host.resumeOverlay();
     }
     @After public void cleanup(){host.close();host.store.close();Store.instance=null;}
     void rendered(){host.rendered(view,"app",host.navigationGeneration,1);}
     @Test public void javascriptAndVisualCallbacksDoNotClaimAndroidHasDrawn(){
-        rendered();assertEquals(1,view.frames.size());assertEquals(View.INVISIBLE,view.getVisibility());
+        rendered();assertEquals(1,view.frames.size());assertEquals(View.VISIBLE,view.getVisibility());
         view.complete(0);assertTrue(host.frameReady);assertEquals(View.VISIBLE,view.getVisibility());assertEquals(View.GONE,host.loadingView.getVisibility());assertEquals("",host.paintedScreen);
         host.didDraw(view);Shadows.shadowOf(Looper.getMainLooper()).idle();assertEquals("app",host.paintedScreen);
     }
     @Test public void staleFrameAndSameScreenJavascriptCannotCompleteNewNavigation(){
         long previous=host.navigationGeneration;rendered();host.screen("app");view.complete(0);
-        assertFalse(host.frameReady);assertEquals(View.INVISIBLE,view.getVisibility());
+        assertFalse(host.frameReady);assertEquals(View.VISIBLE,view.getVisibility());
         host.rendered(view,"app",previous,1);assertEquals(1,view.frames.size());
         host.rendered(view,"app",host.navigationGeneration,1);assertEquals(2,view.frames.size());
     }
@@ -65,17 +65,17 @@ public class OverlayRenderingTest {
         view.scripts.clear();host.resumeOverlay();assertSame(view,host.view);assertTrue(view.scripts.isEmpty());assertEquals(0,view.loads);assertEquals(1,view.frames.size());
         host.didDraw(view);Shadows.shadowOf(Looper.getMainLooper()).idle();assertEquals("app",host.paintedScreen);
     }
-    @Test public void stalledVisualCallbackRestoresTheExistingDocumentWithoutReload(){
+    @Test public void stalledVisualCallbackRequestsDrawsButCannotApproveInputByElapsedTime(){
         rendered();Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(4));
         assertSame(view,host.view);assertEquals(0,view.loads);
-        assertTrue(host.frameReady);assertEquals(View.VISIBLE,view.getVisibility());
-        assertEquals(View.GONE,host.loadingView.getVisibility());assertEquals(2,view.frames.size());
+        assertFalse(host.frameReady);assertFalse(host.currentGateReady());assertEquals(View.VISIBLE,view.getVisibility());
+        assertEquals(View.GONE,host.loadingView.getVisibility());assertTrue(view.frames.size()>2);
         view.complete(0);assertTrue(host.frameReady);
-        host.resumeOverlay();assertEquals(2,view.frames.size());assertEquals(1,view.resumes);
+        int callbacks=view.frames.size();host.resumeOverlay();assertEquals(callbacks,view.frames.size());assertEquals(1,view.resumes);
     }
     @Test public void failedInitialLoadCanRetryBeforeReadyButSuccessfulPageCannotReload(){
         host.ready=false;host.loadFailed=true;host.retryInitialLoad();assertSame(view,host.view);assertEquals(1,view.loads);assertFalse(host.ready);
-        host.ready=true;rendered();host.loadFailed=true;host.retryInitialLoad();assertEquals(1,view.loads);
+        host.ready=true;rendered();host.retryInitialLoad();assertEquals(1,view.loads);
     }
     @Test public void repeatedWarmHideAndExposeDoesNotResumeRelayoutOrRevalidateTheFrame(){
         rendered();view.complete(0);host.prepareOverlay();view.scripts.clear();
@@ -110,7 +110,29 @@ public class OverlayRenderingTest {
         host.requestVisualState();view.complete(view.frames.size()-1);assertTrue(host.hasUsableFrame());
         host.pause();assertFalse(host.hasUsableFrame());
         host.resumeOverlay();view.complete(view.frames.size()-1);assertTrue(host.hasUsableFrame());
-        host.screen("app");assertFalse(host.hasUsableFrame());assertEquals(View.INVISIBLE,view.getVisibility());
+        host.screen("app");assertFalse(host.hasUsableFrame());assertEquals(View.VISIBLE,view.getVisibility());
+    }
+    @Test public void warmEntryCannotValidateOldSameScreenBeforeItsOwnDomAcknowledgement() throws Exception {
+        rendered();view.complete(0);int frames=view.frames.size();long old=host.navigationGeneration;
+        host.gateScreen("app",new org.json.JSONObject());host.prepareOverlay();host.requestVisualState();
+        assertEquals(frames,view.frames.size());assertFalse(host.currentGateReady());assertEquals(0,view.loads);
+        host.rendered(view,"app",old,2);assertEquals(frames,view.frames.size());
+        host.rendered(view,"app",host.navigationGeneration,2);assertEquals(frames+1,view.frames.size());
+        view.complete(frames);assertTrue(host.currentGateReady());
+    }
+    @Test public void gateIdleOnlyReadiesTheDocumentAndActualFailureHasExplicitRecovery(){
+        host.pendingScreen="gateIdle";host.rendered(view,"gateIdle",host.navigationGeneration,1);
+        view.complete(0);assertFalse(host.gateNeedsInitialLoad());assertFalse(host.currentGateReady());
+        assertFalse(host.gateErrorVisible());host.showGateError();assertTrue(host.gateErrorVisible());assertFalse(host.currentGateReady());
+        host.retryInitialLoad();assertEquals(1,view.loads);assertFalse(host.ready);assertFalse(host.gateErrorVisible());
+    }
+    @Test public void phoneResumeInvalidatesOnlyAfterAnActualEngineResumeWithoutNavigation(){
+        Activity owner=(Activity)view.getContext();host.close();host=new WebHost(owner,WebHost.Role.PHONE_START);
+        host.root.removeView(host.view);host.view.destroy();view=new FrameView(owner);host.view=view;host.root.addView(view);
+        int before=view.invalidations;long navigation=host.navigationGeneration;host.resume();assertTrue(view.invalidations>before);
+        before=view.invalidations;host.resume();assertEquals(before,view.invalidations);
+        host.pause();host.resume();assertTrue(view.invalidations>before);assertEquals(2,view.resumes);
+        assertEquals(0,view.loads);assertTrue(view.scripts.isEmpty());assertEquals(navigation,host.navigationGeneration);
     }
     @Test public void unchangedInsetsDoNotScheduleAnotherViewportUpdateButImeChangesDo(){
         Shadows.shadowOf(Looper.getMainLooper()).idle();view.scripts.clear();

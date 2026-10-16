@@ -87,7 +87,11 @@ public class PhoneStartActivityTest {
         assertFalse(guard.restorePhoneFromHome(new ForegroundPolicy.Result("",true),windows));
         assertFalse(guard.restorePhoneFromHome(new ForegroundPolicy.Result("settings",false),windows));
         guard.launcherClass="launcher.RecentsActivity";assertFalse(guard.restorePhoneFromHome(home,windows));guard.launcherClass=guard.homeClass;
+        ActivityInfo alias=new ActivityInfo();alias.name="launcher.HomeAlias";alias.targetActivity=guard.homeClass;guard.rememberHome(alias);
+        guard.launcherClass=alias.name;assertTrue(guard.isHomeClass(alias.name));
+        assertFalse(guard.restorePhoneFromHome(home,java.util.List.of(new ForegroundPolicy.Window("launcher",1,true,true,1,false,false))));
         assertTrue(guard.restorePhoneFromHome(home,windows));assertEquals(1,TaskMoves.moves);assertEquals(phone.getTaskId(),TaskMoves.lastTask);
+        assertTrue(guard.homeObserved);
         assertFalse(guard.restorePhoneFromHome(home,windows));assertEquals(1,TaskMoves.moves);assertSame(web,phone.host.view);assertEquals(nav,phone.host.navigationGeneration);
         activity.start().resume();phone.releaseNavigation("memo");activity.pause().stop();assertFalse(guard.restorePhoneFromHome(home,windows));assertEquals(1,TaskMoves.moves);
         guard.main.removeCallbacksAndMessages(null);

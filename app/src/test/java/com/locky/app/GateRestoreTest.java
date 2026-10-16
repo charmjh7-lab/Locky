@@ -31,9 +31,21 @@ public class GateRestoreTest {
         g.prepareAppGate();assertNull(g.overlayWindow);assertEquals(0,adds);assertFalse(g.overlayVisible);
         WebHost host=g.overlay;Object web=host.view;host.ready=true;host.everRendered=true;host.renderedScreen="gateIdle";
         g.showGate("app","video");assertEquals(android.view.View.GONE,host.loadingView.getVisibility());assertFalse(g.acceptGateInput());
+        assertEquals(android.view.View.VISIBLE,g.overlayWindow.getVisibility());
+        assertEquals(0,g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+        assertTrue(g.overlayWindow.dispatchTouchEvent(android.view.MotionEvent.obtain(0,0,android.view.MotionEvent.ACTION_DOWN,1,1,0)));
         long old=host.navigationGeneration;host.rendered(host.view,"app",old,2);host.frameReady=true;g.revealOverlay();assertTrue(g.acceptGateInput());
         g.showGate("app","social");assertFalse(g.acceptGateInput());assertFalse(host.frameReady);assertEquals(android.view.View.GONE,host.loadingView.getVisibility());
+        assertEquals(android.view.View.VISIBLE,g.overlayWindow.getVisibility());assertEquals(0,g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+        assertNotEquals(host.navigationGeneration,host.renderedNavigation);
         host.rendered(host.view,"app",old,3);assertFalse(host.frameReady);assertSame(web,host.view);assertEquals(1,adds);assertEquals("social",g.gatePayload().getJSONObject("gate").getString("pkg"));
+    }
+    @Test public void coldEntryDrawsWithoutLoadingAndSystemSuspensionRemainsPassive(){
+        g.showGate("app","video");assertFalse(g.overlay.ready);assertEquals(GuardService.Exposure.WAITING,g.exposure);
+        assertEquals(android.view.View.VISIBLE,g.overlayWindow.getVisibility());assertEquals(android.view.View.VISIBLE,g.overlay.view.getVisibility());
+        assertEquals(android.view.View.GONE,g.overlay.loadingView.getVisibility());assertEquals(0,g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+        g.pauseSystem();assertEquals(GuardService.Exposure.SUSPENDED,g.exposure);assertEquals(android.view.View.GONE,g.overlayWindow.getVisibility());
+        assertNotEquals(0,g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
     }
 
 }
