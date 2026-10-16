@@ -30,7 +30,7 @@ ChatGPT integration follows the official personal/local-client OAuth documentati
 
 ## Build and release
 
-The PhoneStart Activity preview uses versionCode 15 with the same package and personal signing key, and updates the existing installation without deleting records, notes, chats or purposes.
+The PhoneStart Activity preview uses versionCode 16 with the same package and personal signing key, and updates the existing installation without deleting records, notes, chats or purposes.
 
 JDK 21 (required by Android 16 JVM tests), Gradle 8.11.1, Android SDK 36. Java source/target compatibility and targetSdk remain 17 and 35 respectively. `gradle :app:testDebugUnitTest :app:lintDebug :app:assembleRelease`.
 

@@ -16,3 +16,11 @@
 - 기존 진단 보관/켜기/삭제/내보내기는 유지하며 Activity 요청·생명주기·재사용/실패를 기록한다. 메모·검색어·대화 내용은 기록하지 않는다.
 
 검증은 두 브라우저 상호작용 검사와 관련 JVM 검사, lint 및 서명 APK 빌드로 한정한다. 삼성 잠금 해제 애니메이션·화면 꺼짐 중 백그라운드 실행 허용·Daum 실제 팝업은 실기기 미확인이다. 별도 prerelease는 stable latest와 기존 안정 APK를 교체·정리하지 않는다. main 병합은 수행하지 않는다.
+
+## 2026-10-16 후속: 홈 이탈 억제와 APP_GATE 로딩
+
+이후 사용자 요청으로 목적/도구 사용 전 홈 이동에는 기존 task를 복귀시키도록 변경했다. PhoneNavigation은 주기 ID에 PURPOSE_PENDING/NAVIGATION_RELEASED를 저장하고 같은 주기에서 해제를 되돌리지 않는다. 실제 입력란 선택·입력, 메모/대화 조작, 사전 검색·목적 선택만 해제한다. 렌더 완료·단순 복귀·빈 공간/목적 목록 조작은 해제하지 않는다. JS는 현재 native cycle을 조회하므로 이전 WebView를 유지한 다음 잠금 해제도 정확한 주기를 사용한다.
+
+GuardService는 기본 HOME으로 해석된 Activity 클래스와 실제 focused/active 전체 화면 런처 창을 함께 확인한다. 알림창/overview/잠금/시스템 화면은 제외한다. 기존 taskId에 moveTaskToFront와 애니메이션 0 옵션을 사용하고, onResume까지 한 복귀 요청을 래치한다. REORDER_TASKS는 공식 API에 필요한 일반 권한이며 별도 사용자 허용 화면은 없다. 보조 휴대폰 오버레이나 startActivity 재실행 대안은 추가하지 않는다. OEM의 홈 애니메이션과 백그라운드 작업 복귀 허용은 실기기 확인 대상이다.
+
+APP_GATE 문서는 서비스 연결 때 창 없이 준비한다. 실제 진입은 현재 앱/예산/목적/정책 payload를 준비된 JS에 직접 전달한다. 매 진입에서 전체 문서를 다시 로드하거나 정상 문서를 로딩 패널로 교체하지 않는다. 같은 앱·종류는 달라진 구획만 갱신한다. 현재 진입의 DOM/visual callback 전에는 접근성 창을 INVISIBLE 상태로 레이아웃하고 입력을 막으며, 확인 후 기존 창을 노출한다. 예전 앱의 frame·버튼·지연된 grant는 진입 generation으로 거부한다. 최초 생성과 실제 renderer 소멸에는 기존 초기 준비/실패 복구를 유지한다. PHONE_START의 렌더링 생명주기는 이 APP_GATE 변경과 공유하지 않는다.

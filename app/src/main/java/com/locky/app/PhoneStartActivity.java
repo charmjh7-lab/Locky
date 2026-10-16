@@ -12,9 +12,11 @@ import java.util.*;
 public final class PhoneStartActivity extends Activity {
     private static WeakReference<PhoneStartActivity> live=new WeakReference<>(null);
     WebHost host;
-    long cycle;
+    volatile long cycle;
     boolean resumed;volatile boolean chosen;
     private boolean dictionaryJourney;
+    PhoneNavigation navigation;
+    private boolean homeReturnPending;
     private final Set<String> dictionaryPackages=new HashSet<>();
     private android.window.OnBackInvokedCallback backCallback;
     static PhoneStartActivity current(){return live.get();}
@@ -26,6 +28,8 @@ public final class PhoneStartActivity extends Activity {
         getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(UiTheme.background(this)));
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(),false);
         cycle=Math.max(getIntent().getLongExtra("cycle",0),saved==null?0:saved.getLong("cycle"));
+        cycle=Math.max(cycle,Store.get(this).settings.getLong("phone-start-cycle",cycle));
+        navigation=new PhoneNavigation(Store.get(this).settings);navigation.begin(cycle);
         chosen=saved!=null&&saved.getLong("cycle")==cycle&&saved.getBoolean("chosen");
         host=new WebHost(this,WebHost.Role.PHONE_START);setContentView(host.root);
         JSONObject session=host.phoneSession();
@@ -35,11 +39,11 @@ public final class PhoneStartActivity extends Activity {
         if(Build.VERSION.SDK_INT>=33){backCallback=this::handleBack;getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,backCallback);}
         trace("onCreate webview=new restored="+(saved!=null));
     }
-    void acceptCycle(long next){if(next<=cycle)return;cycle=next;chosen=false;if(host!=null)host.ensurePurposeDay();}
+    void acceptCycle(long next){if(next<=cycle)return;cycle=next;chosen=false;navigation.begin(cycle);homeReturnPending=false;if(host!=null)host.ensurePurposeDay();}
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);acceptCycle(intent.getLongExtra("cycle",cycle));trace("onNewIntent webview=reused");}
     @Override protected void onStart(){super.onStart();trace("onStart");}
     @Override protected void onResume(){
-        super.onResume();resumed=true;
+        super.onResume();resumed=true;homeReturnPending=false;
         trace("onResume webview=reused");host.resume();host.ensurePurposeDay();
         GuardService g=GuardService.live;if(g!=null){g.pauseForActivity();g.useUtility("notes".equals(host.pendingScreen)?"메모":Set.of("chat","chats").contains(host.pendingScreen)?"ChatGPT":"첫 화면");}
         dictionaryJourney=false;
@@ -66,7 +70,7 @@ public final class PhoneStartActivity extends Activity {
             linked=Links.intent(this,purpose.optString("pkg"),purpose.optString("uri"));
             if(linked==null)throw new IllegalStateException("연결한 앱이나 동작을 열 수 없습니다. 목적 연결을 확인해 주세요.");
         }
-        chosen=true;
+        releaseNavigation("purpose");chosen=true;
         GuardService guard=GuardService.live;
         try{if(guard!=null)guard.choosePhone(purpose);else Store.get(this).event("unlock",purpose.getString("label"),"",purpose.optString("pkg"),0,purpose.optInt("aimless",0)==1);}
         catch(Exception error){chosen=false;throw error;}
@@ -78,11 +82,29 @@ public final class PhoneStartActivity extends Activity {
     }
     void dismiss(){GuardService g=GuardService.live;if(g==null)throw new IllegalStateException("화면을 잠그려면 접근성 서비스를 켜 주세요.");trace("lock requested by user");g.dismissStart();}
     void dictionary(String word) throws Exception {
+        releaseNavigation("dictionary");
         dictionaryPackages.clear();JSONArray choices=Links.dictionaries(this);
         for(int n=0;n<choices.length();n++){ComponentName component=ComponentName.unflattenFromString(choices.getJSONObject(n).getString("component"));if(component!=null)dictionaryPackages.add(component.getPackageName());}
         dictionaryJourney=true;
         try{Links.dictionary(this,word);if(GuardService.live!=null)GuardService.live.useUtility("사전");}
         catch(Exception error){dictionaryJourney=false;throw error;}
+    }
+    void releaseNavigation(String reason){
+        if(navigation.release(cycle)){homeReturnPending=false;trace("navigation released reason="+reason);}
+    }
+    boolean purposePending(){return !chosen&&navigation.state(cycle)==PhoneNavigation.State.PURPOSE_PENDING;}
+    boolean returnFromHome(){
+        if(!purposePending()||homeReturnPending||resumed||isFinishing()||isDestroyed())return false;
+        homeReturnPending=true;trace("home return requested existing-task");
+        try{
+            // The same task/window/document, with no app-supplied transition animation.
+            getSystemService(ActivityManager.class).moveTaskToFront(getTaskId(),ActivityManager.MOVE_TASK_NO_USER_ACTION,
+                ActivityOptions.makeCustomAnimation(this,0,0).toBundle());
+            return true;
+        }catch(RuntimeException error){
+            // Keep this departure latched: a blocked request must not become an event loop.
+            UnlockDiagnostics.get(this).failure("home-task-return",error);return false;
+        }
     }
     boolean allowsDictionary(String pkg){return dictionaryJourney&&(dictionaryPackages.contains(pkg)||pkg.equals("android")||pkg.contains("intentresolver"));}
     private void trace(String event){WebHost.trace("phone-activity "+event);}

@@ -34,7 +34,7 @@ public final class GuardService extends AccessibilityService {
     Exposure exposure=Exposure.HIDDEN;
     Boolean observedKeyguard;
     WebHost overlay;WindowManager window;WindowManager.LayoutParams overlayLayout;final Set<String> systemPackages=new HashSet<>();
-    String homePackage="";
+    String homePackage="",homeClass="",launcherClass="";
     volatile boolean pulseScheduled;volatile long pulseCount;
     final Runnable pulse=new Runnable(){public void run(){pulseScheduled=false;if(live!=GuardService.this)return;pulseCount++;checkpoint();enforce();ensurePulse();}};
     final BroadcastReceiver screen=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){
@@ -53,7 +53,7 @@ public final class GuardService extends AccessibilityService {
         checkpoint();interactive=false;hideFloatingTimer();
         if(lockPending){store.event("dismiss","열지 않기","","",0);lockPending=false;}
         main.removeCallbacks(lockCompletion);
-        overview=false;overviewCandidate="";clearSessions();foreground="";
+        overview=false;overviewCandidate="";launcherClass="";clearSessions();foreground="";
         store.settings.edit().putBoolean("checkpoint-interactive",false).putString("last-package","").apply();
         setSystemPaused(false,"screen-off");hideOverlay();
         if(phoneStart==null)phoneStart=new PhoneStartController(this);
@@ -68,14 +68,14 @@ public final class GuardService extends AccessibilityService {
     @Override protected void onServiceConnected(){
         live=this;store=Store.get(this);window=getSystemService(WindowManager.class);floatingTimer=new FloatingTimer(this,window);interactive=getSystemService(PowerManager.class).isInteractive();wasManaged=store.managed(System.currentTimeMillis());store.observe("service-connected",interactive);
         phoneStart=new PhoneStartController(this);
-        ResolveInfo home=getPackageManager().resolveActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),PackageManager.MATCH_DEFAULT_ONLY);if(home!=null)homePackage=home.activityInfo.packageName;
+        ResolveInfo home=getPackageManager().resolveActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),PackageManager.MATCH_DEFAULT_ONLY);if(home!=null){homePackage=home.activityInfo.packageName;homeClass=home.activityInfo.name;}
         systemPackages.add("com.android.systemui");systemPackages.add("com.android.permissioncontroller");systemPackages.add("com.google.android.permissioncontroller");
         android.view.inputmethod.InputMethodManager ime=getSystemService(android.view.inputmethod.InputMethodManager.class);for(android.view.inputmethod.InputMethodInfo x:ime.getEnabledInputMethodList())systemPackages.add(x.getPackageName());
         IntentFilter f=new IntentFilter();for(String a:new String[]{Intent.ACTION_SCREEN_OFF,Intent.ACTION_SCREEN_ON,Intent.ACTION_USER_PRESENT,Intent.ACTION_TIME_CHANGED,Intent.ACTION_TIMEZONE_CHANGED})f.addAction(a);
         if(Build.VERSION.SDK_INT>=33)registerReceiver(screen,f,Context.RECEIVER_NOT_EXPORTED);else registerReceiver(screen,f);
         segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();
         long recoveryFrom=store.settings.getLong("checkpoint",System.currentTimeMillis());String recoveryPackage=store.settings.getString("last-package","");
-        if(!interactive||keyguardLocked())phoneStart.prepareAfterServiceRestart();else {completeUnlock();observeForeground(null);main.postDelayed(()->{if(foreground.isEmpty())observeForeground(null);},250);main.postDelayed(()->{if(foreground.isEmpty())observeForeground(null);},750);}Scheduler.schedule(this);recover(recoveryFrom,store.settings.getBoolean("checkpoint-interactive",true)?recoveryPackage:"");
+        if(!interactive||keyguardLocked())phoneStart.prepareAfterServiceRestart();else {completeUnlock();observeForeground(null);main.postDelayed(()->{if(foreground.isEmpty())observeForeground(null);},250);main.postDelayed(()->{if(foreground.isEmpty())observeForeground(null);},750);}prepareAppGate();Scheduler.schedule(this);recover(recoveryFrom,store.settings.getBoolean("checkpoint-interactive",true)?recoveryPackage:"");
     }
     private void recover(long from,String old){long now=System.currentTimeMillis();
         if(now-from<2000)return;
@@ -97,7 +97,7 @@ public final class GuardService extends AccessibilityService {
         if(observedKeyguard==null||observedKeyguard!=locked){observedKeyguard=locked;WebHost.trace("keyguard observed locked="+locked);}
         return locked;
     }
-    boolean acceptGateInput(){return overlayVisible&&exposure==Exposure.INTERACTIVE&&interactive&&!systemPaused&&!keyguardLocked();}
+    boolean acceptGateInput(){return overlayVisible&&overlay!=null&&overlay.currentGateReady()&&exposure==Exposure.INTERACTIVE&&interactive&&!systemPaused&&!keyguardLocked();}
     void requestEditorInput(){
         if(!acceptGateInput()||overlay==null)return;
         overlay.view.requestFocus();
@@ -119,9 +119,10 @@ public final class GuardService extends AccessibilityService {
         lastWindows=diagnostic.toString();ForegroundPolicy.Result visible=ForegroundPolicy.select(candidates,systemPackages);
         if(event!=null&&event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED&&event.getClassName()!=null){
             String name=event.getClassName().toString().toLowerCase(Locale.ROOT),pkg=event.getPackageName()==null?"":event.getPackageName().toString();
+            if(pkg.equals(homePackage))launcherClass=event.getClassName().toString();
             boolean systemLauncher=pkg.equals(homePackage)||pkg.equals("com.android.systemui")||pkg.contains("launcher");
             if(systemLauncher&&(name.contains("recents")||name.contains("overview")||name.contains("recentapps"))){overview=true;overviewCandidate="";}
-            else if(pkg.equals(homePackage)&&name.contains("launcher")&&visible.pkg.equals(homePackage)){overview=false;overviewCandidate="";}
+            else if(pkg.equals(homePackage)&&event.getClassName().toString().equals(homeClass)&&visible.pkg.equals(homePackage)){overview=false;overviewCandidate="";}
         }
         // A recent-task thumbnail can expose its old app window before the user actually enters it.
         // Require the target application window to hold focus through a short settle period.
@@ -138,7 +139,15 @@ public final class GuardService extends AccessibilityService {
         if(visible.pkg.isEmpty())return; // transient/root unavailable: do not trust background event senders
         String pkg=visible.pkg;
         if(pkg.contains("incallui")||pkg.equals("com.android.server.telecom")){if(overlayVisible)hideOverlay();pauseSystem();return;}
+        if(restorePhoneFromHome(visible,candidates))return;
         switchForeground(pkg);
+    }
+    boolean restorePhoneFromHome(ForegroundPolicy.Result visible,List<ForegroundPolicy.Window> candidates){
+        if(lockPending||!interactive||keyguardLocked()||overview||visible.paused||homeClass.isEmpty()
+            ||!homeClass.equals(launcherClass)||!homePackage.equals(visible.pkg))return false;
+        boolean focusedHome=candidates.stream().anyMatch(w->w.type==AccessibilityWindowInfo.TYPE_APPLICATION&&w.pkg.equals(homePackage)&&w.focused&&w.active&&w.covering&&!w.pip);
+        PhoneStartActivity phone=PhoneStartActivity.current();
+        return focusedHome&&phone!=null&&phone.returnFromHome();
     }
     void pauseSystem(){pauseSystem("system");}
     void pauseSystem(String reason){
@@ -150,6 +159,7 @@ public final class GuardService extends AccessibilityService {
         ensurePulse();
     }
     void switchForeground(String pkg){
+        if(!pkg.equals(homePackage))launcherClass="";
         if(systemPaused){checkpoint();setSystemPaused(false,"foreground");lastNotice=-1;}
         if(!pkg.equals(foreground)) {
             checkpoint();
@@ -223,13 +233,25 @@ public final class GuardService extends AccessibilityService {
     void hideFloatingTimer(){if(floatingTimer!=null)floatingTimer.hide();}
     @Override public void onConfigurationChanged(android.content.res.Configuration config){super.onConfigurationChanged(config);if(overlay!=null)overlay.applyTheme();hideFloatingTimer();syncFloatingTimer();if(overlayVisible&&overlay!=null)revealOverlay();}
     long lastNotice=-1;
+    void prepareAppGate(){
+        if(overlay!=null)return;
+        overlay=new WebHost(this,WebHost.Role.APP_GATE);
+        overlay.frameAvailableCallback=this::revealOverlay;
+        WebHost.trace("app-gate document prewarm");
+    }
+    JSONObject gatePayload() throws JSONException {
+        String scope=gatePkg.isEmpty()?"app":gatePkg;
+        return new JSONObject().put("gate",state()).put("prefs",store.preferences()).put("free",!store.managed(System.currentTimeMillis()))
+            .put("purposeDate",java.time.LocalDate.now().toString()).put("scope",scope).put("purposes",store.purposes(scope))
+            .put("allPurposes",store.rows("SELECT * FROM purposes ORDER BY rowid")).put("rules",store.rows("SELECT * FROM rules WHERE pkg=?",gatePkg));
+    }
     void showGate(String type,String pkg){
         if(!Set.of("app","blocked","renew").contains(type))throw new IllegalArgumentException("Not an app gate");
         hideFloatingTimer();
         boolean same=overlayVisible&&gate.equals(type)&&gatePkg.equals(pkg);
         if(!same){checkpoint();gate=type;gatePkg=pkg;utility="사용 확인";}
-        if(overlay==null){
-            overlay=new WebHost(this,WebHost.Role.APP_GATE);overlay.frameAvailableCallback=this::revealOverlay;
+        prepareAppGate();
+        if(overlayWindow==null){
             overlayWindow=new android.widget.FrameLayout(this){
                 @Override public boolean dispatchTouchEvent(MotionEvent event){return !acceptGateInput()||super.dispatchTouchEvent(event);}
                 @Override public boolean dispatchKeyEvent(KeyEvent event){return !acceptGateInput()||super.dispatchKeyEvent(event);}
@@ -239,23 +261,27 @@ public final class GuardService extends AccessibilityService {
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_SECURE|WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                 PixelFormat.OPAQUE);
             overlayLayout.gravity=Gravity.TOP|Gravity.START;overlayLayout.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;overlayLayout.setTitle("Locky app gate");
+            overlayWindow.setVisibility(View.INVISIBLE);
             window.addView(overlayWindow,overlayLayout);
         }
         overlayVisible=true;
-        if(!same)overlay.screen(type);
+        if(!same){try{overlay.gateScreen(type,gatePayload());}catch(JSONException error){hideOverlay();throw new IllegalStateException("앱 사용 정보를 준비하지 못했습니다.",error);}}
         revealOverlay();ensurePulse();
     }
     void revealOverlay(){
-        if(overlay==null)return;
+        if(overlay==null||overlayWindow==null)return;
         Exposure next=!overlayVisible?Exposure.HIDDEN:(!interactive||keyguardLocked()||systemPaused)?Exposure.SUSPENDED:
-            overlay.hasUsableFrame()||overlay.hasPresentedDocument()||overlay.loadFailed?Exposure.INTERACTIVE:Exposure.WAITING;
+            overlay.currentGateReady()?Exposure.INTERACTIVE:Exposure.WAITING;
         applyExposure(next);
     }
     void applyExposure(Exposure next){
-        if(overlay==null)return;
+        if(overlay==null||overlayWindow==null)return;
         boolean input=next==Exposure.INTERACTIVE;
         boolean shown=input||next==Exposure.WAITING;
-        overlayWindow.setVisibility(shown?View.VISIBLE:View.GONE);
+        // Warm updates have no loading panel or stale-app frame. Keep the attached
+        // window laid out, and reveal only the validated current entry.
+        int visibility=!shown?View.GONE:input||overlay.gateNeedsInitialLoad()?View.VISIBLE:View.INVISIBLE;
+        overlayWindow.setVisibility(visibility);
         overlayWindow.setImportantForAccessibility(input?View.IMPORTANT_FOR_ACCESSIBILITY_AUTO:View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
         if(overlayLayout!=null){
             int passive=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
@@ -306,5 +332,5 @@ public final class GuardService extends AccessibilityService {
         main.postDelayed(lockCompletion,1500); // Failure recovery only; never delays exposure or locking.
     }
     @Override public void onInterrupt(){}
-    @Override public void onDestroy(){hideFloatingTimer();checkpoint();if(store!=null)store.observe("service-destroyed",interactive);live=null;interactive=false;overlayVisible=false;main.removeCallbacksAndMessages(null);try{unregisterReceiver(screen);}catch(Exception ignored){}if(overlay!=null){try{window.removeViewImmediate(overlayWindow);}catch(IllegalArgumentException ignored){}overlay.close();}Notices.cancelTimer(this);super.onDestroy();}
+    @Override public void onDestroy(){hideFloatingTimer();checkpoint();if(store!=null)store.observe("service-destroyed",interactive);live=null;interactive=false;overlayVisible=false;main.removeCallbacksAndMessages(null);try{unregisterReceiver(screen);}catch(Exception ignored){}if(overlay!=null){try{if(overlayWindow!=null)window.removeViewImmediate(overlayWindow);}catch(IllegalArgumentException ignored){}overlay.close();}Notices.cancelTimer(this);super.onDestroy();}
 }

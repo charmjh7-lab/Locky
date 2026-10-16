@@ -32,6 +32,19 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.evaluate(()=>remember());await page.waitForFunction(()=>fixture.phoneSession.quickQuestion==='질문 초안');
   await page.evaluate(async()=>{fixture.phoneSession={screen:'chat',chat:'saved-chat',chatReturn:'chats',chatsReturn:'unlock'};fixture.chatReturn='chats';fixture.chatsReturn='unlock';restored=false;chatId='saved-chat';screen='chat';await refresh(true);});
   await page.evaluate(()=>back());await page.waitForFunction(()=>screen==='chats');await page.evaluate(()=>back());await page.waitForFunction(()=>screen==='unlock');
+  await page.evaluate(()=>{state.phoneCycle=1;navigationReleasedCycle=-1;window.releaseBefore=calls.filter(c=>c.action==='releaseNavigation').length;});
+  await page.locator('#purposeQuestion').click();assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='releaseNavigation').length),await page.evaluate(()=>releaseBefore));
+  await page.locator('#noteBody').click();await page.locator('#quickQuestion').click();await page.locator('#word').click();
+  assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='releaseNavigation').length),await page.evaluate(()=>releaseBefore+1));
+  await page.evaluate(()=>{state.phoneCycle=2;render();});await page.locator('[data-act="openChat"]').first().click();await page.waitForFunction(()=>screen==='chats');
+  assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='releaseNavigation').at(-1).args.cycle),2);
+  await page.evaluate(()=>{window.stateReads=calls.filter(c=>c.action==='state').length;prepareGate(10);window.gateData={gate:{pkg:'video',label:'Video',daily:600000,session:0},prefs:{start:540,end:1260},free:false,purposeDate:'2026-10-16',scope:'video',purposes:[{id:'app-p',label:'앱 목적',scope:'app'}],allPurposes:[{id:'app-p',label:'앱 목적',scope:'app'}],rules:[]};presentGate('app',gateData,11);window.minutesNode=document.querySelector('[data-min="5"]');presentGate('app',gateData,12);});
+  assert.equal(await page.evaluate(()=>document.querySelector('[data-min="5"]')===minutesNode),true);
+  await page.evaluate(()=>{gateData={...gateData,scope:'social',gate:{pkg:'social',label:'Social',daily:300000,session:0}};presentGate('app',gateData,13);});
+  assert.equal(await page.locator('.gate-app').textContent(),'Social');assert.equal(await page.locator('#dailyLeft').textContent(),'05:00');
+  assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='state').length),await page.evaluate(()=>stateReads));
+  await page.locator('[data-purpose="app-p"]').click();await page.waitForFunction(()=>!purposeStarting);
+  assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='grant').at(-1).args.gateNavigation),13);
   assert.deepEqual(errors,[]);console.log('PASS phone owner: existing light/dark geometry, no main nav, retained editors/drafts/daily order, root/sheet/notes Back, dictionary return, separate session snapshot.');
  }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exit(1);});

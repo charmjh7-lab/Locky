@@ -14,12 +14,14 @@ final class PhoneStartController {
     void screenOff(){
         long next=Math.max(System.currentTimeMillis(),cycle()+1);
         prefs.edit().putLong("phone-start-cycle",next).putBoolean("phone-start-awaiting-unlock",true).apply();
+        new PhoneNavigation(prefs).begin(next);
         recoverySent=false;request(next,"screen-off");
     }
     void prepareAfterServiceRestart(){
         if(!prefs.getBoolean("phone-start-awaiting-unlock",false)){
             prefs.edit().putLong("phone-start-cycle",Math.max(System.currentTimeMillis(),cycle()+1)).putBoolean("phone-start-awaiting-unlock",true).apply();
         }
+        new PhoneNavigation(prefs).begin(cycle());
         // A live acknowledged owner needs no second request when the service reconnects.
         if(!acknowledged()&&prefs.getLong("phone-start-prepared-cycle",0)!=cycle())request(cycle(),"service-recovery");
     }

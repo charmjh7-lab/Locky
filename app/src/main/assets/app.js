@@ -3,6 +3,18 @@
 function themeChanged(dark){document.documentElement.dataset.theme=dark?'dark':'light';}
 if(window.Native&&typeof Native.darkTheme==='function')themeChanged(Native.darkTheme());
 document.addEventListener('focusin',event=>{if(state?.overlay&&event.target.matches('textarea,input:not([type=button]):not([type=checkbox]):not([type=radio]),[contenteditable=true]')&&window.Native)Native.request('0','editorFocus','{}');});
+// Only explicit tool interaction releases the phone-cycle home guard. Native owns state.
+let navigationReleasedCycle=-1;
+function releasePhoneNavigation(reason){
+ if(state?.role!=='PHONE_START'||!window.Native)return;
+ const cycle=typeof Native.phoneCycle==='function'?Number(Native.phoneCycle()):Number(state.phoneCycle||0);
+ if(navigationReleasedCycle===cycle)return;navigationReleasedCycle=cycle;
+ Native.request('0','releaseNavigation',JSON.stringify({cycle,reason}));
+}
+const phoneToolEditor='#noteBody,#noteTitle,[data-checktext],#quickQuestion,#chatInput,#word';
+document.addEventListener('pointerdown',event=>{if(event.isTrusted&&event.target.matches(phoneToolEditor))releasePhoneNavigation('tool-editor');});
+document.addEventListener('input',event=>{if(event.isTrusted&&event.target.matches(phoneToolEditor))releasePhoneNavigation('tool-editor');});
+document.addEventListener('click',event=>{if(!event.isTrusted)return;const el=event.target.closest('[data-nav="notes"],[data-act="openChat"],[data-chat],[data-act="newChat"],[data-act="newNote"],[data-newnote],[data-note],[data-note-step],[data-act="deleteNote"],[data-check],[data-delcheck],[data-act="addCheck"],#noteMode');if(el)releasePhoneNavigation('tool-action');});
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const shapes={lock:'M7 10V7a5 5 0 0 1 10 0v1 M5 10h14v11H5z M12 14v3',leaf:'M5 19C3 8 11 3 21 3c0 10-5 16-16 16z M5 19l10-10',home:'M3 11l9-8 9 8 M6 10v11h12V10 M10 21v-7h4v7',chart:'M4 20V10 M10 20V4 M16 20v-8 M22 20H2',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z',plus:'M12 5v14 M5 12h14',arrow:'M5 12h14 M14 7l5 5-5 5',back:'M19 12H5 M10 7l-5 5 5 5',chat:'M3 4h18v13H9l-6 4z M7 8h10 M7 12h6',book:'M3 4h7l2 2 2-2h7v16h-7l-2 1-2-1H3z M12 6v15',note:'M5 3h14v18H5z M8 8h8 M8 12h8 M8 16h4',close:'M6 6l12 12 M18 6L6 18',check:'M4 12l5 5L20 6',trash:'M3 6h18 M9 6V3h6v3 M6 6v15h12V6 M10 10v7 M14 10v7',clock:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l4 2',send:'M3 3l18 9-18 9 4-9z M7 12h14',moon:'M20 15A9 9 0 0 1 9 3a9 9 0 1 0 11 12',newnote:'M5 3h14v18H5z M12 8v8 M8 12h8',expand:'M8 3H3v5 M16 3h5v5 M3 16v5h5 M21 16v5h-5',more:'M12 5h.01 M12 12h.01 M12 19h.01',search:'M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14 M15 15l6 6',power:'M12 2v10 M6 5a9 9 0 1 0 12 0',link:'M9 15l6-6 M8 16l-2 2a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0 M14 8l2-2a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0'};
 const icon=n=>`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${shapes[n]||shapes.leaf}"/></svg>`;
@@ -17,7 +29,7 @@ let nativeKeyboard=false,purposeScope='phone',restored=false,briefSeq=0,settings
 let purposeStarting=false,briefData=null;const briefSort={apps:'desc',events:'asc',timeline:'asc'};
 Object.assign(shapes,{sortDown:'M4 5h12 M4 10h8 M4 15h4 M19 4v16 M15 16l4 4 4-4',sortUp:'M4 5h4 M4 10h8 M4 15h12 M19 20V4 M15 8l4-4 4 4'});
 const gated=['app','renew','blocked'],starts=['home','unlock',...gated];
-function api(action,args={}){return new Promise((resolve,reject)=>{const id=String(++seq),timeout=setTimeout(()=>{requests.delete(id);reject(Error('응답을 기다리는 중이에요. 다시 시도해 주세요.'));},25000);requests.set(id,{resolve,reject,timeout});Native.request(id,action,JSON.stringify(args));});}
+function api(action,args={}){if(state?.role==='APP_GATE'&&['grant','extend'].includes(action))args={...args,gateNavigation:nativeNavigation};return new Promise((resolve,reject)=>{const id=String(++seq),timeout=setTimeout(()=>{requests.delete(id);reject(Error('응답을 기다리는 중이에요. 다시 시도해 주세요.'));},25000);requests.set(id,{resolve,reject,timeout});Native.request(id,action,JSON.stringify(args));});}
 function receive(id,value,error){const r=requests.get(id);if(!r)return;clearTimeout(r.timeout);requests.delete(id);error?r.reject(Error(error)):r.resolve(value);}
 function toast(text){$('#toast').textContent=text;$('#toast').style.display='block';clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').style.display='none',3500);}
 async function safe(fn){try{return await fn();}catch(e){toast(e.message);}}
@@ -34,7 +46,7 @@ function remember(){if(!state)return;if(state.role==='PHONE_START'){safe(()=>api
 let phoneDraftTimer=null;
 document.addEventListener('input',()=>{if(state?.role==='PHONE_START'){clearTimeout(phoneDraftTimer);phoneDraftTimer=setTimeout(remember,200);}});
 async function navigate(s,navigation=null,keepBrief=false){if(state?.role==='PHONE_START'&&!['unlock','notes','chats','chat'].includes(s)){await api('open',{screen:s});return;}if(s==='brief'&&navigation===null&&!keepBrief&&screen!=='brief'){briefTarget=null;briefDays=1;briefOffset=0;}const local=navigation===null;if(local)navigation=nativeNavigation;if(['home','unlock','app'].includes(s))purposeEntry=null;if(s==='chats'&&starts.includes(screen))chatsReturn=screen;if(s==='chat'&&screen==='chats')chatReturn='chats';if(settingsTimer&&screen==='settings'){clearTimeout(settingsTimer);settingsTimer=null;await safe(saveReminders);}await flushMemo();if(navigation<nativeNavigation)return;const retainedNavigation=renderedRoute===s&&navigation!==nativeNavigation;nativeNavigation=navigation;if(local&&state?.overlay&&['chat','chats','unlock'].includes(s)&&s!==screen)presentScreen(s);closeSheet();screen=s;selected='';minutes=5;document.body.classList.toggle('start-screen',starts.includes(screen));window.scrollTo(0,0);const revision=domRevision;await refresh(true);if(retainedNavigation&&navigation===nativeNavigation&&renderedRoute===s&&revision===domRevision)signalRendered();startPolling();remember();if(state&&['notes','chat','chats'].includes(s))safe(()=>api('utility',{name:s==='notes'?'메모':'ChatGPT'}));}
-async function refresh(force=false){if(refreshing){if(force)refreshAgain=true;return;}refreshing=true;try{
+async function refresh(force=false){if(screen==='gateIdle')return;if(refreshing){if(force)refreshAgain=true;return;}refreshing=true;try{
  if(!force&&state&&['chat','timer',...gated].includes(screen))Object.assign(state,await api('tick'));else state=await api('state');
  for(const turn of quickTurns.values())if(!state.chats.some(c=>c.id===turn.id))state.chats.unshift({id:turn.id,title:turn.text.slice(0,30)});
  if(!restored){restored=true;if(state.role==='PHONE_START'){const saved=state.phoneSession||{};quickQuestionDraft=saved.quickQuestion||'';dictionaryWordDraft=saved.word||'';noteId=saved.note||noteId;chatReturn=saved.chatReturn||'unlock';chatsReturn=saved.chatsReturn||'unlock';}if(screen==='chat')chatReturn=state.chatReturn||'chats';if(screen==='chats')chatsReturn=state.chatsReturn||'home';if(screen==='brief'&&!briefTarget&&state.savedBrief){briefTarget=state.savedBrief;briefDays=state.savedBrief.days||1;}chatId=chatId||state.savedChat||'';noteId=state.savedNote||noteId;}
@@ -43,10 +55,30 @@ async function refresh(force=false){if(refreshing){if(force)refreshAgain=true;re
  const oldScroll=window.scrollY;render();if(!force)window.scrollTo(0,oldScroll);if(screen==='brief')loadBrief();if(screen==='apps')loadApps();if(screen==='usageApps')loadUsageApps();if(screen==='chat')renderMessages(force);
  }catch(e){toast(e.message);}finally{refreshing=false;if(refreshAgain){refreshAgain=false;refresh(true);}}}
 function openChatById(id,navigation=null){chatId=id;return navigate('chat',navigation);}
+// APP_GATE owns a single prepared document. Gate data comes with the native entry,
+// so navigation never waits behind memo/chat bridge work or displays the old app.
+function prepareGate(navigation=0){
+ nativeNavigation=navigation;screen='gateIdle';state={role:'APP_GATE',overlay:true,notes:[],chats:[],accounts:[],models:[],connection:{},rules:[],allPurposes:[],purposeOrders:{}};
+ renderedRoute='gateIdle';$('#app').replaceChildren();++domRevision;signalRendered();
+}
+function presentGate(name,payload,navigation){
+ if(navigation<nativeNavigation)return;
+ const same=screen===name&&state?.gate?.pkg===payload.gate.pkg;
+ nativeNavigation=navigation;closeSheet();selected='';minutes=5;purposeEntry=null;
+ state={...state,...payload,role:'APP_GATE',overlay:true,purposeOrders:{[payload.scope]:payload.purposes}};
+ screen=name;const main=$('.gate-page');
+ if(same&&main){
+  const template=document.createElement('template');template.innerHTML=gate();
+  const wanted=template.content.firstElementChild;
+  for(let i=0;i<wanted.children.length;i++){const old=main.children[i],next=wanted.children[i];if(old?.outerHTML!==next.outerHTML){if(old)old.replaceWith(next.cloneNode(true));else main.append(next.cloneNode(true));}}
+  bind();viewportChanged();renderedRoute=screen;++domRevision;signalRendered();
+ }else render();
+ startPolling();
+}
 function presentScreen(name){const previous=nativeNavigation++;Native.request('0','present',JSON.stringify({screen:name,previous,navigation:nativeNavigation,chat:chatId}));}
 function signalRendered(){Native.request('0','rendered',JSON.stringify({screen,navigation:nativeNavigation,revision:domRevision}));}
 function nativeRestore(){if($('#app')?.childElementCount)signalRendered();else return refresh(true);}
-function render(){const previousPresetScroll=$('.preset-scroll')?.scrollTop||0;if($('#quickQuestion'))quickQuestionDraft=$('#quickQuestion').value;if($('#word'))dictionaryWordDraft=$('#word').value;let html='';switch(screen){case 'unlock':case 'home':html=home();break;case 'setup':html=setup();break;case 'settings':html=settings();break;case 'apps':html=appsPage();break;case 'usageApps':html=usageAppsPage();break;case 'app':case 'renew':case 'blocked':html=gate();break;case 'timer':html=timer();break;case 'notes':html=notesPage();break;case 'chats':html=chats();break;case 'chat':html=chat();break;case 'brief':html=brief();break;case 'week':briefDays=7;screen='brief';html=brief();break;default:screen='home';html=home();}
+function render(){const previousPresetScroll=$('.preset-scroll')?.scrollTop||0;if($('#quickQuestion'))quickQuestionDraft=$('#quickQuestion').value;if($('#word'))dictionaryWordDraft=$('#word').value;let html='';switch(screen){case 'gateIdle':break;case 'unlock':case 'home':html=home();break;case 'setup':html=setup();break;case 'settings':html=settings();break;case 'apps':html=appsPage();break;case 'usageApps':html=usageAppsPage();break;case 'app':case 'renew':case 'blocked':html=gate();break;case 'timer':html=timer();break;case 'notes':html=notesPage();break;case 'chats':html=chats();break;case 'chat':html=chat();break;case 'brief':html=brief();break;case 'week':briefDays=7;screen='brief';html=brief();break;default:screen='home';html=home();}
  document.body.classList.toggle('start-screen',starts.includes(screen));$('#app').innerHTML=html+nav();bind();if(state?.role==='PHONE_START'&&screen==='chat'&&$('#chatInput')&&state.phoneSession?.chat===chatId)$('#chatInput').value=state.phoneSession.chatDraft||'';if($('.preset-scroll'))$('.preset-scroll').scrollTop=previousPresetScroll;viewportChanged();if(screen==='chat'&&quickTurns.has(chatId))applyMessages(quickMessages(quickTurns.get(chatId)),true);renderedRoute=screen;if(['home','unlock'].includes(screen))startNoteSnapshot=noteSnapshot();++domRevision;signalRendered();}
 // Refresh data without discarding the prepared start document or its editors.
 function noteSnapshot(){const n=currentNote();return {note:{id:n.id,title:n.title,body:n.body,checks:n.checks||'[]',mode:n.mode},count:state.notes.length};}
@@ -304,7 +336,7 @@ function chatBody(text,rawRefs,id){
 
 function quickRequestId(){const bytes=crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;const h=[...bytes].map(b=>b.toString(16).padStart(2,'0')).join('');return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;}
 function startQuickQuestion(){
- const text=$('#quickQuestion')?.value.trim();if(!text)return;
+ const text=$('#quickQuestion')?.value.trim();if(!text)return;releasePhoneNavigation('chat-send');
  if(!state.accounts.some(a=>a.active&&a.connected)){toast('ChatGPT를 먼저 연결해 주세요.');safe(()=>navigate('chats'));return;}
  if(state.busy||[...quickTurns.values()].some(t=>t.inFlight))throw Error('현재 질문을 처리하고 있습니다.');
  const turn={id:quickRequestId(),text,accepted:false,inFlight:false,error:'',messages:null};quickTurns.set(turn.id,turn);
@@ -565,7 +597,7 @@ function viewportChanged(reveal=false){requestAnimationFrame(()=>{
  });}
 async function saveReminders(){if(!$('#customReminders'))return;settingsTimer=null;const values=[...document.querySelectorAll('[data-reminder].selected')].map(el=>Number(el.dataset.reminder));const extra=$('#customReminders')?.value.trim()||'';if(extra){const parsed=extra.split(',').map(v=>Number(v.trim()));if(parsed.some(n=>!Number.isInteger(n)||n<1||n>180))throw Error('추가 알림은 1~180분으로 입력해 주세요.');values.push(...parsed);}await api('settings',{reminders:values});Object.assign(state.prefs,{reminders:values});}
 let dictionarySearching=false;
-async function searchDictionary(word){
+async function searchDictionary(word){releasePhoneNavigation('dictionary');
  if(dictionarySearching)return;
  dictionarySearching=true;
  const submitted=$('#word')?.value??dictionaryWordDraft;
