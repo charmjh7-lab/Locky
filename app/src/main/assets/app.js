@@ -58,6 +58,7 @@ function openChatById(id,navigation=null){chatId=id;return navigate('chat',navig
 // APP_GATE owns a single prepared document. Gate data comes with the native entry,
 // so navigation never waits behind memo/chat bridge work or displays the old app.
 function prepareGate(navigation=0){
+ clearInterval(poll);poll=null;gateRegions=[];
  nativeNavigation=navigation;screen='gateIdle';state={role:'APP_GATE',overlay:true,notes:[],chats:[],accounts:[],models:[],connection:{},rules:[],allPurposes:[],purposeOrders:{}};
  renderedRoute='gateIdle';$('#app').replaceChildren();++domRevision;signalRendered();
 }
