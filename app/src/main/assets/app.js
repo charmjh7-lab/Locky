@@ -14,7 +14,7 @@ function releasePhoneNavigation(reason){
 const phoneToolEditor='#noteBody,#noteTitle,[data-checktext],#quickQuestion,#chatInput,#word';
 document.addEventListener('pointerdown',event=>{if(event.isTrusted&&event.target.matches(phoneToolEditor))releasePhoneNavigation('tool-editor');});
 document.addEventListener('input',event=>{if(event.isTrusted&&event.target.matches(phoneToolEditor))releasePhoneNavigation('tool-editor');});
-document.addEventListener('click',event=>{if(!event.isTrusted)return;const el=event.target.closest('[data-nav="notes"],[data-act="openChat"],[data-chat],[data-act="newChat"],[data-act="newNote"],[data-newnote],[data-note],[data-note-step],[data-act="deleteNote"],[data-check],[data-delcheck],[data-act="addCheck"],#noteMode');if(el)releasePhoneNavigation('tool-action');});
+document.addEventListener('click',event=>{if(!event.isTrusted)return;if(event.target.matches(phoneToolEditor)){releasePhoneNavigation('tool-editor');return;}const el=event.target.closest('[data-nav="notes"],[data-act="openChat"],[data-chat],[data-act="newChat"],[data-act="newNote"],[data-newnote],[data-note],[data-note-step],[data-act="deleteNote"],[data-check],[data-delcheck],[data-act="addCheck"],#noteMode');if(el)releasePhoneNavigation('tool-action');});
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const shapes={lock:'M7 10V7a5 5 0 0 1 10 0v1 M5 10h14v11H5z M12 14v3',leaf:'M5 19C3 8 11 3 21 3c0 10-5 16-16 16z M5 19l10-10',home:'M3 11l9-8 9 8 M6 10v11h12V10 M10 21v-7h4v7',chart:'M4 20V10 M10 20V4 M16 20v-8 M22 20H2',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z',plus:'M12 5v14 M5 12h14',arrow:'M5 12h14 M14 7l5 5-5 5',back:'M19 12H5 M10 7l-5 5 5 5',chat:'M3 4h18v13H9l-6 4z M7 8h10 M7 12h6',book:'M3 4h7l2 2 2-2h7v16h-7l-2 1-2-1H3z M12 6v15',note:'M5 3h14v18H5z M8 8h8 M8 12h8 M8 16h4',close:'M6 6l12 12 M18 6L6 18',check:'M4 12l5 5L20 6',trash:'M3 6h18 M9 6V3h6v3 M6 6v15h12V6 M10 10v7 M14 10v7',clock:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l4 2',send:'M3 3l18 9-18 9 4-9z M7 12h14',moon:'M20 15A9 9 0 0 1 9 3a9 9 0 1 0 11 12',newnote:'M5 3h14v18H5z M12 8v8 M8 12h8',expand:'M8 3H3v5 M16 3h5v5 M3 16v5h5 M21 16v5h-5',more:'M12 5h.01 M12 12h.01 M12 19h.01',search:'M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14 M15 15l6 6',power:'M12 2v10 M6 5a9 9 0 1 0 12 0',link:'M9 15l6-6 M8 16l-2 2a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0 M14 8l2-2a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0'};
 const icon=n=>`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${shapes[n]||shapes.leaf}"/></svg>`;
@@ -61,18 +61,21 @@ function prepareGate(navigation=0){
  nativeNavigation=navigation;screen='gateIdle';state={role:'APP_GATE',overlay:true,notes:[],chats:[],accounts:[],models:[],connection:{},rules:[],allPurposes:[],purposeOrders:{}};
  renderedRoute='gateIdle';$('#app').replaceChildren();++domRevision;signalRendered();
 }
+let gateRegions=[];
 function presentGate(name,payload,navigation){
  if(navigation<nativeNavigation)return;
  const same=screen===name&&state?.gate?.pkg===payload.gate.pkg;
  nativeNavigation=navigation;closeSheet();selected='';minutes=5;purposeEntry=null;
  state={...state,...payload,role:'APP_GATE',overlay:true,purposeOrders:{[payload.scope]:payload.purposes}};
  screen=name;const main=$('.gate-page');
+ const template=document.createElement('template');template.innerHTML=gate();
+ const wanted=template.content.firstElementChild;
  if(same&&main){
-  const template=document.createElement('template');template.innerHTML=gate();
-  const wanted=template.content.firstElementChild;
-  for(let i=0;i<wanted.children.length;i++){const old=main.children[i],next=wanted.children[i];if(old?.outerHTML!==next.outerHTML){if(old)old.replaceWith(next.cloneNode(true));else main.append(next.cloneNode(true));}}
+  for(let i=0;i<wanted.children.length;i++){const old=main.children[i],next=wanted.children[i];if(gateRegions[i]!==next.outerHTML){if(old)old.replaceWith(next.cloneNode(true));else main.append(next.cloneNode(true));}}
   bind();viewportChanged();renderedRoute=screen;++domRevision;signalRendered();
  }else render();
+ gateRegions=[...wanted.children].map(el=>el.outerHTML);
+ document.querySelectorAll('[data-min]').forEach(el=>{el.classList.toggle('selected',Number(el.dataset.min)===minutes);el.setAttribute('aria-pressed',Number(el.dataset.min)===minutes);});
  startPolling();
 }
 function presentScreen(name){const previous=nativeNavigation++;Native.request('0','present',JSON.stringify({screen:name,previous,navigation:nativeNavigation,chat:chatId}));}
