@@ -1,4 +1,6 @@
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingTop="4dp" android:paddingBottom="4dp" android:baselineAligned="true">
-    <TextView android:id="@+id/widget_row_check" android:layout_width="25dp" android:layout_height="wrap_content" android:textSize="18sp" android:textColor="@color/widget_text" android:importantForAccessibility="no"/>
-    <TextView android:id="@+id/widget_row_text" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:textSize="14sp" android:textColor="@color/widget_text" android:breakStrategy="simple"/>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="36dp" android:orientation="horizontal" android:paddingTop="0dp" android:paddingBottom="0dp" android:baselineAligned="false">
+    <FrameLayout android:id="@+id/widget_check_target" android:layout_width="30dp" android:layout_height="36dp" android:clickable="true" android:focusable="true">
+        <ImageView android:id="@+id/widget_row_check" android:layout_width="20dp" android:layout_height="20dp" android:layout_gravity="top|start" android:layout_marginTop="8dp" android:src="@drawable/widget_check_empty" android:importantForAccessibility="no"/>
+    </FrameLayout>
+    <TextView android:id="@+id/widget_row_text" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:minHeight="36dp" android:paddingTop="8dp" android:paddingBottom="8dp" android:includeFontPadding="false" android:textSize="14sp" android:textColor="@color/widget_text" android:breakStrategy="simple" android:clickable="false"/>
 </LinearLayout>

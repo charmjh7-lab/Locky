@@ -111,9 +111,14 @@
 .compact-note .note-actions{min-height:34px;height:34px;gap:2px}
 .compact-note .note-actions .iconbtn{min-height:34px;height:34px;width:34px}
 .compact-note .note-actions .iconbtn svg{width:16px;height:16px}
-.compact-note .checkrow{min-height:41px;gap:4px;padding:2px 0;align-items:flex-start}
-.compact-note .checkrow input[type=checkbox]{width:19px;height:19px;margin:9px 0}
-.compact-note .checkrow textarea[data-checktext]{font-size:13.5px;line-height:1.5;padding:6px 0;min-height:28px;height:28px;overflow:hidden}
-.compact-note .checkrow button{width:28px;min-height:36px;height:36px;padding:5px}
+.compact-note .checkrow{min-height:41px;gap:9px;padding:2px 0;align-items:flex-start;border-bottom:0;position:relative;padding-right:32px}
+.compact-note .checkrow input[type=checkbox]{width:19px;height:19px;margin:6px 0 0}
+.compact-note .checkrow textarea[data-checktext]{font-size:13px;line-height:1.5;padding:6px 0;min-height:28px;height:28px;overflow:hidden}
+.compact-note .checkrow button{position:absolute;right:0;top:2px;width:28px;min-height:36px;height:36px;padding:5px;visibility:hidden;pointer-events:none}
+.compact-note .checkrow:focus-within button{visibility:visible;pointer-events:auto}
 .compact-note .checkrow button svg{width:13px;height:13px}
 .checkrow textarea[data-checktext]{overflow:hidden;overflow-wrap:anywhere}
+
+.compact-note .note-content{padding-bottom:10px;scroll-padding-bottom:10px;isolation:isolate}
+.compact-note .note-content.has-more{mask-image:linear-gradient(to bottom,#000 calc(100% - 10px),transparent);-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 10px),transparent)}
+.compact-note .note-actions{position:relative;z-index:1}

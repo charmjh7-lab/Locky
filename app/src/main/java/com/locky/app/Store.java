@@ -160,8 +160,65 @@ final class Store extends SQLiteOpenHelper {
         String id=input.optString("id",UUID.randomUUID().toString());boolean aimless=input.optBoolean("aimless",id.equals("aimless")||id.equals("app-aimless"));
         ContentValues v=new ContentValues();v.put("id",id);v.put("label",label);v.put("pkg",input.optString("pkg"));v.put("uri",input.optString("uri"));v.put("scope",scope);v.put("aimless",aimless?1:0);put("purposes",v);return rows("SELECT * FROM purposes WHERE id=?",id).getJSONObject(0);
     }
-    synchronized void note(JSONObject n) throws JSONException {
-        ContentValues v=new ContentValues();v.put("id",n.optString("id",UUID.randomUUID().toString()));v.put("title",n.optString("title","메모"));v.put("body",n.optString("body"));v.put("checks",n.optJSONArray("checks")==null?"[]":n.getJSONArray("checks").toString());v.put("mode",n.optString("mode","text").equals("check")?"check":"text");v.put("updated",System.currentTimeMillis());put("notes",v);
+    private static JSONArray checkIds(JSONArray input,JSONArray previous) throws JSONException {
+        JSONArray out=new JSONArray();Set<String> seen=new HashSet<>();
+        for(int i=0;i<input.length();i++){
+            JSONObject item=new JSONObject(input.getJSONObject(i).toString());String id=item.optString("id");
+            if(id.isEmpty()&&i<previous.length()&&item.optString("text").equals(previous.getJSONObject(i).optString("text")))id=previous.getJSONObject(i).optString("id");
+            if(id.isEmpty()||!seen.add(id)){id=UUID.randomUUID().toString();seen.add(id);}item.put("id",id);out.put(item);
+        }return out;
+    }
+    /** Stable check identities live in the existing JSON, without a schema migration. */
+    synchronized JSONArray notes() throws JSONException {
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{
+            JSONArray notes=rows("SELECT * FROM notes ORDER BY updated DESC,id");
+            for(int i=0;i<notes.length();i++){JSONObject note=notes.getJSONObject(i);JSONArray checks=checkIds(new JSONArray(note.getString("checks")),new JSONArray());String normalized=checks.toString();
+                if(!normalized.equals(note.getString("checks"))){ContentValues v=new ContentValues();v.put("checks",normalized);db.update("notes",v,"id=?",new String[]{note.getString("id")});note.put("checks",normalized);}
+            }db.setTransactionSuccessful();return notes;
+        }finally{db.endTransaction();}
+    }
+    private static Map<String,JSONObject> checksById(JSONArray checks) throws JSONException {Map<String,JSONObject> map=new LinkedHashMap<>();for(int i=0;i<checks.length();i++){JSONObject item=checks.getJSONObject(i);map.put(item.optString("id"),item);}return map;}
+    private static JSONArray mergeChecks(JSONArray desired,JSONArray base,JSONArray current) throws JSONException {
+        Map<String,JSONObject> before=checksById(base),latest=checksById(current);JSONArray merged=new JSONArray();Set<String> included=new HashSet<>();
+        for(int i=0;i<desired.length();i++){
+            JSONObject edit=desired.getJSONObject(i),old=before.get(edit.getString("id")),now=latest.get(edit.getString("id"));
+            if(old!=null&&now==null)continue; // a stale editor cannot resurrect a deleted item
+            JSONObject item=new JSONObject((now==null?edit:now).toString());
+            if(old==null||!edit.optString("text").equals(old.optString("text")))item.put("text",edit.optString("text"));
+            if(old==null||edit.optBoolean("done")!=old.optBoolean("done"))item.put("done",edit.optBoolean("done"));
+            merged.put(item);included.add(edit.getString("id"));
+        }
+        for(int i=0;i<current.length();i++){JSONObject item=current.getJSONObject(i);String id=item.getString("id");if(!before.containsKey(id)&&!included.contains(id))merged.put(item);}
+        return merged;
+    }
+    synchronized JSONObject note(JSONObject n) throws JSONException {
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{
+            String id=n.optString("id",UUID.randomUUID().toString());JSONArray found=rows("SELECT * FROM notes WHERE id=?",id);JSONObject current=found.length()==0?null:found.getJSONObject(0),base=n.optJSONObject("base");
+            if(base!=null&&!base.optString("id").isEmpty()&&current==null)throw new IllegalStateException("삭제된 메모입니다. 새 메모로 작성해 주세요.");
+            JSONArray latest=current==null?new JSONArray():new JSONArray(current.getString("checks"));JSONArray checks=checkIds(n.optJSONArray("checks")==null?new JSONArray():n.getJSONArray("checks"),latest);
+            ContentValues v=new ContentValues();v.put("id",id);
+            for(String field:new String[]{"title","body","mode"}){
+                String value=n.optString(field,field.equals("title")?"메모":field.equals("mode")?"text":"");
+                if(base!=null&&current!=null&&value.equals(base.optString(field)))value=current.optString(field);
+                if(field.equals("mode"))value=value.equals("check")?"check":"text";
+                v.put(field,value);
+            }
+            if(base!=null&&current!=null){
+                if(!current.optString("mode").equals(base.optString("mode")))throw new IllegalStateException("메모 종류가 변경되었습니다. 메모를 다시 열어 주세요.");
+                JSONArray before=base.optJSONArray("checks");if(before!=null&&n.optString("mode").equals(base.optString("mode")))checks=mergeChecks(checks,before,latest);
+            }
+            v.put("checks",checks.toString());v.put("updated",System.currentTimeMillis());put("notes",v);db.setTransactionSuccessful();
+            return rows("SELECT * FROM notes WHERE id=?",id).getJSONObject(0);
+        }finally{db.endTransaction();}
+    }
+    /** Compare-and-set only this done bit, against the latest authoritative row. */
+    synchronized boolean toggleNoteCheck(String noteId,int index,String itemId,String text,boolean expected) throws JSONException {
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{
+            JSONArray found=rows("SELECT * FROM notes WHERE id=?",noteId);if(found.length()==0)return false;JSONObject note=found.getJSONObject(0);
+            if(!"check".equals(note.optString("mode")))return false;JSONArray checks=new JSONArray(note.getString("checks"));if(index<0||index>=checks.length()||itemId==null||text==null||itemId.isEmpty())return false;
+            JSONObject item=checks.getJSONObject(index);if(!itemId.equals(item.optString("id"))||!text.equals(item.optString("text"))||item.optBoolean("done")!=expected)return false;
+            item.put("done",!expected);ContentValues v=new ContentValues();v.put("checks",checks.toString());v.put("updated",System.currentTimeMillis());db.update("notes",v,"id=?",new String[]{noteId});db.setTransactionSuccessful();return true;
+        }finally{db.endTransaction();}
     }
     synchronized String newChat() {String id=UUID.randomUUID().toString();ContentValues v=new ContentValues();v.put("id",id);v.put("title","새 대화");v.put("updated",System.currentTimeMillis());put("chats",v);return id;}
     private void createQuickRequests(SQLiteDatabase db){db.execSQL("CREATE TABLE quick_requests(request TEXT PRIMARY KEY,chat TEXT NOT NULL,user INTEGER NOT NULL,reply INTEGER NOT NULL)");}
