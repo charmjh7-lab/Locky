@@ -6,15 +6,29 @@ import java.time.*;
 import java.util.*;
 
 final class Briefing {
+    interface RangeReader {JSONObject read(long start,long end) throws Exception;}
+    /** One build only: late recovery is visible on the next request, even for completed dates. */
+    static final class Request {
+        private record Range(long start,long end,boolean complete){}
+        private final Map<Range,JSONObject> ranges=new HashMap<>();
+        private final RangeReader reader;private final long today;
+        Request(Context c,long now,ZoneId zone){this((start,end)->Briefing.range(c,start,end),Rules.dayStart(now,zone));}
+        Request(RangeReader reader,long today){this.reader=reader;this.today=today;}
+        JSONObject range(long start,long end) throws Exception {
+            Range key=new Range(start,end,end<=today);JSONObject result=ranges.get(key);
+            if(result==null){result=reader.read(start,end);ranges.put(key,result);}return result;
+        }
+    }
     static JSONObject build(Context c,int days,long dayOffset) throws Exception {
         ZoneId z=ZoneId.systemDefault();LocalDate date=LocalDate.now(z).minusDays(dayOffset);
         long start=date.minusDays(days-1).atStartOfDay(z).toInstant().toEpochMilli();
         long end=dayOffset==0?System.currentTimeMillis():date.plusDays(1).atStartOfDay(z).toInstant().toEpochMilli();
-        JSONObject result=range(c,start,end).put("days",days).put("date",date.toString()).put("complete",dayOffset>0).put("kind",days==7?"week":"day");
+        Request request=new Request(c,System.currentTimeMillis(),z);
+        JSONObject result=request.range(start,end).put("days",days).put("date",date.toString()).put("complete",dayOffset>0).put("kind",days==7?"week":"day");
         if(days==1){JSONArray windows=FocusPeriods.windows(Store.get(c),start,end),results=new JSONArray();for(int i=0;i<windows.length();i++){
             JSONObject w=windows.getJSONObject(i);if(w.getLong("start")<end&&w.getLong("end")>start)results.put(w);
         }result.put("focusResults",results);}
-        BriefingAnalysis.addComparison(c,result,days);return result;
+        BriefingAnalysis.addComparison(c,result,days,request);return result;
     }
     static JSONObject range(Context c,long start,long end) throws Exception {
         Store s=Store.get(c);s.syncFocusZone();GuardService guard=GuardService.live;if(guard!=null)guard.flushOnMain();

@@ -12,6 +12,9 @@ final class Store extends SQLiteOpenHelper {
     static Store get(Context c) { if(instance==null)synchronized(Store.class){if(instance==null)instance=new Store(c.getApplicationContext());}return instance; }
     final android.content.SharedPreferences settings;
     final Context context;private long lastObservation;
+    // Budget inputs change on charged usage and screen evidence; uncharged gate checkpoints cannot spend time.
+    private volatile long usageRevision;
+    long usageRevision(){return usageRevision;}
     private Store(Context c) { super(c,"locky.db",null,5);context=c; settings=c.getSharedPreferences("locky-settings",0);if(!settings.contains("usage-excluded"))settings.edit().putStringSet("usage-excluded",new HashSet<>(Set.of("com.samsung.android.sidegesturepad"))).apply();setWriteAheadLoggingEnabled(true); }
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE purposes(id TEXT PRIMARY KEY,label TEXT NOT NULL,pkg TEXT NOT NULL DEFAULT '',uri TEXT NOT NULL DEFAULT '',aimless INTEGER NOT NULL DEFAULT 0,scope TEXT NOT NULL DEFAULT '*')");
@@ -38,10 +41,11 @@ final class Store extends SQLiteOpenHelper {
     }
     private void createScreenStates(SQLiteDatabase db){db.execSQL("CREATE TABLE screen_states(id INTEGER PRIMARY KEY AUTOINCREMENT,time INTEGER NOT NULL,state INTEGER NOT NULL,type INTEGER NOT NULL DEFAULT 0)");db.execSQL("CREATE UNIQUE INDEX screen_state_time ON screen_states(time,type,state)");}
     synchronized void screenMarks(List<ScreenHistory.Mark> marks){
-        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{for(ScreenHistory.Mark mark:marks){ContentValues v=new ContentValues();v.put("time",mark.time);v.put("type",mark.type);v.put("state",mark.value);db.insertWithOnConflict("screen_states",null,v,SQLiteDatabase.CONFLICT_IGNORE);}db.setTransactionSuccessful();}finally{db.endTransaction();}
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{for(ScreenHistory.Mark mark:marks){ContentValues v=new ContentValues();v.put("time",mark.time);v.put("type",mark.type);v.put("state",mark.value);if(db.insertWithOnConflict("screen_states",null,v,SQLiteDatabase.CONFLICT_IGNORE)!=-1)++usageRevision;}db.setTransactionSuccessful();}finally{db.endTransaction();}
     }
-    synchronized void screenState(int state){ContentValues v=new ContentValues();v.put("time",System.currentTimeMillis());v.put("state",state);getWritableDatabase().insertWithOnConflict("screen_states",null,v,SQLiteDatabase.CONFLICT_IGNORE);}
+    synchronized void screenState(int state){ContentValues v=new ContentValues();v.put("time",System.currentTimeMillis());v.put("state",state);if(getWritableDatabase().insertWithOnConflict("screen_states",null,v,SQLiteDatabase.CONFLICT_IGNORE)!=-1)++usageRevision;}
     JSONArray screenUsage(long from,long to) throws JSONException {return ScreenHistory.filter(context,rows("SELECT * FROM usage WHERE end>? AND start<? ORDER BY start,id",""+from,""+to),from,to);}
+    JSONArray screenUsage(String pkg,long from,long to) throws JSONException {return ScreenHistory.filter(context,rows("SELECT * FROM usage WHERE pkg=? AND managed=1 AND end>? AND start<? ORDER BY start,id",pkg,""+from,""+to),from,to);}
     @Override public void onUpgrade(SQLiteDatabase db,int old,int next) {
         if(old<5)createScreenStates(db);
         if(old<4&&next>=4){createBriefingTables(db);db.execSQL("ALTER TABLE usage ADD COLUMN surface TEXT NOT NULL DEFAULT 'unknown'");db.execSQL("ALTER TABLE usage ADD COLUMN rule_mode TEXT NOT NULL DEFAULT 'unknown'");db.execSQL("ALTER TABLE usage ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy'");}
@@ -129,16 +133,16 @@ final class Store extends SQLiteOpenHelper {
         for(long[] gap:gaps)for(ScreenHistory.Span span:evidence.spans){long a=Math.max(gap[0],span.start),b=Math.min(gap[1],span.end);if(b>a&&span.state!=ScreenHistory.OFF)appendUsage(a,b,pkg,label,managed,parent,source,surface);}
     }
     private void appendUsage(long from,long to,String pkg,String label,boolean managed,long parent,String source,String surface) {
-        SQLiteDatabase d=getWritableDatabase();JSONObject policy=rule(pkg);String mode=source.equals("accessibility")?(policy==null?"none":policy.optString("mode")):"unknown";
+        SQLiteDatabase d=getWritableDatabase();JSONObject policy=source.equals("accessibility")?rule(pkg):null;String mode=source.equals("accessibility")?(policy==null?"none":policy.optString("mode")):"unknown";
         try(Cursor c=d.rawQuery("SELECT id,end,pkg,label,managed,parent,source,rule_mode,surface FROM usage ORDER BY id DESC LIMIT 1",null)) {
-            if(c.moveToFirst()&&c.getLong(1)==from&&pkg.equals(c.getString(2))&&label.equals(c.getString(3))&&c.getInt(4)==(managed?1:0)&&c.getLong(5)==parent&&source.equals(c.getString(6))&&mode.equals(c.getString(7))&&surface.equals(c.getString(8))){ContentValues update=new ContentValues();update.put("end",to);d.update("usage",update,"id=?",new String[]{""+c.getLong(0)});return;}
+            if(c.moveToFirst()&&c.getLong(1)==from&&pkg.equals(c.getString(2))&&label.equals(c.getString(3))&&c.getInt(4)==(managed?1:0)&&c.getLong(5)==parent&&source.equals(c.getString(6))&&mode.equals(c.getString(7))&&surface.equals(c.getString(8))){ContentValues update=new ContentValues();update.put("end",to);d.update("usage",update,"id=?",new String[]{""+c.getLong(0)});if(managed)++usageRevision;return;}
         }
-        ContentValues v=new ContentValues();v.put("surface",surface);v.put("rule_mode",mode);v.put("source",source);v.put("start",from);v.put("end",to);v.put("pkg",pkg);v.put("label",label);v.put("managed",managed?1:0);v.put("parent",parent);d.insertOrThrow("usage",null,v);
+        ContentValues v=new ContentValues();v.put("surface",surface);v.put("rule_mode",mode);v.put("source",source);v.put("start",from);v.put("end",to);v.put("pkg",pkg);v.put("label",label);v.put("managed",managed?1:0);v.put("parent",parent);d.insertOrThrow("usage",null,v);if(managed)++usageRevision;
     }
     synchronized long used(String pkg,long now) {
         if(UsageReader.excluded(context,pkg))return 0;
         long start=Rules.dayStart(now,ZoneId.systemDefault()),total=0,cursor=start;
-        try{JSONArray rows=screenUsage(start,now);for(int n=0;n<rows.length();n++){JSONObject row=rows.getJSONObject(n);if(!pkg.equals(row.optString("pkg"))||row.optInt("managed")!=1)continue;long a=Math.max(cursor,row.getLong("start")),b=Math.min(now,row.getLong("end"));total+=Math.max(0,b-a);cursor=Math.max(cursor,b);}}catch(JSONException e){throw new IllegalStateException(e);}return total;
+        try{JSONArray rows=screenUsage(pkg,start,now);for(int n=0;n<rows.length();n++){JSONObject row=rows.getJSONObject(n);long a=Math.max(cursor,row.getLong("start")),b=Math.min(now,row.getLong("end"));total+=Math.max(0,b-a);cursor=Math.max(cursor,b);}}catch(JSONException e){throw new IllegalStateException(e);}return total;
     }
     long remaining(String pkg,long now) {return remaining(pkg,now,rule(pkg));}
     long remaining(String pkg,long now,JSONObject rule) {
@@ -253,8 +257,16 @@ final class Store extends SQLiteOpenHelper {
     }
     synchronized void updateMessage(long id,String text,String status) {ContentValues v=new ContentValues();v.put("body",text);v.put("status",status);getWritableDatabase().update("messages",v,"id=?",new String[]{""+id});}
     synchronized void citations(long id,JSONArray links){ContentValues v=new ContentValues();v.put("citations",links.toString());getWritableDatabase().update("messages",v,"id=?",new String[]{""+id});}
-    synchronized void deleteChat(String id) {SQLiteDatabase d=getWritableDatabase();d.beginTransaction();try {d.delete("messages","chat=?",new String[]{id});d.delete("chats","id=?",new String[]{id});d.setTransactionSuccessful();}finally{d.endTransaction();}}
+    synchronized void deleteChat(String id) {SQLiteDatabase d=getWritableDatabase();d.beginTransaction();try {d.delete("quick_requests","chat=?",new String[]{id});d.delete("messages","chat=?",new String[]{id});d.delete("chats","id=?",new String[]{id});d.setTransactionSuccessful();}finally{d.endTransaction();}}
     boolean managed(long time) {return settings.getBoolean("enabled",true)&&Rules.managed(Rules.minute(time,ZoneId.systemDefault()),settings.getInt("start",540),settings.getInt("end",1260));}
     JSONObject preferences() throws JSONException {return new JSONObject().put("enabled",settings.getBoolean("enabled",true)).put("floatingTimer",settings.getBoolean("floatingTimer",true)).put("start",settings.getInt("start",540)).put("end",settings.getInt("end",1260)).put("reminders",new JSONArray(settings.getString("reminders","[30,20,10,5,1]"))).put("dailyBrief",settings.getBoolean("dailyBrief",true)).put("dailyBriefTime",settings.getInt("dailyBriefTime",540)).put("focusBrief",settings.getBoolean("focusBrief",true)).put("weeklyDay",settings.getInt("weeklyDay",7)).put("model",settings.getString("model","")).put("themeMode",UiTheme.mode(context));}
-    synchronized void cleanOldUsage() {long cutoff=System.currentTimeMillis()-180L*86400000;getWritableDatabase().delete("service_observations","time<?",new String[]{""+cutoff});getWritableDatabase().delete("usage","end<?",new String[]{""+cutoff});getWritableDatabase().delete("events","time<?",new String[]{""+cutoff});}
+    synchronized void cleanOldUsage() {
+        long cutoff=System.currentTimeMillis()-180L*86400000;SQLiteDatabase db=getWritableDatabase();
+        db.delete("service_observations","time<?",new String[]{""+cutoff});
+        if(db.delete("usage","end<?",new String[]{""+cutoff})>0)++usageRevision;
+        db.delete("events","time<?",new String[]{""+cutoff});
+        // Keep the last pre-retention mark for each evidence type, including UNKNOWN.
+        db.execSQL("DELETE FROM screen_states WHERE time<? AND id NOT IN (SELECT (SELECT latest.id FROM screen_states latest WHERE latest.type=types.type AND latest.time<? ORDER BY latest.time DESC,latest.id DESC LIMIT 1) FROM (SELECT DISTINCT type FROM screen_states WHERE time<?) types)",new Object[]{cutoff,cutoff,cutoff});
+        db.execSQL("DELETE FROM quick_requests WHERE NOT EXISTS (SELECT 1 FROM chats WHERE chats.id=quick_requests.chat)");
+    }
 }

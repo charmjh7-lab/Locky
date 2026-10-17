@@ -342,6 +342,7 @@ final class WebHost {
     static void refreshAll(){for(var r:hosts){WebHost h=r.get();if(h!=null)h.refresh();}}
     static JSONObject dictionaryLaunched(){try{return new JSONObject().put("launched",true);}catch(JSONException e){throw new IllegalStateException(e);}}
     void answer(String id,Object value,String error){evaluate("receive("+JSONObject.quote(id)+","+(value==null?"null":value.toString())+","+(error==null?"null":JSONObject.quote(error))+")");}
+    static void refreshGeneralHosts(){for(var r:hosts){WebHost h=r.get();if(h!=null&&h.role!=Role.APP_GATE)h.refresh();}}
     final class Bridge {
         final WebView source;
         Bridge(WebView source){this.source=source;}
@@ -355,6 +356,7 @@ final class WebHost {
             if("rendered".equals(action)){main.post(()->{try{JSONObject frame=new JSONObject(raw);rendered(source,frame.optString("screen"),frame.optLong("navigation",-1),frame.optLong("revision",-1));}catch(JSONException ignored){}});return;}
             if("present".equals(action)){main.post(()->{try{JSONObject frame=new JSONObject(raw);presented(source,frame.optString("screen"),frame.optLong("previous",-1),frame.optLong("navigation",-1),frame.optString("chat"));}catch(JSONException ignored){}});return;}
             if((isOverlay&&Set.of("purpose","removePurpose").contains(action))||Set.of("choose","finishPurposeEditing","grant","extend","stop","utility","open","permission","dictionary","linkTest","signin","cancelLogin","exit","dismiss").contains(action))main.post(()->handle(id,action,raw));
+            else if(Set.of("brief","copyDay","saveDay").contains(action))LockyApp.app.backgroundWork.execute(()->handle(id,action,raw));
             else LockyApp.app.work.execute(()->handle(id,action,raw));
         }
     }
@@ -397,7 +399,7 @@ final class WebHost {
             case "linkTest":Intent link=Links.intent(context,a.optString("pkg"),a.optString("uri"));if(link==null)throw new IllegalArgumentException("이 앱에서 지원하는 연결인지 확인해 주세요. 딥링크는 앱마다 달라요.");if(isOverlay&&g!=null)g.hideOverlay();context.startActivity(link.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));break;
             case "saveNote":out=store.note(a);store.settings.edit().putString("recent-note",a.optString("id")).apply();NoteWidget.refreshAll(context);break;
             case "deleteNote":store.getWritableDatabase().delete("notes","id=?",new String[]{a.getString("id")});NoteWidget.refreshAll(context);break;
-            case "settings":if(g!=null)g.flushOnMain();saveSettings(a);if(a.has("themeMode"))main.post(()->{for(var ref:hosts){WebHost h=ref.get();if(h!=null&&!h.closed)h.applyTheme();}});if(g!=null)g.policyChanged();LockyApp.app.work.execute(()->Scheduler.fire(context));break;
+            case "settings":if(g!=null)g.flushOnMain();saveSettings(a);if(a.has("themeMode"))main.post(()->{for(var ref:hosts){WebHost h=ref.get();if(h!=null&&!h.closed)h.applyTheme();}});if(g!=null)g.policyChanged();LockyApp.app.backgroundWork.execute(()->Scheduler.fire(context));break;
             case "rule":String pkg=a.getString("pkg");if(pkg.equals(context.getPackageName()))throw new IllegalArgumentException("Locky는 관리 대상으로 지정할 수 없습니다.");String mode=a.optString("mode");JSONObject prior=store.rule(pkg);
                 String key="rule-memory:"+pkg;JSONObject memory=new JSONObject(store.settings.getString(key,"{}"));if(mode.equals("restore"))mode=memory.optString("mode","limited");
                 if(mode.equals("none")){if(prior!=null)memory=prior;store.getWritableDatabase().delete("rules","pkg=?",new String[]{pkg});store.settings.edit().remove("blocked-until:"+pkg).putString(key,memory.toString()).apply();}

@@ -60,4 +60,18 @@ public class NoteWidgetInteractionTest {
     @Test public void legacyJsonGetsStableIdentitiesWithoutChangingContentsOrUpdateTime() throws Exception {
         store.getWritableDatabase().execSQL("UPDATE notes SET checks='[{\"text\":\"같은 글\",\"done\":false},{\"text\":\"같은 글\",\"done\":false}]' WHERE id='a'");long updated=note().getLong("updated");store.notes();JSONArray ids=checks();assertNotEquals(ids.getJSONObject(0).getString("id"),ids.getJSONObject(1).getString("id"));store.notes();assertEquals(ids.toString(),checks().toString());assertEquals(updated,note().getLong("updated"));
     }
+
+    @Test public void blockedChatAndBackgroundWorkersDoNotBlockNoteSaveOrWidgetToggle() throws Exception {
+        LockyApp pools=new LockyApp();LockyApp.app=pools;
+        CountDownLatch started=new CountDownLatch(3),release=new CountDownLatch(1);
+        Runnable longWork=()->{started.countDown();try{release.await();}catch(InterruptedException e){Thread.currentThread().interrupt();}};
+        try {
+            assertSame(pools.chatWork,new ChatEngine(app,null).work);
+            pools.chatWork.execute(longWork);pools.backgroundWork.execute(longWork);pools.backgroundWork.execute(longWork);
+            assertTrue(started.await(5,TimeUnit.SECONDS));JSONObject item=checks().getJSONObject(0);
+            Future<?> save=pools.work.submit(()->{try{store.note(new JSONObject().put("id","local").put("body","saved"));}catch(Exception e){throw new RuntimeException(e);}});
+            Future<Boolean> toggle=pools.work.submit(()->toggle(0,item));save.get(5,TimeUnit.SECONDS);assertTrue(toggle.get(5,TimeUnit.SECONDS));
+            assertEquals("saved",store.rows("SELECT body FROM notes WHERE id='local'").getJSONObject(0).getString("body"));assertTrue(checks().getJSONObject(0).getBoolean("done"));
+        }finally{release.countDown();pools.chatWork.shutdownNow();pools.backgroundWork.shutdownNow();pools.work.shutdownNow();pools.chatWork.awaitTermination(5,TimeUnit.SECONDS);pools.backgroundWork.awaitTermination(5,TimeUnit.SECONDS);pools.work.awaitTermination(5,TimeUnit.SECONDS);LockyApp.app=null;}
+    }
 }

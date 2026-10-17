@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 final class ChatEngine {
     final Store store; final ChatGPT auth;final java.util.concurrent.Executor work; final AtomicBoolean busy=new AtomicBoolean();volatile String active="";volatile String error="";
-    ChatEngine(Context c,ChatGPT auth) {this(c,auth,LockyApp.app.work);}
+    ChatEngine(Context c,ChatGPT auth) {this(c,auth,LockyApp.app.chatWork);}
     ChatEngine(Context c,ChatGPT auth,java.util.concurrent.Executor work) {store=Store.get(c);this.auth=auth;this.work=work;}
     void validate(String text,String model) throws IOException {
         if(text.trim().isEmpty()||text.length()>20000)throw new IOException("메시지를 1~20,000자로 입력해 주세요.");

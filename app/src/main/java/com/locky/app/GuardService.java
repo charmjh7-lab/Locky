@@ -49,7 +49,7 @@ public final class GuardService extends AccessibilityService {
         // switchForeground has already restored any unexpired per-app grant.
         if(foreground.equals(sessionPkg))return;
         if(!store.managed(System.currentTimeMillis()))return;
-        JSONObject rule=store.rule(foreground);
+        JSONObject rule=policyRule(foreground);
         if(rule==null||!"limited".equals(rule.optString("mode"))||dailyRemaining(foreground)<=0)return;
         beginAppSession(foreground,pending.purpose,pending.minutes,pending.event);
     }
@@ -111,11 +111,22 @@ public final class GuardService extends AccessibilityService {
         segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();segmentUptime=SystemClock.uptimeMillis();
         beginScreenObservation();prepareAppGate();
         long recoveryFrom=store.settings.getLong("checkpoint",System.currentTimeMillis());String recoveryPackage=store.settings.getString("last-package","");
-        if(!interactive||keyguardLocked())phoneStart.prepareAfterServiceRestart();else {completeUnlock();observeForeground(null);main.postDelayed(()->{if(foreground.isEmpty())observeForeground(null);},250);main.postDelayed(()->{if(foreground.isEmpty())observeForeground(null);},750);}prepareAppGate();Scheduler.schedule(this);recover(recoveryFrom,store.settings.getBoolean("checkpoint-interactive",true)?recoveryPackage:"");
+        if(!interactive||keyguardLocked())phoneStart.prepareAfterServiceRestart();else {completeUnlock();observeForeground(null);main.postDelayed(()->{if(foreground.isEmpty())observeForeground(null);},250);main.postDelayed(()->{if(foreground.isEmpty())observeForeground(null);},750);}Scheduler.schedule(this);recover(recoveryFrom,store.settings.getBoolean("checkpoint-interactive",true)?recoveryPackage:"");
     }
     private void recover(long from,String old){long now=System.currentTimeMillis();
         if(now-from<2000)return;
-        LockyApp.app.work.execute(()->{try{JSONArray history=UsageReader.intervals(this,Math.max(from,now-180L*86400000),now,old);for(int i=0;i<history.length();i++){JSONObject u=history.getJSONObject(i);String pkg=u.getString("pkg");if(!UsageReader.recordable(this,pkg)||pkg.equals(getPackageName()))continue;JSONObject rule=store.rule(pkg);long a=u.getLong("start"),b=u.getLong("end");while(a<b){long boundary=Math.min(b,Math.min(Rules.nextDay(a,ZoneId.systemDefault()),Rules.nextBoundary(a,store.settings.getInt("start",540),store.settings.getInt("end",1260),ZoneId.systemDefault())));store.usage(a,boundary,pkg,UsageReader.label(this,pkg),rule!=null&&rule.optString("mode").equals("limited")&&store.managed(a),0,"usage-access");a=boundary;}}}catch(Exception ignored){}finally{main.post(this::policyChanged);}});
+        LockyApp.app.backgroundWork.execute(()->{
+            try {
+                JSONArray history=UsageReader.intervals(this,Math.max(from,now-180L*86400000),now,old);
+                for(int i=0;i<history.length();i++){
+                    JSONObject u=history.getJSONObject(i);String pkg=u.getString("pkg");
+                    if(!UsageReader.recordable(this,pkg)||pkg.equals(getPackageName()))continue;
+                    // Recovery proves the app interval, never its historical management rule.
+                    store.usage(u.getLong("start"),u.getLong("end"),pkg,UsageReader.label(this,pkg),false,0,"usage-access");
+                }
+            }catch(Exception error){android.util.Log.w("Locky","Usage recovery failed ("+error.getClass().getSimpleName()+")");}
+            finally{policyChanged();}
+        });
     }
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
         if(store==null)return;
@@ -267,7 +278,7 @@ public final class GuardService extends AccessibilityService {
             boolean currentActive=getSystemService(PowerManager.class).isInteractive()&&!keyguardLocked();
             if((suspended&&!evidence.hasInactive)||(!currentActive&&!evidence.hasStop&&!evidence.hasInactive))evidence=ScreenHistory.read(this,from,wall,ScreenHistory.UNKNOWN,false);
             long firstInactive=Long.MAX_VALUE;for(ScreenHistory.Span span:evidence.spans)if(span.state==ScreenHistory.OFF)firstInactive=Math.min(firstInactive,span.start);
-            for(long[] span:evidence.active()){if(span[0]>=firstInactive){clearSessions();cancelLinkedLaunch();charge=false;}long at=span[0],end=span[1];while(at<end){long boundary=Math.min(end,Math.min(Rules.nextDay(at,ZoneId.systemDefault()),Rules.nextBoundary(at,store.settings.getInt("start",540),store.settings.getInt("end",1260),ZoneId.systemDefault())));boolean managed=store.managed(at);store.usage(at,boundary,pkg,label,charge&&managed,charge?sessionEvent:phoneEvent);if(charge&&managed){sessionRemaining=Math.max(0,sessionRemaining-(boundary-at));++usageRevision;gateDailyUntil=0;BudgetRead read=budgetReads.get();if(read!=null)read.remaining.clear();}at=boundary;}}
+            for(long[] span:evidence.active()){if(span[0]>=firstInactive){clearSessions();cancelLinkedLaunch();charge=false;}long at=span[0],end=span[1];while(at<end){long boundary=Math.min(end,Math.min(Rules.nextDay(at,ZoneId.systemDefault()),Rules.nextBoundary(at,store.settings.getInt("start",540),store.settings.getInt("end",1260),ZoneId.systemDefault())));boolean managed=store.managed(at);store.usage(at,boundary,pkg,label,charge&&managed,charge?sessionEvent:phoneEvent);if(charge&&managed){sessionRemaining=Math.max(0,sessionRemaining-(boundary-at));invalidateGateBudget();}at=boundary;}}
             if(firstInactive<wall){clearSessions();cancelLinkedLaunch();}
         }
         segmentWall=wall;segmentElapsed=elapsed;segmentUptime=SystemClock.uptimeMillis();store.settings.edit().putLong("checkpoint",wall).putString("last-package",foreground).putBoolean("checkpoint-interactive",interactive).apply();
@@ -277,30 +288,45 @@ public final class GuardService extends AccessibilityService {
     void ensurePulse(){if(shouldPulse()){if(!pulseScheduled){pulseScheduled=true;main.postDelayed(pulse,1000);}}else{main.removeCallbacks(pulse);pulseScheduled=false;}}
     // Request-local reads are never shared between bridge workers and the service thread.
     private static final class BudgetRead {
-        final long now=System.currentTimeMillis();final Map<String,Long> remaining=new HashMap<>();final Map<String,JSONObject> rules=new HashMap<>();
+        long now=System.currentTimeMillis(),revision=-1,until;
+        final Map<String,Long> remaining=new HashMap<>();final Map<String,JSONObject> rules=new HashMap<>();
     }
     private final ThreadLocal<BudgetRead> budgetReads=new ThreadLocal<>();
-    private long usageRevision;
-    private volatile long gateDailyUntil,gateDaily;
+    private volatile long gateDailyUntil,gateDaily,gateDailyFrom,gateDailyRevision=-1;
     private volatile JSONObject gateRule;
     private volatile String gateDailyPkg="";
-    JSONObject policyRule(String pkg){
-        BudgetRead read=budgetReads.get();long now=read==null?System.currentTimeMillis():read.now;
-        if(overlayVisible&&pkg.equals(gatePkg)&&pkg.equals(gateDailyPkg)&&now<gateDailyUntil)return gateRule;
-        if(read==null)return store.rule(pkg);
-        if(!read.rules.containsKey(pkg))read.rules.put(pkg,store.rule(pkg));return read.rules.get(pkg);
-    }
-    void invalidateGateBudget(){gateDailyUntil=0;BudgetRead read=budgetReads.get();if(read!=null){read.remaining.clear();read.rules.clear();}}
-    long dailyRemaining(String pkg){
-        BudgetRead read=budgetReads.get();long now=read==null?System.currentTimeMillis():read.now;
-        // No managed-app time is charged while its gate covers it. Reuse until a policy/day boundary.
-        if(overlayVisible&&pkg.equals(gatePkg)&&pkg.equals(gateDailyPkg)&&now<gateDailyUntil)return gateDaily;
-        if(read!=null&&read.remaining.containsKey(pkg))return read.remaining.get(pkg);
-        JSONObject rule=policyRule(pkg);long value=store.remaining(pkg,now,rule);if(read!=null)read.remaining.put(pkg,value);
-        if(Looper.myLooper()==Looper.getMainLooper()&&overlayVisible&&pkg.equals(gatePkg)){
-            gateDaily=value;gateDailyPkg=pkg;gateRule=rule;gateDailyUntil=policyEnd(now);
+    private BudgetRead budgetRead(){
+        BudgetRead read=budgetReads.get();if(read==null)return null;
+        long now=System.currentTimeMillis(),revision=store.usageRevision();
+        if(read.revision!=revision||now<read.now||now>=read.until){
+            read.remaining.clear();read.rules.clear();read.now=now;read.until=policyEnd(now);read.revision=revision;
         }
-        return value;
+        return read;
+    }
+    private boolean gateBudgetValid(String pkg,long now){
+        return overlayVisible&&pkg.equals(gatePkg)&&pkg.equals(gateDailyPkg)&&now>=gateDailyFrom&&now<gateDailyUntil&&gateDailyRevision==store.usageRevision();
+    }
+    JSONObject policyRule(String pkg){
+        BudgetRead read=budgetRead();long now=read==null?System.currentTimeMillis():read.now;
+        if(read!=null&&read.rules.containsKey(pkg))return read.rules.get(pkg);
+        JSONObject rule=gateBudgetValid(pkg,now)?gateRule:store.rule(pkg);
+        if(read!=null)read.rules.put(pkg,rule);return rule;
+    }
+    void invalidateGateBudget(){gateDailyUntil=0;BudgetRead read=budgetReads.get();if(read!=null){read.remaining.clear();read.rules.clear();read.revision=-1;}}
+    long dailyRemaining(String pkg){
+        // A concurrent recovery/evidence write cannot publish a stale budget with a new revision.
+        synchronized(store){
+            BudgetRead read=budgetRead();long now=read==null?System.currentTimeMillis():read.now;
+            if(gateBudgetValid(pkg,now))return gateDaily;
+            if(read!=null&&read.remaining.containsKey(pkg))return read.remaining.get(pkg);
+            JSONObject rule=policyRule(pkg);long value=store.remaining(pkg,now,rule);
+            if(read!=null){read.remaining.put(pkg,value);read.revision=store.usageRevision();}
+            if(Looper.myLooper()==Looper.getMainLooper()&&overlayVisible&&pkg.equals(gatePkg))cacheGateBudget(pkg,rule,value,now);
+            return value;
+        }
+    }
+    private void cacheGateBudget(String pkg,JSONObject rule,long remaining,long now){
+        gateDaily=remaining;gateDailyPkg=pkg;gateRule=rule;gateDailyFrom=now;gateDailyRevision=store.usageRevision();gateDailyUntil=policyEnd(now);
     }
     void enforce(){
         boolean ownsRead=budgetReads.get()==null;if(ownsRead)budgetReads.set(new BudgetRead());
@@ -319,11 +345,13 @@ public final class GuardService extends AccessibilityService {
         if(rule.optString("mode").equals("locked")||remaining<=0){if(rule.optString("mode").equals("limited"))store.blockUntilFree(foreground,now);showGate("blocked",foreground,remaining);Notices.cancelTimer(this);return;}
         if(!foreground.equals(sessionPkg)){showGate("app",foreground,remaining);Notices.cancelTimer(this);return;}
         if(sessionRemaining<=0){showGate("renew",foreground,remaining);Notices.cancelTimer(this);return;}
-        if(!overlayVisible&&(now/30000!=lastNotice)){lastNotice=now/30000;Notices.timer(this,rule.optString("label"),dailyRemaining(foreground),sessionRemaining);}
+        if(!overlayVisible&&(now/30000!=lastNotice)){lastNotice=now/30000;Notices.timer(this,rule.optString("label"),remaining,sessionRemaining);}
         } finally {try{syncFloatingTimer();}finally{if(ownsRead)budgetReads.remove();}}
     }
     void syncFloatingTimer(){
         if(floatingTimer==null||store==null)return;
+        boolean ownsRead=budgetReads.get()==null;if(ownsRead)budgetReads.set(new BudgetRead());
+        try {
         long now=System.currentTimeMillis();JSONObject rule=policyRule(foreground);long remaining=dailyRemaining(foreground);
         boolean visible=store.settings.getBoolean("floatingTimer",true)&&interactive&&!systemPaused&&!overlayVisible
             &&!foreground.isEmpty()&&foreground.equals(sessionPkg)&&!foreground.equals(getPackageName())
@@ -332,6 +360,7 @@ public final class GuardService extends AccessibilityService {
             &&!keyguardLocked()
             &&(LockyApp.app==null||!foreground.equals(LockyApp.app.authBrowser));
         floatingTimer.update(visible,foreground,sessionEvent,rule==null?"":rule.optString("label"),purpose,sessionRemaining,remaining);
+        }finally{if(ownsRead)budgetReads.remove();}
     }
     void hideFloatingTimer(){if(floatingTimer!=null)floatingTimer.hide();}
     @Override public void onConfigurationChanged(android.content.res.Configuration config){super.onConfigurationChanged(config);if(overlay!=null)overlay.applyTheme();hideFloatingTimer();syncFloatingTimer();if(overlayVisible&&overlay!=null)revealOverlay();}
@@ -352,15 +381,22 @@ public final class GuardService extends AccessibilityService {
             .put("purposeDate",java.time.LocalDate.now().toString()).put("scope",scope).put("purposes",store.purposes(scope))
             .put("allPurposes",store.rows("SELECT * FROM purposes ORDER BY rowid")).put("rules",rule==null?new JSONArray():new JSONArray().put(rule));
     }
-    void showGate(String type,String pkg){showGate(type,pkg,dailyRemaining(pkg));}
+    void showGate(String type,String pkg){
+        boolean ownsRead=budgetReads.get()==null;if(ownsRead)budgetReads.set(new BudgetRead());
+        try{showGate(type,pkg,dailyRemaining(pkg));}finally{if(ownsRead)budgetReads.remove();}
+    }
     void showGate(String type,String pkg,long remaining){
         if(!Set.of("app","blocked","renew").contains(type))throw new IllegalArgumentException("Not an app gate");
         hideFloatingTimer();
         boolean same=overlayVisible&&gate.equals(type)&&gatePkg.equals(pkg);
         if(!same){
-            JSONObject rule=policyRule(pkg);long revision=usageRevision;checkpoint();if(revision!=usageRevision)remaining=dailyRemaining(pkg);
-            ++gateTransition;gate=type;gatePkg=pkg;utility="사용 확인";
-            gateDaily=remaining;gateDailyPkg=pkg;gateRule=rule;gateDailyUntil=policyEnd(System.currentTimeMillis());
+            synchronized(store){
+                BudgetRead read=budgetReads.get();long revision=read==null?store.usageRevision():read.revision;checkpoint();
+                if(revision!=store.usageRevision())remaining=dailyRemaining(pkg);
+                JSONObject rule=policyRule(pkg);
+                ++gateTransition;gate=type;gatePkg=pkg;utility="사용 확인";
+                cacheGateBudget(pkg,rule,remaining,System.currentTimeMillis());
+            }
         }
         prepareAppGate();
         overlayVisible=true;
@@ -386,7 +422,9 @@ public final class GuardService extends AccessibilityService {
             window.addView(overlayWindow,overlayLayout);
         }
         if(same)overlay.ensurePurposeDay();
-        revealOverlay();ensurePulse();
+        revealOverlay();
+        // First keyguard observation may have added screen evidence during reveal.
+        dailyRemaining(pkg);ensurePulse();
     }
     void revealOverlay(){
         if(overlay==null||overlayWindow==null)return;
@@ -420,28 +458,38 @@ public final class GuardService extends AccessibilityService {
         checkpoint();overlayVisible=false;++gateTransition;gateDailyUntil=0;if(overlay!=null)applyExposure(Exposure.HIDDEN);
         segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();segmentUptime=SystemClock.uptimeMillis();utility="첫 화면";
     }
-    void choosePhone(JSONObject p) throws Exception {checkpoint();phoneEvent=store.event("unlock",p.getString("label"),"",p.optString("pkg"),0,p.optInt("aimless",0)==1);utility="첫 화면";ensurePulse();}
+    void choosePhone(JSONObject p) throws Exception {invalidateGateBudget();checkpoint();phoneEvent=store.event("unlock",p.getString("label"),"",p.optString("pkg"),0,p.optInt("aimless",0)==1);utility="첫 화면";ensurePulse();}
     void allowApp(JSONObject p,int minutes) throws Exception {
-        invalidateGateBudget();checkpoint();long remaining=dailyRemaining(gatePkg);JSONObject rule=store.rule(gatePkg);if(!store.managed(System.currentTimeMillis())){hideOverlay();return;}
-        if(rule==null||rule.optString("mode").equals("locked")||remaining<=0){enforce();throw new IllegalStateException("지금은 사용할 수 없는 앱입니다.");}
-        if(!gatePkg.equals(foreground))throw new IllegalStateException("앱이 바뀌었습니다. 다시 열어 주세요.");
-        beginAppSession(gatePkg,p,minutes,phoneEvent);hideOverlay();launch(p);syncFloatingTimer();ensurePulse();
+        boolean ownsRead=budgetReads.get()==null;if(ownsRead)budgetReads.set(new BudgetRead());
+        try {
+            invalidateGateBudget();checkpoint();long remaining=dailyRemaining(gatePkg);JSONObject rule=policyRule(gatePkg);if(!store.managed(System.currentTimeMillis())){hideOverlay();return;}
+            if(rule==null||rule.optString("mode").equals("locked")||remaining<=0){enforce();throw new IllegalStateException("지금은 사용할 수 없는 앱입니다.");}
+            if(!gatePkg.equals(foreground))throw new IllegalStateException("앱이 바뀌었습니다. 다시 열어 주세요.");
+            beginAppSession(gatePkg,p,minutes,phoneEvent);hideOverlay();launch(p);syncFloatingTimer();ensurePulse();
+        }finally{if(ownsRead)budgetReads.remove();}
     }
     private void beginAppSession(String pkg,JSONObject p,int minutes,long parent) throws Exception {
-        long remaining=dailyRemaining(pkg),now=System.currentTimeMillis();JSONObject rule=store.rule(pkg);
+        long remaining=dailyRemaining(pkg),now=System.currentTimeMillis();JSONObject rule=policyRule(pkg);
         if(!pkg.equals(foreground)||!store.managed(now)||rule==null||!"limited".equals(rule.optString("mode"))||remaining<=0)throw new IllegalStateException("지금은 사용할 수 없는 앱입니다.");
         long event=store.event("app",p.getString("label"),pkg,p.optString("pkg"),parent,p.optInt("aimless",0)==1);
         pausedSessions.remove(pkg);sessionPolicyEnd=policyEnd(now);sessionPkg=pkg;purpose=p.getString("label");sessionRemaining=Rules.grant(remaining,minutes);sessionEvent=event;lastNotice=-1;
         Notices.timer(this,rule.optString("label"),remaining,sessionRemaining);syncFloatingTimer();ensurePulse();
     }
-    void extend(int minutes) {invalidateGateBudget();checkpoint();if(!sessionPkg.equals(gatePkg)||dailyRemaining(gatePkg)<=0){enforce();return;}sessionRemaining=Rules.grant(dailyRemaining(gatePkg),minutes);store.event("extend",purpose,sessionPkg,"",phoneEvent);hideOverlay();lastNotice=-1;enforce();ensurePulse();}
+    void extend(int minutes) {
+        boolean ownsRead=budgetReads.get()==null;if(ownsRead)budgetReads.set(new BudgetRead());
+        try {
+            invalidateGateBudget();checkpoint();long remaining=dailyRemaining(gatePkg);
+            if(!sessionPkg.equals(gatePkg)||remaining<=0){enforce();return;}
+            sessionRemaining=Rules.grant(remaining,minutes);store.event("extend",purpose,sessionPkg,"",phoneEvent);hideOverlay();lastNotice=-1;enforce();ensurePulse();
+        }finally{if(ownsRead)budgetReads.remove();}
+    }
     void stopApp(){hideFloatingTimer();checkpoint();if(!gate.isEmpty())store.event("cancel","열지 않기",gatePkg,"",phoneEvent);pausedSessions.remove(sessionPkg.isEmpty()?gatePkg:sessionPkg);clearActiveSession();performGlobalAction(GLOBAL_ACTION_HOME);foreground="";hideOverlay();Notices.cancelTimer(this);main.removeCallbacks(pulse);pulseScheduled=false;}
     void useUtility(String name){checkpoint();boolean changed=!name.equals(utility);utility=name;if(changed&&!name.equals("첫 화면")&&!name.equals("Locky"))store.event("utility",name,getPackageName(),"",phoneEvent);}
     void pauseForActivity(){switchForeground(getPackageName());if(!sessionPkg.isEmpty())Notices.paused(this,UsageReader.label(this,sessionPkg),dailyRemaining(sessionPkg),sessionRemaining);}
     void openMain(String screen){openMain(screen,"");}
     void openMain(String screen,String chatId){useUtility(screen.equals("chats")||screen.equals("chat")?"ChatGPT":screen.equals("notes")?"메모":"Locky");hideOverlay();Intent launch=MainActivity.launchIntent(this).putExtra("screen",screen).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);if("chat".equals(screen)&&!chatId.isEmpty())launch.putExtra("chat",chatId);startActivity(launch);}
     void launch(JSONObject p) throws Exception {String pkg=p.optString("pkg"),uri=p.optString("uri");if(pkg.isEmpty()&&uri.isEmpty())return;Intent i=Links.intent(this,pkg,uri);if(i==null)throw new IllegalStateException("연결한 앱이나 동작을 열 수 없습니다. 목적 연결을 확인해 주세요.");startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}
-    void policyChanged(){main.post(()->{invalidateGateBudget();observeForeground(null);checkpoint();enforce();ensurePulse();if(overlayVisible&&overlay!=null)overlay.evaluate("refresh(true)");WebHost.refreshAll();});}
+    void policyChanged(){gateDailyUntil=0;main.post(()->{invalidateGateBudget();observeForeground(null);checkpoint();enforce();ensurePulse();if(overlayVisible&&overlay!=null)overlay.evaluate("refresh(true)");WebHost.refreshGeneralHosts();});}
     JSONObject state() throws JSONException {String pkg=overlayVisible?gatePkg:sessionPkg;return new JSONObject().put("mode",gate).put("pkg",pkg).put("label",UsageReader.label(this,pkg)).put("purpose",purpose).put("daily",dailyRemaining(pkg)).put("session",sessionRemaining).put("activePkg",sessionPkg).put("free",!store.managed(System.currentTimeMillis())).put("paused",systemPaused||foreground.equals(getPackageName())).put("visible",overlayVisible);}
     final Runnable lockCompletion=()->{
         if(!lockPending)return;

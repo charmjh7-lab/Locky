@@ -101,10 +101,11 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging distribution/Locky.apk > distribution/package.txt
           grep -q "name='com.locky.app'" distribution/package.txt
           (cd distribution && sha256sum Locky.apk > SHA256SUMS.txt)
+          version_name=$(bash scripts/apk-version-name.sh distribution/Locky.apk)
           if [ "$GITHUB_REF_NAME" = "refactor/phone-start-activity-20261016" ]; then
-            gh release create "phone-start-preview-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.3.1 · PhoneStart Activity preview ${GITHUB_RUN_NUMBER}" --notes-file scripts/phone-start-release-notes.md --prerelease --latest=false
+            gh release create "phone-start-preview-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky ${version_name} · PhoneStart Activity preview ${GITHUB_RUN_NUMBER}" --notes-file scripts/phone-start-release-notes.md --prerelease --latest=false
           else
-            gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.2.8 · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
+            gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky ${version_name} · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
             python3 scripts/prune-releases.py
           fi
   visual-evidence:
@@ -124,10 +125,13 @@ jobs:
           npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright
           npx playwright install --with-deps chromium
           node scripts/capture-ui.cjs
-      - name: Attach comparison images to verified Locky release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload locky-build-78 distribution/ui-*.png --clobber
+      - name: Publish comparison images for this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: Locky-ui-comparison
+          path: distribution/ui-*.png
+          retention-days: 14
+
   android:
     needs: ui
     if: ${{ github.event_name == 'workflow_dispatch' && needs.ui.result == 'success' }}
@@ -187,10 +191,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          version_name=$(bash scripts/apk-version-name.sh distribution/Locky.apk)
           if [ "$GITHUB_REF_NAME" = "refactor/phone-start-activity-20261016" ]; then
-            gh release create "phone-start-preview-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.3.1 · PhoneStart Activity preview ${GITHUB_RUN_NUMBER}" --notes-file scripts/phone-start-release-notes.md --prerelease --latest=false
+            gh release create "phone-start-preview-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky ${version_name} · PhoneStart Activity preview ${GITHUB_RUN_NUMBER}" --notes-file scripts/phone-start-release-notes.md --prerelease --latest=false
           else
-            gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky 1.2.8 · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
+            gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky ${version_name} · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
           fi
       - name: Keep three successful automatic releases
         if: ${{ success() && needs.ui.result == 'success' && github.ref == 'refs/heads/main' }}

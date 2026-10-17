@@ -68,7 +68,9 @@ public class FloatingTimerTest {
         service.store.getWritableDatabase().delete("rules","pkg=?",new String[]{service.foreground});service.syncFloatingTimer();assertNull(timer.root);
     }
     @Test public void visibleTimerDoesNotTurnForegroundUsageIntoLockyUsage() throws Exception {
-        service.syncFloatingTimer();service.segmentWall=System.currentTimeMillis()-2000;service.segmentElapsed=android.os.SystemClock.elapsedRealtime()-2000;service.checkpoint();
+        // Keep the observed interval after boot and advance both monotonic clock domains.
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(20));
+        service.syncFloatingTimer();service.segmentWall=System.currentTimeMillis()-2000;service.segmentElapsed=android.os.SystemClock.elapsedRealtime()-2000;service.segmentUptime=android.os.SystemClock.uptimeMillis()-2000;service.checkpoint();
         assertTrue(service.sessionRemaining<=298000);assertEquals("user.video",service.foreground);assertFalse(service.overlayVisible);
         assertTrue(service.store.rows("SELECT * FROM usage WHERE pkg='user.video' AND managed=1").length()>0);
     }

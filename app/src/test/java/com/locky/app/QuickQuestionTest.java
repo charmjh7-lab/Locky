@@ -55,4 +55,15 @@ public class QuickQuestionTest {
         try{engine.quickSend(request,"삭제한 질문","test",false);fail();}catch(java.io.IOException expected){}
         assertEquals(0,store.rows("SELECT * FROM chats WHERE id=?",request).length());
     }
+
+    @Test public void deletingChatRemovesItsRequestAndCleanupKeepsLiveRetries() throws Exception {
+        Store s=Store.get(RuntimeEnvironment.getApplication());
+        String deleted=java.util.UUID.randomUUID().toString(),live=java.util.UUID.randomUUID().toString();
+        s.acceptQuickQuestion(deleted,"delete");s.acceptQuickQuestion(live,"keep");s.deleteChat(deleted);
+        assertEquals(0,s.rows("SELECT * FROM quick_requests WHERE chat=?",deleted).length());
+        assertEquals(0,s.rows("SELECT * FROM messages WHERE chat=?",deleted).length());
+        s.getWritableDatabase().execSQL("INSERT INTO quick_requests VALUES('orphan','missing',0,0)");s.cleanOldUsage();
+        assertEquals(1,s.rows("SELECT * FROM quick_requests").length());assertNotNull(s.quickRequest(live,"keep"));
+    }
+
 }

@@ -85,4 +85,14 @@ public class RawExportTest {
         String retry=RawExport.stage(activity,"{\"retry\":true}");activity.saveRawToDocument("retry.json",retry);
         assertNotNull(Shadows.shadowOf(activity).getNextStartedActivityForResult());activity.onActivityResult(request,Activity.RESULT_CANCELED,null);
     }
+
+    @Test public void maintenanceOnlyRemovesOldInactiveUuidFiles() throws Exception {
+        File dir=new File(activity.getFilesDir(),"raw-exports");dir.mkdirs();long old=System.currentTimeMillis()-8L*86400000;
+        File stale=new File(dir,UUID.randomUUID()+".json"),recent=new File(dir,UUID.randomUUID()+".json"),foreign=new File(dir,"keep.json");
+        Files.write(stale.toPath(),"old".getBytes(StandardCharsets.UTF_8));Files.write(recent.toPath(),"new".getBytes(StandardCharsets.UTF_8));Files.write(foreign.toPath(),"user".getBytes(StandardCharsets.UTF_8));
+        assertTrue(stale.setLastModified(old));assertTrue(foreign.setLastModified(old));
+        String token=RawExport.stage(activity,"active");File active=new File(dir,token+".json");assertTrue(active.setLastModified(old));
+        RawExport.cleanOld(activity);assertFalse(stale.exists());assertTrue(recent.exists());assertTrue(foreign.exists());assertTrue(active.exists());RawExport.discard(activity,token);
+    }
+
 }

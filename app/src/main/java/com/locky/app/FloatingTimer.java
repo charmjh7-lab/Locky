@@ -7,6 +7,7 @@ import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.hardware.display.DisplayManager;
 import android.os.Build;
 import android.text.TextUtils;
 import android.util.DisplayMetrics;
@@ -34,20 +35,36 @@ final class FloatingTimer {
     private final SharedPreferences positions;
     FrameLayout root;
     LinearLayout panel;
-    TextView remaining,sessionTime,dailyTime,purposeText;
+    TextView remaining,sessionTime,dailyTime,purposeText,appName;
     Button stop,close;
     WindowManager.LayoutParams timerLayout,panelLayout;
     Rect safe=new Rect();
     String positionKey="",pkg="",label="",purpose="";
     long event,milliseconds,daily;
     boolean compact,dragging,touchMoved;
+    private GradientDrawable normalBackground,warningBackground;
+    private Boolean warning;
+    private float textWidth=-1;
+    private WindowInsetsCompat lastInsets;
+    private boolean placementPending,displayListening;
+    private float backgroundDensity;
+    private final DisplayManager displays;
+    private final DisplayManager.DisplayListener displayListener=new DisplayManager.DisplayListener(){
+        public void onDisplayAdded(int id){}
+        public void onDisplayRemoved(int id){}
+        public void onDisplayChanged(int id){requestPlacement();}
+    };
+    private final Runnable placement=()->{
+        placementPending=false;if(root!=null){placeTimer();placePanel();}
+    };
+    private void requestPlacement(){if(root!=null&&!placementPending){placementPending=true;service.main.post(placement);}}
     private float downX,downY;
     private int downLeft,downTop,panelDesiredHeight;
     private long touchTime=-1,outsideTime=-2;
     private final Runnable longPress=()->{if(root!=null&&!touchMoved)root.performLongClick();};
 
     FloatingTimer(GuardService service,WindowManager window){
-        this.service=service;this.window=window;positions=service.store.settings;
+        this.service=service;this.window=window;positions=service.store.settings;displays=service.getSystemService(DisplayManager.class);
     }
 
     private final class Capsule extends FrameLayout {
@@ -79,24 +96,42 @@ final class FloatingTimer {
             root=view;remaining=time;timerLayout=layout(false);timerLayout.setTitle("Locky floating timer");
             root.setOnClickListener(v->togglePanel());
             root.setOnLongClickListener(v->{collapse();dragging=true;root.setPressed(true);return true;});
+            root.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{
+                if(root==v&&(r-l!=or-ol||b-t!=ob-ot))requestPlacement();
+            });
             ViewCompat.setOnApplyWindowInsetsListener(root,(v,insets)->{
+                if(root!=v)return insets;
                 boolean small=!insets.isVisible(WindowInsetsCompat.Type.statusBars());
                 if(compact!=small){compact=small;styleCapsule();}
-                // Defer until the delivered insets are also available as root insets.
-                v.post(()->{if(root==v){placeTimer();placePanel();}});return insets;
+                // Coalesce real inset changes; unchanged countdowns need no window metrics.
+                if(!insets.equals(lastInsets)){lastInsets=insets;requestPlacement();}return insets;
             });
-            remaining.setText(format(milliseconds));styleCapsule();placeTimer();
-            try{window.addView(root,timerLayout);}catch(RuntimeException failure){root=null;remaining=null;timerLayout=null;return;}
+            float density=service.getResources().getDisplayMetrics().density;
+            if(normalBackground==null||backgroundDensity!=density){normalBackground=background(GREEN,24);warningBackground=background(AMBER,24);backgroundDensity=density;}
+            warning=null;textWidth=-1;refreshCapsule();styleCapsule();placeTimer();
+            try{window.addView(root,timerLayout);if(displays!=null){displays.registerDisplayListener(displayListener,service.main);displayListening=true;}}
+            catch(RuntimeException failure){hide();return;}
         }
-        remaining.setText(format(milliseconds));
-        remaining.setBackground(background(milliseconds<=60_000?AMBER:GREEN,24));
-        root.setContentDescription("이번 사용 남은 시간 "+format(milliseconds)+". 눌러서 상세 정보, 길게 눌러 위치 이동");
-        placeTimer();refreshPanel();
+        refreshCapsule();refreshPanel();
+    }
+
+    private void refreshCapsule(){
+        String value=format(milliseconds);
+        if(!TextUtils.equals(remaining.getText(),value)){
+            remaining.setText(value);
+            root.setContentDescription("이번 사용 남은 시간 "+value+". 눌러서 상세 정보, 길게 눌러 위치 이동");
+            float width=remaining.getPaint().measureText(value);
+            if(textWidth>=0&&Float.compare(width,textWidth)!=0)requestPlacement();
+            textWidth=width;
+        }
+        boolean next=milliseconds<=60_000;
+        if(warning==null||warning!=next){warning=next;remaining.setBackground(next?warningBackground:normalBackground);}
     }
 
     private void styleCapsule(){
         if(remaining==null)return;
         remaining.setTextSize(compact?14:16);remaining.setMinHeight(dp(compact?26:32));remaining.setMinWidth(dp(compact?60:68));
+        textWidth=remaining.getPaint().measureText(remaining.getText().toString());requestPlacement();
     }
 
     private boolean touch(MotionEvent e){
@@ -109,9 +144,9 @@ final class FloatingTimer {
             case MotionEvent.ACTION_MOVE:
                 float dx=e.getRawX()-downX,dy=e.getRawY()-downY;
                 if(dragging){
-                    timerLayout.x=clamp(Math.round(downLeft+dx),safe.left,safe.right-timerLayout.width);
-                    timerLayout.y=clamp(Math.round(downTop+dy),safe.top,safe.bottom-timerLayout.height);
-                    updateLayout(root,timerLayout);
+                    int x=clamp(Math.round(downLeft+dx),safe.left,safe.right-timerLayout.width);
+                    int y=clamp(Math.round(downTop+dy),safe.top,safe.bottom-timerLayout.height);
+                    if(x!=timerLayout.x||y!=timerLayout.y){timerLayout.x=x;timerLayout.y=y;updateLayout(root,timerLayout);}
                 }else if(Math.hypot(dx,dy)>ViewConfiguration.get(service).getScaledTouchSlop()){
                     touchMoved=true;service.main.removeCallbacks(longPress);root.setPressed(false);
                 }
@@ -131,13 +166,14 @@ final class FloatingTimer {
 
     private void togglePanel(){
         if(panel!=null){collapse();return;}
+        placeTimer();
         String expectedPkg=pkg;long expectedEvent=event;
         service.checkpoint();service.enforce(); // Fresh values, including a possible expiry since the last tick.
         if(root==null||!pkg.equals(expectedPkg)||event!=expectedEvent)return;
         LinearLayout view=new Details();view.setOrientation(LinearLayout.VERTICAL);
         view.setPadding(dp(16),dp(8),dp(16),dp(12));view.setBackground(background(UiTheme.surface(service),18));view.setElevation(dp(6));
         LinearLayout header=new LinearLayout(service);header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView app=text(17,UiTheme.ink(service));app.setTypeface(Typeface.DEFAULT,Typeface.BOLD);app.setText(label);app.setSingleLine();app.setEllipsize(TextUtils.TruncateAt.END);
+        TextView app=text(17,UiTheme.ink(service));appName=app;app.setTypeface(Typeface.DEFAULT,Typeface.BOLD);app.setText(label);app.setSingleLine();app.setEllipsize(TextUtils.TruncateAt.END);
         header.addView(app,new LinearLayout.LayoutParams(0,-2,1));
         close=new Button(service);close.setText("×");close.setTextSize(22);close.setTextColor(UiTheme.muted(service));close.setBackgroundColor(Color.TRANSPARENT);
         close.setPadding(0,0,0,0);close.setContentDescription("상세 정보 접기");close.setOnClickListener(v->collapse());header.addView(close,new LinearLayout.LayoutParams(dp(48),dp(48)));view.addView(header);
@@ -168,19 +204,32 @@ final class FloatingTimer {
 
     private void refreshPanel(){
         if(panel==null)return;
-        sessionTime.setText(format(milliseconds));sessionTime.setTextColor(milliseconds<=60_000?(UiTheme.dark(service)?Color.rgb(240,197,129):AMBER):UiTheme.accent(service));
-        dailyTime.setText(format(daily));purposeText.setText(purpose.isEmpty()?"선택한 목적 없음":purpose);
+        setTextIfChanged(sessionTime,format(milliseconds));
+        int color=milliseconds<=60_000?(UiTheme.dark(service)?Color.rgb(240,197,129):AMBER):UiTheme.accent(service);
+        if(sessionTime.getCurrentTextColor()!=color)sessionTime.setTextColor(color);
+        setTextIfChanged(dailyTime,format(daily));setTextIfChanged(appName,label);
+        if(setTextIfChanged(purposeText,purpose.isEmpty()?"선택한 목적 없음":purpose)&&panel.isAttachedToWindow()){
+            // Purpose wrapping can change the desired panel height; seconds cannot.
+            panel.getChildAt(1).setLayoutParams(new LinearLayout.LayoutParams(-1,-2));
+            panel.measure(View.MeasureSpec.makeMeasureSpec(panelLayout.width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(0,View.MeasureSpec.UNSPECIFIED));
+            panelDesiredHeight=panel.getMeasuredHeight();panel.getChildAt(1).setLayoutParams(new LinearLayout.LayoutParams(-1,0,1));requestPlacement();
+        }
+    }
+
+    private static boolean setTextIfChanged(TextView view,String value){
+        if(TextUtils.equals(view.getText(),value))return false;view.setText(value);return true;
     }
 
     void collapse(){
         if(panel!=null){try{window.removeViewImmediate(panel);}catch(IllegalArgumentException ignored){}panel=null;}
-        sessionTime=null;dailyTime=null;purposeText=null;stop=null;close=null;panelLayout=null;
+        appName=null;sessionTime=null;dailyTime=null;purposeText=null;stop=null;close=null;panelLayout=null;
     }
 
     void hide(){
-        cancelTouch();collapse();
+        cancelTouch();collapse();service.main.removeCallbacks(placement);placementPending=false;
+        if(displayListening){displays.unregisterDisplayListener(displayListener);displayListening=false;}
         if(root!=null){try{window.removeViewImmediate(root);}catch(IllegalArgumentException ignored){}root=null;remaining=null;}
-        timerLayout=null;compact=false;
+        timerLayout=null;compact=false;lastInsets=null;textWidth=-1;warning=null;
     }
 
     @SuppressLint("RtlHardcoded") // Saved x/y are physical screen coordinates, independent of text direction.
@@ -227,6 +276,7 @@ final class FloatingTimer {
         int width=root.getMeasuredWidth(),height=root.getMeasuredHeight();
         int x=dragging?timerLayout.x:safe.left+Math.round((safe.width()-width)*fraction(positionKey+".x",1));
         int y=dragging?timerLayout.y:safe.top+Math.round((safe.height()-height)*fraction(positionKey+".y",0));
+        x=clamp(x,safe.left,safe.right-width);y=clamp(y,safe.top,safe.bottom-height);
         boolean changed=timerLayout.width!=width||timerLayout.height!=height||timerLayout.x!=x||timerLayout.y!=y;
         timerLayout.width=width;timerLayout.height=height;
         timerLayout.x=clamp(x,safe.left,safe.right-width);timerLayout.y=clamp(y,safe.top,safe.bottom-height);

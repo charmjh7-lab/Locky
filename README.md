@@ -30,10 +30,20 @@ ChatGPT integration follows the official personal/local-client OAuth documentati
 
 ## Build and release
 
-The PhoneStart Activity preview uses versionCode 16 with the same package and personal signing key, and updates the existing installation without deleting records, notes, chats or purposes.
+The app version is defined by `versionName` and `versionCode` in `app/build.gradle`. Release titles read the generated APK's actual `versionName`; the PhoneStart branch remains a prerelease. The package and personal signing key stay unchanged, preserving updates and existing records, notes, chats and purposes.
 
 JDK 21 (required by Android 16 JVM tests), Gradle 8.11.1, Android SDK 36. Java source/target compatibility and targetSdk remain 17 and 35 respectively. `gradle :app:testDebugUnitTest :app:lintDebug :app:assembleRelease`.
 
-GitHub Actions runs JVM policy tests, browser interaction checks, Android integration tests and APK/signature verification before publishing `Locky.apk` directly to Releases. No APK Actions artifacts are uploaded. Latest **three successful `locky-build-*` releases** are kept; cleanup happens only after the new APK is verified and uploaded. Unrelated/manual releases are not touched. The fixed personal signing key is committed for reproducible personal builds; it is not a Play production signing key. Keep the key unchanged for future updates.
+GitHub Actions runs JVM policy tests, browser interaction checks, Android integration tests and APK/signature verification before publishing `Locky.apk` directly to Releases. No APK Actions artifacts are uploaded. UI comparison captures are uploaded only as artifacts of their own Actions run (`distribution/ui-*.png`, retained for 14 days). Latest **three successful `locky-build-*` releases** are kept; cleanup happens only after the new APK is verified and uploaded. Unrelated/manual releases are not touched. The fixed personal signing key is committed for reproducible personal builds; it is not a Play production signing key. Keep the key unchanged for future updates.
 
 Sources: https://developers.openai.com/siwc/token-sharing-open-source/sign-in and https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference . Authentication helpers adapted from the user's Ailey Android project, with separate app identity/storage.
+
+### Manual focused verification
+
+These scripts are retained for manual browser checks and are not part of the automatic Actions test list:
+
+- `node scripts/briefing-navigation-test.cjs`: briefing navigation and stored date/window targets.
+- `node scripts/floating-timer-ui-test.cjs`: floating timer settings UI; native timer behavior is covered by the focused JVM interaction tests.
+- `node scripts/start-return-ui-test.cjs`: returning to the start screen from notes and ChatGPT.
+
+Use the repository root with Playwright and Chromium installed (`npm install --no-save --package-lock=false playwright`, `npx playwright install chromium`). Run only the script relevant to the change.

@@ -89,4 +89,14 @@ public class GateRestoreTest {
             g.sessionRemaining=0;g.enforce();ready();host.handle("5","stop",new org.json.JSONObject().put("gateNavigation",host.navigationGeneration).toString());assertEquals("",g.sessionPkg);assertFalse(g.overlayVisible);
         }finally{LockyApp.app.work.shutdownNow();LockyApp.app=null;}
     }
+
+    @Test public void chargedRecordWrittenWhileGateVisibleInvalidatesRemaining() throws Exception {
+        rule(60);g.showGate("app","video");assertEquals(3600000,g.dailyRemaining("video"));
+        long now=System.currentTimeMillis(),start=Rules.dayStart(now,java.time.ZoneId.systemDefault());
+        // Use a time inside this day even when the test clock begins at midnight.
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(10));now=System.currentTimeMillis();
+        g.store.screenState(ScreenHistory.ON);g.store.usage(now-5000,now,"video","Video",true,0);
+        assertEquals(3595000,g.dailyRemaining("video"));
+    }
+
 }

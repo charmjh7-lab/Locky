@@ -56,7 +56,7 @@ public class FocusBriefingTest {
         LocalDate yesterday=LocalDate.now().minusDays(1);String day=yesterday.toString();history(day,540,1260);long a=at(day,"10:00");
         s.usage(a,a+600000,"test.external","외부 앱",false,0);s.usage(a+600000,a+900000,c.getPackageName(),"ChatGPT",false,0);
         s.usage(a+900000,a+1020000,"test.dictionary","팝업 사전",false,0);s.getWritableDatabase().execSQL("UPDATE usage SET surface='dictionary-tool' WHERE pkg='test.dictionary'");
-        JSONObject raw=Briefing.rawDay(c,1);assertEquals(1,raw.getInt("schemaVersion"));assertEquals(3,raw.getJSONArray("usage").length());assertEquals(7,raw.getJSONArray("usage").getJSONObject(0).length());assertTrue(raw.getJSONArray("usage").getJSONObject(0).has("parent"));assertFalse(raw.getJSONArray("usage").getJSONObject(0).has("source"));assertTrue(raw.has("events"));assertTrue(raw.has("focus"));
+        JSONObject raw=Briefing.rawDay(c,1);assertEquals(1,raw.getInt("schemaVersion"));assertEquals(3,raw.getJSONArray("usage").length());assertEquals(11,raw.getJSONArray("usage").getJSONObject(0).length());assertTrue(raw.getJSONArray("usage").getJSONObject(0).has("parent"));assertEquals("accessibility",raw.getJSONArray("usage").getJSONObject(0).getString("source"));assertTrue(raw.has("events"));assertTrue(raw.has("focus"));
         JSONObject b=Briefing.range(c,a,a+1020000);assertEquals(120000,b.getLong("toolMillis"));assertEquals(600000,b.getLong("total"));assertEquals(300000,b.getLong("internalMillis"));
     }
     @Test public void migrationPreservesV3RowsAndStartsHistoryOnlyNow() throws Exception {
@@ -64,7 +64,7 @@ public class FocusBriefingTest {
         SQLiteDatabase db=SQLiteDatabase.openOrCreateDatabase(c.getDatabasePath("locky.db"),null);
         db.execSQL("CREATE TABLE usage(id INTEGER PRIMARY KEY,start INTEGER,end INTEGER,pkg TEXT,label TEXT,managed INTEGER,parent INTEGER)");db.execSQL("INSERT INTO usage VALUES(9,100,200,'old.app','기존',1,0)");
         db.execSQL("CREATE TABLE notes(id TEXT PRIMARY KEY,body TEXT)");db.execSQL("INSERT INTO notes VALUES('memo','보존할 메모')");db.setVersion(3);db.close();
-        s=Store.get(c);assertEquals(4,s.getReadableDatabase().getVersion());assertEquals("보존할 메모",s.rows("SELECT body FROM notes").getJSONObject(0).getString("body"));
+        s=Store.get(c);assertEquals(5,s.getReadableDatabase().getVersion());assertEquals("보존할 메모",s.rows("SELECT body FROM notes").getJSONObject(0).getString("body"));
         assertEquals(9,s.rows("SELECT * FROM usage").getJSONObject(0).getLong("id"));assertEquals("legacy",s.rows("SELECT * FROM usage").getJSONObject(0).getString("source"));
         assertEquals(1,FocusPeriods.history(s).length());assertTrue(FocusPeriods.history(s).getJSONObject(0).getLong("effective")>200);
     }
@@ -97,4 +97,16 @@ public class FocusBriefingTest {
         List<String> list=List.of("a","b","c","d"),before=Rules.shuffle(list,"2026-10-16","phone"),added=Rules.shuffle(List.of("a","b","c","d","new"),"2026-10-16","phone");added.remove("new");assertEquals(before,added);
         assertEquals(before,Rules.shuffle(list,"2026-10-16","phone"));assertNotEquals(before,Rules.shuffle(list,"2026-10-17","phone"));
     }
+
+    @Test public void requestCacheReusesExactRangesButNextRequestSeesLateRecovery() throws Exception {
+        long start=at(LocalDate.now().minusDays(2).toString(),"00:00"),end=start+86400000L;
+        int[] reads={0};Briefing.Request request=new Briefing.Request((a,b)->{reads[0]++;return Briefing.range(c,a,b);},end+86400000L);
+        JSONObject original=request.range(start,end);assertSame(original,request.range(start,end));assertEquals(1,reads[0]);
+        assertEquals(Briefing.range(c,start,end).toString(),original.toString());
+        s.usage(start+3600000,start+3660000,"late.app","Late",false,0,"usage-access");
+        assertSame(original,request.range(start,end));Briefing.Request next=new Briefing.Request(c,System.currentTimeMillis(),zone);
+        assertEquals(original.getLong("total")+60000,next.range(start,end).getLong("total"));
+        request.range(start,end-1);assertEquals(2,reads[0]);
+    }
+
 }
