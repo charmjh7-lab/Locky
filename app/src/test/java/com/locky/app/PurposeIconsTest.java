@@ -36,4 +36,18 @@ public class PurposeIconsTest {
         ResolveInfo other=new ResolveInfo();other.activityInfo=new ActivityInfo();other.activityInfo.packageName="other.app";other.activityInfo.name="other.app.Main";other.activityInfo.exported=true;other.isDefault=true;Shadows.shadowOf(context.getPackageManager()).addResolveInfoForIntent(intent,other);
         assertEquals("",PurposeIcons.linkedPackage(context,new JSONObject().put("uri","linked-app://inbox")));
     }
+    @Test public void mainStartStateSharesIconsAndUnregistersPackageUpdates() throws Exception {
+        Store.instance=null;GuardService.live=null;LockyApp.app=new LockyApp();
+        LockyApp.app.auth=new ChatGPT(context);LockyApp.app.chat=new ChatEngine(context,LockyApp.app.auth,Runnable::run);
+        android.app.Activity owner=Robolectric.buildActivity(android.app.Activity.class).setup().get();WebHost host=new WebHost(owner,WebHost.Role.MAIN);
+        try {
+            host.store.purpose(new JSONObject().put("id","linked-phone").put("label","연결 목적").put("pkg","linked.app"),"phone");
+            JSONObject first=host.state();String image=first.getJSONObject("purposeIcons").getString("linked-phone");assertTrue(image.startsWith("data:image/png;base64,"));
+            assertSame(image,host.state().getJSONObject("purposeIcons").getString("linked-phone"));
+            context.sendBroadcast(new Intent(Intent.ACTION_PACKAGE_REPLACED,android.net.Uri.parse("package:linked.app")));Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            host.purposeIcons.forPurposes(context,purposes(),d->{encodes++;return "fresh";});assertEquals(1,encodes);
+            host.close();context.sendBroadcast(new Intent(Intent.ACTION_PACKAGE_REPLACED,android.net.Uri.parse("package:linked.app")));Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            host.purposeIcons.forPurposes(context,purposes(),d->{encodes++;return "unexpected";});assertEquals(1,encodes);
+        } finally {if(!host.closed)host.close();host.store.close();Store.instance=null;LockyApp.app.work.shutdownNow();LockyApp.app=null;}
+    }
 }

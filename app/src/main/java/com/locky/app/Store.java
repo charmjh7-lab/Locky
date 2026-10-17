@@ -140,8 +140,9 @@ final class Store extends SQLiteOpenHelper {
         long start=Rules.dayStart(now,ZoneId.systemDefault()),total=0,cursor=start;
         try{JSONArray rows=screenUsage(start,now);for(int n=0;n<rows.length();n++){JSONObject row=rows.getJSONObject(n);if(!pkg.equals(row.optString("pkg"))||row.optInt("managed")!=1)continue;long a=Math.max(cursor,row.getLong("start")),b=Math.min(now,row.getLong("end"));total+=Math.max(0,b-a);cursor=Math.max(cursor,b);}}catch(JSONException e){throw new IllegalStateException(e);}return total;
     }
-    long remaining(String pkg,long now) {
-        JSONObject rule=rule(pkg);if(rule==null)return 0;
+    long remaining(String pkg,long now) {return remaining(pkg,now,rule(pkg));}
+    long remaining(String pkg,long now,JSONObject rule) {
+        if(rule==null)return 0;
         if(managed(now)&&settings.getLong("blocked-until:"+pkg,0)>now)return 0;
         return Math.max(0,rule.optInt("minutes",60)*60000L-used(pkg,now));
     }
