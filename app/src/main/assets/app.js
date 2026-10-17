@@ -49,11 +49,12 @@ async function navigate(s,navigation=null,keepBrief=false){if(state?.role==='PHO
 async function refresh(force=false){if(screen==='gateIdle')return;if(refreshing){if(force)refreshAgain=true;return;}refreshing=true;try{
  if(!force&&state&&['chat','timer',...gated].includes(screen))Object.assign(state,await api('tick'));else state=await api('state');
  for(const turn of quickTurns.values())if(!state.chats.some(c=>c.id===turn.id))state.chats.unshift({id:turn.id,title:turn.text.slice(0,30)});
- if(!restored){restored=true;if(state.role==='PHONE_START'){const saved=state.phoneSession||{};quickQuestionDraft=saved.quickQuestion||'';dictionaryWordDraft=saved.word||'';noteId=saved.note||noteId;chatReturn=saved.chatReturn||'unlock';chatsReturn=saved.chatsReturn||'unlock';}if(screen==='chat')chatReturn=state.chatReturn||'chats';if(screen==='chats')chatsReturn=state.chatsReturn||'home';if(screen==='brief'&&!briefTarget&&state.savedBrief){briefTarget=state.savedBrief;briefDays=state.savedBrief.days||1;}chatId=chatId||state.savedChat||'';noteId=state.savedNote||noteId;}
+ if(!restored){restored=true;if(state.role==='PHONE_START'){const saved=state.phoneSession||{};quickQuestionDraft=saved.quickQuestion||'';dictionaryWordDraft=saved.word||'';noteId=saved.note||noteId;chatReturn=saved.chatReturn||'unlock';chatsReturn=saved.chatsReturn||'unlock';}if(screen==='chat')chatReturn=state.chatReturn||'chats';if(screen==='chats')chatsReturn=state.chatsReturn||'home';if(screen==='brief'&&!briefTarget&&state.savedBrief){briefTarget=state.savedBrief;briefDays=state.savedBrief.days||1;}chatId=chatId||state.savedChat||'';noteId=noteId||state.savedNote||'';}
  if(['home','unlock'].includes(screen)&&renderedRoute===screen&&$('.start-page')){updateStart();return;}
  if(!force){if(screen==='chat'){await renderMessages(false);return;}if(screen==='timer'||gated.includes(screen)){updateTimers();return;}if(document.activeElement?.matches('input,textarea,select')||memoPending||memoSaving)return;if(screen==='brief'){await loadBrief();return;}if(screen==='chats'){const c=$('#connection');if(c){c.innerHTML=connectionHTML();bind(c);}return;}}
  const oldScroll=window.scrollY;render();if(!force)window.scrollTo(0,oldScroll);if(screen==='brief')loadBrief();if(screen==='apps')loadApps();if(screen==='usageApps')loadUsageApps();if(screen==='chat')renderMessages(force);
  }catch(e){toast(e.message);}finally{refreshing=false;if(refreshAgain){refreshAgain=false;refresh(true);}}}
+async function openNoteById(id,navigation=null){await flushMemo();noteId=id;await navigate('notes',navigation);remember();}
 function openChatById(id,navigation=null){chatId=id;return navigate('chat',navigation);}
 // APP_GATE owns a single prepared document. Gate data comes with the native entry,
 // so navigation never waits behind memo/chat bridge work or displays the old app.
@@ -115,7 +116,7 @@ function updateStart(){
     const body=$('#noteBody'),heading=note.querySelector('.note-heading');
     if(body&&body.value!==current.body){body.value=current.body||'';changed=true;}
     if(heading&&old.title!==current.title){heading.innerHTML=icon('note')+' '+esc(current.title||'메모');changed=true;}
-   }else{note.innerHTML=memoHTML(false);bind(note);changed=true;}
+   }else{note.innerHTML=memoHTML(false);bind(note);autoNoteHeight();changed=true;}
   }
   startNoteSnapshot=snapshot;
  }
@@ -541,7 +542,14 @@ function splitCheckRow(editor,start=editor.selectionStart,end=editor.selectionEn
 }
 function scheduleMemo(){memoPending=captureMemo();if($('#saveState'))$('#saveState').textContent='저장 중';clearTimeout(memoTimer);memoTimer=setTimeout(()=>safe(flushMemo),300);autoNoteHeight();}
 async function flushMemo(){clearTimeout(memoTimer);if(memoSaving)await memoSaving;if(!memoPending)return;const note=memoPending;memoPending=null;memoSaving=(async()=>{try{await api('saveNote',note);let n=state?.notes.find(n=>n.id===note.id);let value={...note,checks:JSON.stringify(note.checks),updated:Date.now()};if(n)Object.assign(n,value);else state?.notes.unshift(value);if($('#saveState'))$('#saveState').textContent='자동 저장';}catch(e){if(!memoPending)memoPending=note;throw e;}})();try{await memoSaving;}finally{memoSaving=null;}if(memoPending)await flushMemo();}
-function autoNoteHeight(){const scroller=$('.full-note .note-content');if(!scroller)return;const top=scroller.scrollTop;scroller.querySelectorAll('textarea').forEach(el=>{const key=el.value+'|'+el.clientWidth;if(el._measureKey===key)return;el._measureKey=key;el.style.height='auto';el.style.height=Math.max(el.id==='noteBody'?scroller.clientHeight-8:32,el.scrollHeight)+'px';});scroller.scrollTop=top;}
+function autoNoteHeight(){document.querySelectorAll('.note-content').forEach(scroller=>{const top=scroller.scrollTop;scroller.querySelectorAll('textarea').forEach(el=>{if(el.id==='noteBody'&&!el.closest('.full-note'))return;const key=el.value+'|'+el.clientWidth+'|'+scroller.clientHeight;if(el._measureKey===key)return;el._measureKey=key;el.style.height='0px';el.style.height=Math.max(el.id==='noteBody'?scroller.clientHeight-8:28,el.scrollHeight)+'px';});scroller.scrollTop=top;});}
+let suppressCheckBackward=false;
+document.addEventListener("keyup",event=>{if(event.key==="Backspace")suppressCheckBackward=false;});
+function deleteEmptyCheck(editor,event){
+ if(event.isComposing||editor._composing||event.keyCode===229||editor.value!==''||!editor.isConnected)return false;
+ event.preventDefault();const row=editor.closest('.checkrow'),previous=row.previousElementSibling?.querySelector('[data-checktext]'),next=row.nextElementSibling?.querySelector('[data-checktext]');
+ row.remove();scheduleMemo();const target=previous||next;if(target){target.focus();const end=previous?target.value.length:0;target.setSelectionRange(end,end);}else $('[data-act="addCheck"]')?.focus();return true;
+}
 function insetsChanged(visible){nativeKeyboard=visible;viewportChanged(visible);}
 function layoutStart(){
  // Home's anchored title and internal preset scroller are sized by CSS flex, never by item count.
@@ -676,8 +684,9 @@ function bind(root=$('#app')){
  el.onchange=()=>{if(el.type==='checkbox')el.closest('.checkrow').classList.toggle('done',el.checked);scheduleMemo();};
  });
  root.querySelectorAll('[data-checktext]').forEach(el=>{
- el.onkeydown=e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();splitCheckRow(el);}};
- el.onbeforeinput=e=>{if(!e.isComposing&&['insertParagraph','insertLineBreak'].includes(e.inputType)){e.preventDefault();splitCheckRow(el);}};
+ el.oncompositionstart=()=>{el._composing=true;};el.oncompositionend=()=>{el._composing=false;scheduleMemo();};
+ el.onkeydown=e=>{if(e.key==='Backspace'){if(e.repeat&&suppressCheckBackward){e.preventDefault();return;}suppressCheckBackward=deleteEmptyCheck(el,e);return;}if(e.key==='Enter'&&!e.isComposing&&!el._composing&&e.keyCode!==229){e.preventDefault();splitCheckRow(el);}};
+ el.onbeforeinput=e=>{if(e.inputType==='deleteContentBackward'){if(suppressCheckBackward){e.preventDefault();suppressCheckBackward=false;}else deleteEmptyCheck(el,e);return;}if(!e.isComposing&&!el._composing&&['insertParagraph','insertLineBreak'].includes(e.inputType)){e.preventDefault();splitCheckRow(el);}};
  });
  root.querySelectorAll('[data-delcheck]').forEach(el=>el.onclick=()=>{el.closest('.checkrow').remove();scheduleMemo();});
  if($('#noteMode'))$('#noteMode').onchange=()=>safe(async()=>{await flushMemo();let n=captureMemo(),mode=$('#noteMode').value;if(mode==='check'){n.checks=n.body.trim()?[{text:n.body,done:false},...n.checks]:n.checks;n.body='';}else {n.body=n.checks.map(c=>(c.done?'✓ ':'')+c.text).join('\n');n.checks=[];}n.mode=mode;await api('saveNote',n);await refresh(true);});

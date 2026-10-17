@@ -76,7 +76,7 @@ public final class PhoneStartActivity extends Activity {
         catch(Exception error){chosen=false;throw error;}
         trace("exit reason=purpose");
         host.clearPhoneSession();
-        if(linked!=null){try{startActivity(linked.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}catch(RuntimeException error){android.widget.Toast.makeText(this,"목적은 기록했지만 연결한 앱을 열지 못했습니다.",android.widget.Toast.LENGTH_LONG).show();}}
+        if(linked!=null){if(guard!=null)guard.prepareLinkedLaunch(purpose,linked);try{startActivity(linked.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}catch(RuntimeException error){if(guard!=null)guard.cancelLinkedLaunch();android.widget.Toast.makeText(this,"목적은 기록했지만 연결한 앱을 열지 못했습니다.",android.widget.Toast.LENGTH_LONG).show();}}
         else startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         finish();
     }

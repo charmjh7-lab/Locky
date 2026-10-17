@@ -12,7 +12,7 @@ final class Store extends SQLiteOpenHelper {
     static Store get(Context c) { if(instance==null)synchronized(Store.class){if(instance==null)instance=new Store(c.getApplicationContext());}return instance; }
     final android.content.SharedPreferences settings;
     final Context context;private long lastObservation;
-    private Store(Context c) { super(c,"locky.db",null,4);context=c; settings=c.getSharedPreferences("locky-settings",0);if(!settings.contains("usage-excluded"))settings.edit().putStringSet("usage-excluded",new HashSet<>(Set.of("com.samsung.android.sidegesturepad"))).apply();setWriteAheadLoggingEnabled(true); }
+    private Store(Context c) { super(c,"locky.db",null,5);context=c; settings=c.getSharedPreferences("locky-settings",0);if(!settings.contains("usage-excluded"))settings.edit().putStringSet("usage-excluded",new HashSet<>(Set.of("com.samsung.android.sidegesturepad"))).apply();setWriteAheadLoggingEnabled(true); }
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE purposes(id TEXT PRIMARY KEY,label TEXT NOT NULL,pkg TEXT NOT NULL DEFAULT '',uri TEXT NOT NULL DEFAULT '',aimless INTEGER NOT NULL DEFAULT 0,scope TEXT NOT NULL DEFAULT '*')");
         db.execSQL("CREATE TABLE rules(pkg TEXT PRIMARY KEY,label TEXT NOT NULL,mode TEXT NOT NULL,minutes INTEGER NOT NULL)");
@@ -27,6 +27,7 @@ final class Store extends SQLiteOpenHelper {
         db.execSQL("ALTER TABLE usage ADD COLUMN source TEXT NOT NULL DEFAULT 'accessibility'");
         db.execSQL("ALTER TABLE usage ADD COLUMN rule_mode TEXT NOT NULL DEFAULT 'unknown'");
         db.execSQL("ALTER TABLE usage ADD COLUMN surface TEXT NOT NULL DEFAULT 'unknown'");
+        createScreenStates(db);
         seedPurposes(db);
     }
     private void seedPurposes(SQLiteDatabase db) {
@@ -35,7 +36,14 @@ final class Store extends SQLiteOpenHelper {
         String[][] apps={{"app-contact","메시지 확인","0"},{"app-watch","보고 싶은 콘텐츠","0"},{"app-read","필요한 정보 찾기","0"},{"app-rest","잠깐 쉬기","0"},{"app-aimless","그냥 열었어요","1"}};
         for(String[] p:apps)db.execSQL("INSERT OR IGNORE INTO purposes(id,label,aimless,scope) VALUES(?,?,?,'app')",new Object[]{p[0],p[1],Integer.parseInt(p[2])});
     }
+    private void createScreenStates(SQLiteDatabase db){db.execSQL("CREATE TABLE screen_states(id INTEGER PRIMARY KEY AUTOINCREMENT,time INTEGER NOT NULL,state INTEGER NOT NULL,type INTEGER NOT NULL DEFAULT 0)");db.execSQL("CREATE UNIQUE INDEX screen_state_time ON screen_states(time,type,state)");}
+    synchronized void screenMarks(List<ScreenHistory.Mark> marks){
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{for(ScreenHistory.Mark mark:marks){ContentValues v=new ContentValues();v.put("time",mark.time);v.put("type",mark.type);v.put("state",mark.value);db.insertWithOnConflict("screen_states",null,v,SQLiteDatabase.CONFLICT_IGNORE);}db.setTransactionSuccessful();}finally{db.endTransaction();}
+    }
+    synchronized void screenState(int state){ContentValues v=new ContentValues();v.put("time",System.currentTimeMillis());v.put("state",state);getWritableDatabase().insertWithOnConflict("screen_states",null,v,SQLiteDatabase.CONFLICT_IGNORE);}
+    JSONArray screenUsage(long from,long to) throws JSONException {return ScreenHistory.filter(context,rows("SELECT * FROM usage WHERE end>? AND start<? ORDER BY start,id",""+from,""+to),from,to);}
     @Override public void onUpgrade(SQLiteDatabase db,int old,int next) {
+        if(old<5)createScreenStates(db);
         if(old<4&&next>=4){createBriefingTables(db);db.execSQL("ALTER TABLE usage ADD COLUMN surface TEXT NOT NULL DEFAULT 'unknown'");db.execSQL("ALTER TABLE usage ADD COLUMN rule_mode TEXT NOT NULL DEFAULT 'unknown'");db.execSQL("ALTER TABLE usage ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy'");}
         if(old<3)createQuickRequests(db);
         if(old<2) {
@@ -110,13 +118,15 @@ final class Store extends SQLiteOpenHelper {
         // Accessibility observation owns a span. Recovery fills only uncovered gaps,
         // even when an overlay/system pause was recorded under another package.
         long cursor=from;List<long[]> gaps=new ArrayList<>();
-        try(Cursor c=getReadableDatabase().rawQuery("SELECT start,end FROM usage WHERE end>? AND start<? ORDER BY start",new String[]{""+from,""+to})) {
-            while(c.moveToNext()){long a=c.getLong(0),b=c.getLong(1);if(a>cursor)gaps.add(new long[]{cursor,Math.min(a,to)});cursor=Math.max(cursor,b);if(cursor>=to)break;}
-        }
+        try {
+            JSONArray occupied=screenUsage(from,to);
+            for(int n=0;n<occupied.length();n++){JSONObject row=occupied.getJSONObject(n);long a=row.getLong("start"),b=row.getLong("end");if(a>cursor)gaps.add(new long[]{cursor,Math.min(a,to)});cursor=Math.max(cursor,b);if(cursor>=to)break;}
+        }catch(JSONException e){throw new IllegalStateException(e);}
         if(cursor<to)gaps.add(new long[]{cursor,to});
         String surface=pkg.equals(context.getPackageName())?"internal":"external";
         if(source.equals("accessibility")&&PhoneStartActivity.current()!=null&&PhoneStartActivity.current().allowsDictionary(pkg))surface="dictionary-tool";
-        for(long[] gap:gaps)appendUsage(gap[0],gap[1],pkg,label,managed,parent,source,surface);
+        ScreenHistory.Evidence evidence=ScreenHistory.read(context,from,to,ScreenHistory.UNKNOWN,true);
+        for(long[] gap:gaps)for(ScreenHistory.Span span:evidence.spans){long a=Math.max(gap[0],span.start),b=Math.min(gap[1],span.end);if(b>a&&span.state!=ScreenHistory.OFF)appendUsage(a,b,pkg,label,managed,parent,source,surface);}
     }
     private void appendUsage(long from,long to,String pkg,String label,boolean managed,long parent,String source,String surface) {
         SQLiteDatabase d=getWritableDatabase();JSONObject policy=rule(pkg);String mode=source.equals("accessibility")?(policy==null?"none":policy.optString("mode")):"unknown";
@@ -128,7 +138,7 @@ final class Store extends SQLiteOpenHelper {
     synchronized long used(String pkg,long now) {
         if(UsageReader.excluded(context,pkg))return 0;
         long start=Rules.dayStart(now,ZoneId.systemDefault()),total=0,cursor=start;
-        try(Cursor c=getReadableDatabase().rawQuery("SELECT start,end FROM usage WHERE pkg=? AND managed=1 AND end>? AND start<? ORDER BY start",new String[]{pkg,""+start,""+now})) {while(c.moveToNext()){long a=Math.max(cursor,c.getLong(0)),b=Math.min(now,c.getLong(1));total+=Math.max(0,b-a);cursor=Math.max(cursor,b);}}return total;
+        try{JSONArray rows=screenUsage(start,now);for(int n=0;n<rows.length();n++){JSONObject row=rows.getJSONObject(n);if(!pkg.equals(row.optString("pkg"))||row.optInt("managed")!=1)continue;long a=Math.max(cursor,row.getLong("start")),b=Math.min(now,row.getLong("end"));total+=Math.max(0,b-a);cursor=Math.max(cursor,b);}}catch(JSONException e){throw new IllegalStateException(e);}return total;
     }
     long remaining(String pkg,long now) {
         JSONObject rule=rule(pkg);if(rule==null)return 0;

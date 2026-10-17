@@ -18,7 +18,7 @@ final class Briefing {
     }
     static JSONObject range(Context c,long start,long end) throws Exception {
         Store s=Store.get(c);s.syncFocusZone();GuardService guard=GuardService.live;if(guard!=null)guard.flushOnMain();
-        JSONArray usage=s.rows("SELECT * FROM usage WHERE end>? AND start<? ORDER BY start,id",""+start,""+end);
+        JSONArray usage=s.screenUsage(start,end);
         JSONArray events=s.rows("SELECT * FROM events WHERE time>=? AND time<? ORDER BY time,id",""+start,""+end);
         JSONArray cleaned=new JSONArray();long recovered=0,internal=0,tools=0;
         // All original spans reserve their time, including internal UI. OS recovery only fills gaps.
@@ -62,7 +62,8 @@ final class Briefing {
         JSONObject analysis=range(c,start,end);
         return new JSONObject().put("schemaVersion",1).put("source","Locky 로컬 기록").put("date",date.toString()).put("timeZone",zone.toString()).put("periodStart",start).put("periodEnd",end).put("exportedAt",System.currentTimeMillis())
             .put("events",s.rows("SELECT * FROM events WHERE time>=? AND time<? ORDER BY time,id",""+start,""+end))
-            .put("usage",s.rows("SELECT id,start,end,pkg,label,managed,parent FROM usage WHERE end>? AND start<? ORDER BY start,id",""+start,""+end))
+            .put("usage",s.screenUsage(start,end))
+            .put("usageOriginals",s.rows("SELECT * FROM usage WHERE end>? AND start<? ORDER BY start,id",""+start,""+end))
             .put("usageEvidence",s.rows("SELECT id,source,rule_mode,surface FROM usage WHERE end>? AND start<? ORDER BY start,id",""+start,""+end))
             .put("focus",analysis.getJSONObject("focus")).put("analysis",new JSONObject().put("version",2).put("timeline",analysis.getJSONArray("timeline")).put("quality",analysis.getJSONObject("quality")));
     }

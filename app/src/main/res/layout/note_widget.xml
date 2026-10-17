@@ -1,0 +1,12 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="10dp" android:background="@drawable/note_widget_background">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="40dp" android:gravity="center_vertical">
+        <TextView android:id="@+id/widget_title" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:gravity="center_vertical" android:text="Locky 메모" android:textColor="@color/widget_text" android:textSize="15sp" android:textStyle="bold" android:singleLine="true" android:ellipsize="end" android:contentDescription="메모 전체 화면 열기"/>
+        <TextView android:id="@+id/widget_previous" android:layout_width="28dp" android:layout_height="match_parent" android:gravity="center" android:text="‹" android:textSize="24sp" android:textColor="@color/widget_text" android:contentDescription="이전 메모"/>
+        <TextView android:id="@+id/widget_next" android:layout_width="28dp" android:layout_height="match_parent" android:gravity="center" android:text="›" android:textSize="24sp" android:textColor="@color/widget_text" android:contentDescription="다음 메모"/>
+        <TextView android:id="@+id/widget_expand" android:layout_width="32dp" android:layout_height="match_parent" android:gravity="center" android:text="⛶" android:textSize="22sp" android:textColor="@color/widget_text" android:contentDescription="메모 크게 보기"/>
+    </LinearLayout>
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+        <ListView android:id="@+id/widget_list" android:layout_width="match_parent" android:layout_height="match_parent" android:divider="@android:color/transparent" android:dividerHeight="2dp" android:scrollbars="vertical"/>
+        <TextView android:id="@+id/widget_empty" android:layout_width="match_parent" android:layout_height="match_parent" android:gravity="center_vertical" android:textSize="14sp" android:textColor="@color/widget_text"/>
+    </FrameLayout>
+</LinearLayout>
