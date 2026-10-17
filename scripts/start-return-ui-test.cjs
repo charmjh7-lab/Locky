@@ -99,16 +99,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.evaluate(()=>refresh(true));assert.equal(await page.locator('#word').inputValue(),'');
   await page.evaluate(()=>navigate('unlock',nativeNavigation+1));assert.equal(await page.locator('#word').inputValue(),'');assert.equal(await page.locator('#quickQuestion').inputValue(),question);
   const before=await page.evaluate(()=>calls.filter(c=>c.action==='dictionary').length);await page.locator('#dictionaryForm').evaluate(form=>form.requestSubmit());await page.waitForFunction(()=>document.querySelector('#toast').textContent==='찾을 단어를 입력해 주세요.');assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='dictionary').length),before);
-  // App-purpose reordering preserves direct/more controls, minute choice and handlers too.
-  await page.evaluate(()=>{
-   state.rules=[];state.gate={pkg:'example.app',daily:600000};state.allPurposes=all.map(p=>({...p,scope:'app'}));screen='app';minutes=8;render();
-   window.appDirect=document.querySelector('[data-act=direct]');window.appMore=document.querySelector('.more-reasons');
-   window.appBefore=[...document.querySelectorAll('[data-purpose]')].map(el=>el.dataset.purpose);reshufflePurposesForStart();
-  });
-  assert.equal(await page.evaluate(()=>appDirect===document.querySelector('[data-act=direct]')&&appMore===document.querySelector('.more-reasons')&&minutes===8),true);
-  assert.notDeepEqual(await page.locator('[data-purpose]').evaluateAll(els=>els.map(el=>el.dataset.purpose)),await page.evaluate(()=>appBefore));
-  await page.locator('[data-purpose]').first().evaluate(el=>el.click());await page.waitForFunction(()=>!purposeStarting);
-  assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='grant').at(-1).args.minutes),8);
+  // App entry and per-app purpose ordering are covered by the native gate tests.
   assert.equal(await page.evaluate(()=>calls.filter(x=>['dismiss','stop','choose'].includes(x.action)).length),0);assert.deepEqual(errors,[]);
   console.log('PASS: unchanged unlock visibility/refresh keeps DOM/revision; changed data patches regions; explicit navigation re-acknowledges retained DOM; partial preset reorder, editor/button identity, focus/selection/scroll, nonblocking memo save, revision/no-op/sheet handling; deferred dispatch, success-only clearing, failure/retry, duplicate submit, newer edit, choice/cancel, repeated search, draft/scroll preservation and unlock reuse.');
  }finally{await browser.close();}

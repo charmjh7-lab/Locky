@@ -20,19 +20,18 @@ public class UiThemeTest {
     @After public void cleanup(){if(host!=null){host.close();host.store.close();}Store.instance=null;}
     @Test public void initialNightSurfaceAndSystemBarsAgree(){
         Activity activity=Robolectric.buildActivity(Activity.class).setup().visible().get();
-        host=new WebHost(activity,WebHost.Role.APP_GATE);activity.setContentView(host.root);
+        host=new WebHost(activity,WebHost.Role.MAIN);activity.setContentView(host.root);
         Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
         assertTrue(UiTheme.dark(activity));
         assertFalse(activity.getResources().getBoolean(R.bool.light_system_bars));
         int background=UiTheme.background(activity);
         assertEquals(background,((ColorDrawable)host.root.getBackground()).getColor());
-        assertEquals(background,((ColorDrawable)host.loadingView.getBackground()).getColor());
         // Android 15 can enforce transparent system bars; the decor fills them.
         assertEquals(background,((ColorDrawable)activity.getWindow().getDecorView().getBackground()).getColor());
     }
     @Test public void themeAndFontChangeRetainDocumentAndNavigation(){
         Activity activity=Robolectric.buildActivity(Activity.class).setup().get();
-        host=new WebHost(activity,WebHost.Role.APP_GATE);WebView original=host.view;
+        host=new WebHost(activity,WebHost.Role.MAIN);WebView original=host.view;
         host.pendingScreen="unlock";host.renderedScreen="unlock";long generation=host.navigationGeneration;
         Configuration next=new Configuration(activity.getResources().getConfiguration());
         next.uiMode=(next.uiMode&~Configuration.UI_MODE_NIGHT_MASK)|Configuration.UI_MODE_NIGHT_NO;next.fontScale=1.4f;
@@ -45,7 +44,7 @@ public class UiThemeTest {
     }
     @Test public void userThemeOverridePersistsWithoutRecreatingWebView() throws Exception {
         Activity activity=Robolectric.buildActivity(Activity.class).setup().get();
-        host=new WebHost(activity,WebHost.Role.APP_GATE);
+        host=new WebHost(activity,WebHost.Role.MAIN);
         WebView original=host.view;
         host.saveSettings(new org.json.JSONObject().put("themeMode","light"));
         host.applyTheme();

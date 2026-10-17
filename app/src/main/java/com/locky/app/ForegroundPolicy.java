@@ -19,4 +19,9 @@ final class ForegroundPolicy {
         return system.contains(best.pkg)?new Result("",true):new Result(best.pkg,false);
     }
     private static int score(Window w){return w.focused?2:w.active?1:0;}
+    /** An actual app state event plus focused, active full window can bypass Overview settling. */
+    static boolean confirmedEntry(List<Window> windows,Result result,String eventPackage,boolean appStateEvent){
+        return appStateEvent&&!result.paused&&!result.pkg.isEmpty()&&result.pkg.equals(eventPackage)
+            &&windows.stream().anyMatch(w->w.type==1&&w.pkg.equals(result.pkg)&&w.focused&&w.active&&w.covering&&!w.pip);
+    }
 }

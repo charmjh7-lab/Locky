@@ -50,7 +50,7 @@ async function snap(browser,version,screen,theme,width,height,name){
   },{data,target:screen,theme,brief:briefing});
   await page.waitForTimeout(140);
   assert.deepEqual(errors,[],'JavaScript console failures '+name);
-  if(screen==='home'||screen==='app'){
+  if(screen==='home'){
    const r=await page.evaluate(()=>{const rect=s=>document.querySelector(s)?.getBoundingClientRect();
     const footer=rect('.start-footer'),area=rect('.start-purposes'),dismiss=rect('.dismiss'),direct=rect('[data-act=direct]');
     return {footerTop:footer.top,footerBottom:footer.bottom,areaBottom:area.bottom,dismissBottom:dismiss.bottom,

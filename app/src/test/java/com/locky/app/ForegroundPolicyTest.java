@@ -9,4 +9,12 @@ public class ForegroundPolicyTest {
     @Test public void notificationShadePausesWithoutReplacingApp(){ForegroundPolicy.Result r=ForegroundPolicy.select(Arrays.asList(w("video",1,false,false,0),w("",3,true,true,4)),Collections.emptySet());assertTrue(r.paused);assertEquals("",r.pkg);assertEquals("video",ForegroundPolicy.select(Collections.singletonList(w("video",1,true,true,1)),Collections.emptySet()).pkg);}
     @Test public void nonFocusedFullScreenShadeAlsoPauses(){assertTrue(ForegroundPolicy.select(Arrays.asList(w("video",1,true,true,0),new ForegroundPolicy.Window("",3,false,false,2,false,true)),Collections.emptySet()).paused);}
     @Test public void focusedSplitWindowWinsOverUnfocusedPopup(){assertEquals("editor",ForegroundPolicy.select(Arrays.asList(w("video",1,false,false,5),w("editor",1,true,true,1)),Collections.emptySet()).pkg);}
+    @Test public void confirmedFocusedAppEntrySkipsOnlyTheUnnecessaryOverviewWait(){
+        var full=Collections.singletonList(new ForegroundPolicy.Window("video",1,true,true,3,false,true));var selected=ForegroundPolicy.select(full,Collections.emptySet());
+        assertTrue(ForegroundPolicy.confirmedEntry(full,selected,"video",true));
+        assertFalse(ForegroundPolicy.confirmedEntry(full,selected,"launcher",true));
+        assertFalse(ForegroundPolicy.confirmedEntry(full,selected,"video",false));
+        var thumbnail=Collections.singletonList(new ForegroundPolicy.Window("video",1,false,true,3,false,true));
+        assertFalse(ForegroundPolicy.confirmedEntry(thumbnail,selected,"video",true));
+    }
 }

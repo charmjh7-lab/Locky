@@ -107,7 +107,7 @@ const server=http.createServer((req,res)=>{const name=req.url==='/'?'index.html'
  assert.equal(await page.locator('#purposeApp').inputValue(),'app.video');
  await page.locator('#purposeApp').selectOption('app.2');await page.locator('#savePurpose').click();
  assert.equal(demo.allPurposes.find(p=>p.id==='phone1').pkg,'app.2');
- await page.evaluate(()=>navigate('app'));await page.locator('[data-act=managePurposes]').click();
+ await page.evaluate(async()=>{await navigate('settings');managePurposes('app');});
  await page.locator('#sheet [data-editpurpose="app-rest"]').click();await page.locator('#purposeLink').check();
  await page.locator('#purposeApp').selectOption('app.3');await page.locator('#savePurpose').click();
  assert.equal(demo.allPurposes.find(p=>p.id==='app-rest').pkg,'app.3');
@@ -133,8 +133,6 @@ const server=http.createServer((req,res)=>{const name=req.url==='/'?'index.html'
  await page.evaluate(id=>{state.overlay=false;return openChatById(id);},recentOpen.a.chat);
  await page.locator('.message.assistant .chat-markdown strong').waitFor();
  assert.equal(await page.locator('.chat-plain').last().innerText(),'오버레이에서 보낸 질문');
- await page.evaluate(()=>navigate('app'));assert.equal(await page.locator('[data-purpose=phone1]').count(),0);await page.locator('[data-min="10"]').click();await page.locator('[data-purpose=app-rest]').click();assert.equal(await page.locator('#startApp').count(),0);assert(calls.some(c=>c.action==='grant'&&c.a.minutes===10));
- for(const name of ['app','renew','blocked']){await page.evaluate(n=>navigate(n),name);await page.setViewportSize({width:360,height:600});await fit();}await page.locator('[data-act=dismiss]').click();assert(calls.some(c=>c.action==='dismiss'));
  await page.setViewportSize({width:390,height:780});await page.evaluate(()=>navigate('settings'));assert.equal(await page.locator('#appList').count(),0);await page.locator('#startTime').fill('22:00');await page.locator('#endTime').fill('07:00');await page.locator('#endTime').blur();await page.waitForTimeout(100);assert.equal(demo.prefs.start,1320);assert.equal(demo.prefs.end,420);
  await page.locator('[data-reminder="30"]').click();assert(!demo.prefs.reminders.includes(30));await page.locator('[data-nav=apps]').click();await page.locator('[data-manage="app.video"]').check();await page.waitForTimeout(100);assert.equal(await page.locator('[data-manage]').first().getAttribute('data-manage'),'app.video');await page.locator('[data-rule="app.video"]').click();await page.locator('#ruleMode').selectOption('locked');await page.waitForTimeout(100);assert.equal(demo.rules[0].mode,'locked');await page.locator('[data-act=closeSheet]').click();await page.locator('[data-manage="app.video"]').uncheck();await page.waitForTimeout(100);assert.equal(await page.locator('[data-manage]').first().getAttribute('data-manage'),'app.video');
  await page.evaluate(()=>navigate('brief'));await page.locator('#briefContent .stat').first().waitFor();assert.equal(await page.locator('.more-list').count(),2);await page.locator('[data-days="7"]').click();await page.waitForTimeout(100);assert(calls.some(c=>c.action==='brief'&&c.a.days===7));

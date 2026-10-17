@@ -17,7 +17,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
    const phone=await page.locator('.start-page').boundingBox();const controls=await page.locator('.quick-tools,.dictionary-bar,.start-purposes,.start-footer').evaluateAll(xs=>xs.map(x=>{const r=x.getBoundingClientRect();return [r.x,r.y,r.width,r.height];}));
    assert.equal(await page.locator('.bottom').count(),0);assert.match(await page.locator('.top').textContent(),/휴대폰 시작/);
-   await page.evaluate(()=>{state.role='APP_GATE';state.overlay=true;render();});
+   await page.evaluate(()=>{state.role='LEGACY_OVERLAY';state.overlay=true;render();});
    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
    assert.deepEqual(await page.locator('.start-page').boundingBox(),phone);assert.deepEqual(await page.locator('.quick-tools,.dictionary-bar,.start-purposes,.start-footer').evaluateAll(xs=>xs.map(x=>{const r=x.getBoundingClientRect();return [r.x,r.y,r.width,r.height];})),controls);
   }
@@ -38,13 +38,21 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='releaseNavigation').length),await page.evaluate(()=>releaseBefore+1));
   await page.evaluate(()=>{state.phoneCycle=2;render();});await page.locator('[data-act="openChat"]').first().click();await page.waitForFunction(()=>renderedRoute==='chats'&&!refreshing);
   assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='releaseNavigation').at(-1).args.cycle),2);
-  await page.evaluate(()=>{window.stateReads=calls.filter(c=>c.action==='state').length;prepareGate(10);window.gateData={gate:{pkg:'video',label:'Video',daily:600000,session:0},prefs:{start:540,end:1260},free:false,purposeDate:'2026-10-16',scope:'video',purposes:[{id:'app-p',label:'앱 목적',scope:'app'}],allPurposes:[{id:'app-p',label:'앱 목적',scope:'app'}],rules:[]};presentGate('app',gateData,11);window.minutesNode=document.querySelector('[data-min="5"]');presentGate('app',gateData,12);});
-  assert.equal(await page.evaluate(()=>document.querySelector('[data-min="5"]')===minutesNode),true);
-  await page.evaluate(()=>{gateData={...gateData,scope:'social',gate:{pkg:'social',label:'Social',daily:300000,session:0}};presentGate('app',gateData,13);});
-  assert.equal(await page.locator('.gate-app').textContent(),'Social');assert.equal(await page.locator('#dailyLeft').textContent(),'05:00');
-  assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='state').length),await page.evaluate(()=>stateReads));
-  await page.locator('[data-purpose="app-p"]').click();await page.waitForFunction(()=>!purposeStarting);
-  assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='grant').at(-1).args.gateNavigation),13);
+  // Actual app icons supplement phone purposes without replacing button actions or geometry.
+  await page.evaluate(async()=>{await navigate('unlock');state.purposes[0].pkg='linked.app';state.purposes[1].uri='https://example.com';state.purposes[2].pkg='missing.app';state.purposeIcons={[state.purposes[0].id]:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="green"/></svg>'};render();window.iconNodes=['#noteBody','#word','.preset-scroll'].map(s=>document.querySelector(s));});
+  const before=await page.locator('.start-purposes').boundingBox();
+  assert.equal(await page.locator('.linked-app-icon').count(),1);
+  const iconButton=await page.locator('[data-purpose="p0"]').boundingBox();assert(iconButton.height<=60);
+  await page.locator('.linked-app-icon').click();await page.waitForFunction(()=>!purposeStarting);
+  assert.equal(await page.evaluate(()=>calls.filter(c=>c.action==='choose').at(-1).args.id),'p0');
+  assert.equal(await page.locator('[data-purpose="p1"] svg').count(),1);assert.equal(await page.locator('[data-purpose="p2"] svg').count(),1);
+  assert.equal(await page.locator('[data-purpose="p3"] img,[data-purpose="p3"] svg').count(),0);
+  await page.evaluate(()=>{document.querySelector('.linked-app-icon').dispatchEvent(new Event('error'));});
+  assert.equal(await page.locator('.purpose-link-icon.icon-failed svg').isVisible(),true);
+  assert.deepEqual(await page.locator('.start-purposes').boundingBox(),before);
+  assert.equal(await page.evaluate(()=>iconNodes.every(n=>n.isConnected)),true);
+  await page.evaluate(async()=>{state.role=fixture.role='MAIN';state.purposeEditor=fixture.purposeEditor='linked.app';managePurposes('app');});
+  await page.locator('[data-act="finishPurposeEditing"]').click();await page.waitForFunction(()=>calls.some(c=>c.action==='finishPurposeEditing'));
   assert.deepEqual(errors,[]);console.log('PASS phone owner: existing light/dark geometry, no main nav, retained editors/drafts/daily order, root/sheet/notes Back, dictionary return, separate session snapshot.');
  }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exit(1);});

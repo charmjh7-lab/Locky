@@ -2,7 +2,6 @@
 // Apply the host theme before rendering; configuration changes keep this document and its drafts.
 function themeChanged(dark){document.documentElement.dataset.theme=dark?'dark':'light';}
 if(window.Native&&typeof Native.darkTheme==='function')themeChanged(Native.darkTheme());
-document.addEventListener('focusin',event=>{if(state?.overlay&&event.target.matches('textarea,input:not([type=button]):not([type=checkbox]):not([type=radio]),[contenteditable=true]')&&window.Native)Native.request('0','editorFocus','{}');});
 // Only explicit tool interaction releases the phone-cycle home guard. Native owns state.
 let navigationReleasedCycle=-1;
 function releasePhoneNavigation(reason){
@@ -18,7 +17,7 @@ document.addEventListener('click',event=>{if(!event.isTrusted)return;if(event.ta
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const shapes={lock:'M7 10V7a5 5 0 0 1 10 0v1 M5 10h14v11H5z M12 14v3',leaf:'M5 19C3 8 11 3 21 3c0 10-5 16-16 16z M5 19l10-10',home:'M3 11l9-8 9 8 M6 10v11h12V10 M10 21v-7h4v7',chart:'M4 20V10 M10 20V4 M16 20v-8 M22 20H2',settings:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1z',plus:'M12 5v14 M5 12h14',arrow:'M5 12h14 M14 7l5 5-5 5',back:'M19 12H5 M10 7l-5 5 5 5',chat:'M3 4h18v13H9l-6 4z M7 8h10 M7 12h6',book:'M3 4h7l2 2 2-2h7v16h-7l-2 1-2-1H3z M12 6v15',note:'M5 3h14v18H5z M8 8h8 M8 12h8 M8 16h4',close:'M6 6l12 12 M18 6L6 18',check:'M4 12l5 5L20 6',trash:'M3 6h18 M9 6V3h6v3 M6 6v15h12V6 M10 10v7 M14 10v7',clock:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l4 2',send:'M3 3l18 9-18 9 4-9z M7 12h14',moon:'M20 15A9 9 0 0 1 9 3a9 9 0 1 0 11 12',newnote:'M5 3h14v18H5z M12 8v8 M8 12h8',expand:'M8 3H3v5 M16 3h5v5 M3 16v5h5 M21 16v5h-5',more:'M12 5h.01 M12 12h.01 M12 19h.01',search:'M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14 M15 15l6 6',power:'M12 2v10 M6 5a9 9 0 1 0 12 0',link:'M9 15l6-6 M8 16l-2 2a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0 M14 8l2-2a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0'};
 const icon=n=>`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${shapes[n]||shapes.leaf}"/></svg>`;
-let seq=0,requests=new Map(),state=null,screen='home',selected='',minutes=5,chatId='',appsCache=null,appsPromise=null,noteId='',briefDays=1,briefOffset=0,refreshing=false,refreshAgain=false,poll=null,memoTimer=null,memoPending=null,memoSaving=null,chatScrolled=false;
+let seq=0,requests=new Map(),state=null,screen='home',selected='',chatId='',appsCache=null,appsPromise=null,noteId='',briefDays=1,briefOffset=0,refreshing=false,refreshAgain=false,poll=null,memoTimer=null,memoPending=null,memoSaving=null,chatScrolled=false;
 let purposeEntry=null,purposePositions=new Map();
 let chatReturn='chats',chatsReturn='home',briefTarget=null,briefAppFilter='all';
 let normalHeight=0,normalWidth=0;
@@ -28,8 +27,8 @@ const quickTurns=new Map();
 let nativeKeyboard=false,purposeScope='phone',restored=false,briefSeq=0,settingsTimer=null;
 let purposeStarting=false,briefData=null;const briefSort={apps:'desc',events:'asc',timeline:'asc'};
 Object.assign(shapes,{sortDown:'M4 5h12 M4 10h8 M4 15h4 M19 4v16 M15 16l4 4 4-4',sortUp:'M4 5h4 M4 10h8 M4 15h12 M19 20V4 M15 8l4-4 4 4'});
-const gated=['app','renew','blocked'],starts=['home','unlock',...gated];
-function api(action,args={}){if(state?.role==='APP_GATE'&&['grant','extend'].includes(action))args={...args,gateNavigation:nativeNavigation};return new Promise((resolve,reject)=>{const id=String(++seq),timeout=setTimeout(()=>{requests.delete(id);reject(Error('응답을 기다리는 중이에요. 다시 시도해 주세요.'));},25000);requests.set(id,{resolve,reject,timeout});Native.request(id,action,JSON.stringify(args));});}
+const starts=['home','unlock'];
+function api(action,args={}){return new Promise((resolve,reject)=>{const id=String(++seq),timeout=setTimeout(()=>{requests.delete(id);reject(Error('응답을 기다리는 중이에요. 다시 시도해 주세요.'));},25000);requests.set(id,{resolve,reject,timeout});Native.request(id,action,JSON.stringify(args));});}
 function receive(id,value,error){const r=requests.get(id);if(!r)return;clearTimeout(r.timeout);requests.delete(id);error?r.reject(Error(error)):r.resolve(value);}
 function toast(text){$('#toast').textContent=text;$('#toast').style.display='block';clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').style.display='none',3500);}
 async function safe(fn){try{return await fn();}catch(e){toast(e.message);}}
@@ -40,51 +39,27 @@ function timeVal(t){const [h,m]=t.split(':').map(Number);return h*60+m;}
 function dateTime(t,timeZone=undefined){return new Date(t).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone});}
 function header(back=false,title='Locky',showStatus=true){return `<div class="top">${back?`<button class="iconbtn" data-act="back" aria-label="뒤로">${icon('back')}</button>`:''}<strong>${esc(title)}</strong>${showStatus?`<span class="pill">${state?.free?'자유 시간':'집중 시간'}</span>`:''}</div>`;}
 function compactHost(){return state?.role==='PHONE_START'||state?.overlay;}
-function nav(){if(compactHost()||['chat',...gated,'unlock'].includes(screen))return '';return `<div class="bottom"><nav class="nav" aria-label="주 메뉴">${[['home','home','시작'],['chats','chat','대화'],['brief','chart','브리핑'],['settings','settings','설정']].map(([s,i,l])=>`<button data-nav="${s}" class="${screen===s?'active':''}">${icon(i)}<span>${l}</span></button>`).join('')}</nav></div>`;}
-function startPolling(){clearInterval(poll);poll=null;if(['chat','chats','brief','timer',...gated].includes(screen)&&document.visibilityState!=='hidden')poll=setInterval(()=>refresh(),screen==='brief'?30000:1000);}
-function remember(){if(!state)return;if(state.role==='PHONE_START'){safe(()=>api('remember',{screen,chat:chatId,note:noteId,chatReturn,chatsReturn,quickQuestion:$('#quickQuestion')?.value??quickQuestionDraft,word:$('#word')?.value??dictionaryWordDraft,chatDraft:$('#chatInput')?.value??state.phoneSession?.chatDraft??''}));return;}if(!state.overlay&&!gated.includes(screen)&&screen!=='unlock')safe(()=>api('remember',{screen,chat:chatId,note:noteId,chatReturn,chatsReturn,briefTarget:screen==='brief'?{...(briefTarget||{}),date:briefData?.kind!=='focus'?briefData?.date:undefined,days:briefDays}:undefined}));}
+function nav(){if(compactHost()||['chat','unlock'].includes(screen))return '';return `<div class="bottom"><nav class="nav" aria-label="주 메뉴">${[['home','home','시작'],['chats','chat','대화'],['brief','chart','브리핑'],['settings','settings','설정']].map(([s,i,l])=>`<button data-nav="${s}" class="${screen===s?'active':''}">${icon(i)}<span>${l}</span></button>`).join('')}</nav></div>`;}
+function startPolling(){clearInterval(poll);poll=null;if(['chat','chats','brief','timer'].includes(screen)&&document.visibilityState!=='hidden')poll=setInterval(()=>refresh(),screen==='brief'?30000:1000);}
+function remember(){if(!state)return;if(state.role==='PHONE_START'){safe(()=>api('remember',{screen,chat:chatId,note:noteId,chatReturn,chatsReturn,quickQuestion:$('#quickQuestion')?.value??quickQuestionDraft,word:$('#word')?.value??dictionaryWordDraft,chatDraft:$('#chatInput')?.value??state.phoneSession?.chatDraft??''}));return;}if(!state.overlay&&screen!=='unlock')safe(()=>api('remember',{screen,chat:chatId,note:noteId,chatReturn,chatsReturn,briefTarget:screen==='brief'?{...(briefTarget||{}),date:briefData?.kind!=='focus'?briefData?.date:undefined,days:briefDays}:undefined}));}
 let phoneDraftTimer=null;
 document.addEventListener('input',()=>{if(state?.role==='PHONE_START'){clearTimeout(phoneDraftTimer);phoneDraftTimer=setTimeout(remember,200);}});
-async function navigate(s,navigation=null,keepBrief=false){if(state?.role==='PHONE_START'&&!['unlock','notes','chats','chat'].includes(s)){await api('open',{screen:s});return;}if(s==='brief'&&navigation===null&&!keepBrief&&screen!=='brief'){briefTarget=null;briefDays=1;briefOffset=0;}const local=navigation===null;if(local)navigation=nativeNavigation;if(['home','unlock','app'].includes(s))purposeEntry=null;if(s==='chats'&&starts.includes(screen))chatsReturn=screen;if(s==='chat'&&screen==='chats')chatReturn='chats';if(settingsTimer&&screen==='settings'){clearTimeout(settingsTimer);settingsTimer=null;await safe(saveReminders);}await flushMemo();if(navigation<nativeNavigation)return;const retainedNavigation=renderedRoute===s&&navigation!==nativeNavigation;nativeNavigation=navigation;if(local&&state?.overlay&&['chat','chats','unlock'].includes(s)&&s!==screen)presentScreen(s);closeSheet();screen=s;selected='';minutes=5;document.body.classList.toggle('start-screen',starts.includes(screen));window.scrollTo(0,0);const revision=domRevision;await refresh(true);if(retainedNavigation&&navigation===nativeNavigation&&renderedRoute===s&&revision===domRevision)signalRendered();startPolling();remember();if(state&&['notes','chat','chats'].includes(s))safe(()=>api('utility',{name:s==='notes'?'메모':'ChatGPT'}));}
-async function refresh(force=false){if(screen==='gateIdle')return;if(refreshing){if(force)refreshAgain=true;return;}refreshing=true;try{
- if(!force&&state&&['chat','timer',...gated].includes(screen))Object.assign(state,await api('tick'));else state=await api('state');
+async function navigate(s,navigation=null,keepBrief=false){if(state?.role==='PHONE_START'&&!['unlock','notes','chats','chat'].includes(s)){await api('open',{screen:s});return;}if(s==='brief'&&navigation===null&&!keepBrief&&screen!=='brief'){briefTarget=null;briefDays=1;briefOffset=0;}const local=navigation===null;if(local)navigation=nativeNavigation;if(['home','unlock'].includes(s))purposeEntry=null;if(s==='chats'&&starts.includes(screen))chatsReturn=screen;if(s==='chat'&&screen==='chats')chatReturn='chats';if(settingsTimer&&screen==='settings'){clearTimeout(settingsTimer);settingsTimer=null;await safe(saveReminders);}await flushMemo();if(navigation<nativeNavigation)return;const retainedNavigation=renderedRoute===s&&navigation!==nativeNavigation;nativeNavigation=navigation;if(local&&state?.overlay&&['chat','chats','unlock'].includes(s)&&s!==screen)presentScreen(s);closeSheet();screen=s;selected='';document.body.classList.toggle('start-screen',starts.includes(screen));window.scrollTo(0,0);const revision=domRevision;await refresh(true);if(retainedNavigation&&navigation===nativeNavigation&&renderedRoute===s&&revision===domRevision)signalRendered();startPolling();remember();if(state&&['notes','chat','chats'].includes(s))safe(()=>api('utility',{name:s==='notes'?'메모':'ChatGPT'}));}
+async function refresh(force=false){if(refreshing){if(force)refreshAgain=true;return;}refreshing=true;try{
+ if(!force&&state&&['chat','timer'].includes(screen))Object.assign(state,await api('tick'));else state=await api('state');
  for(const turn of quickTurns.values())if(!state.chats.some(c=>c.id===turn.id))state.chats.unshift({id:turn.id,title:turn.text.slice(0,30)});
  syncMemoChecks();
  if(!restored){restored=true;if(state.role==='PHONE_START'){const saved=state.phoneSession||{};quickQuestionDraft=saved.quickQuestion||'';dictionaryWordDraft=saved.word||'';noteId=saved.note||noteId;chatReturn=saved.chatReturn||'unlock';chatsReturn=saved.chatsReturn||'unlock';}if(screen==='chat')chatReturn=state.chatReturn||'chats';if(screen==='chats')chatsReturn=state.chatsReturn||'home';if(screen==='brief'&&!briefTarget&&state.savedBrief){briefTarget=state.savedBrief;briefDays=state.savedBrief.days||1;}chatId=chatId||state.savedChat||'';noteId=noteId||state.savedNote||'';}
  if(['home','unlock'].includes(screen)&&renderedRoute===screen&&$('.start-page')){updateStart();return;}
- if(!force){if(screen==='chat'){await renderMessages(false);return;}if(screen==='timer'||gated.includes(screen)){updateTimers();return;}if(document.activeElement?.matches('input,textarea,select')||memoPending||memoSaving)return;if(screen==='brief'){await loadBrief();return;}if(screen==='chats'){const c=$('#connection');if(c){c.innerHTML=connectionHTML();bind(c);}return;}}
+ if(!force){if(screen==='chat'){await renderMessages(false);return;}if(screen==='timer'){updateTimers();return;}if(document.activeElement?.matches('input,textarea,select')||memoPending||memoSaving)return;if(screen==='brief'){await loadBrief();return;}if(screen==='chats'){const c=$('#connection');if(c){c.innerHTML=connectionHTML();bind(c);}return;}}
  const oldScroll=window.scrollY;render();if(!force)window.scrollTo(0,oldScroll);if(screen==='brief')loadBrief();if(screen==='apps')loadApps();if(screen==='usageApps')loadUsageApps();if(screen==='chat')renderMessages(force);
  }catch(e){toast(e.message);}finally{refreshing=false;if(refreshAgain){refreshAgain=false;refresh(true);}}}
 async function openNoteById(id,navigation=null){await flushMemo();noteId=id;await navigate('notes',navigation);remember();}
 function openChatById(id,navigation=null){chatId=id;return navigate('chat',navigation);}
-// APP_GATE owns a single prepared document. Gate data comes with the native entry,
-// so navigation never waits behind memo/chat bridge work or displays the old app.
-function prepareGate(navigation=0){
- clearInterval(poll);poll=null;gateRegions=[];
- nativeNavigation=navigation;screen='gateIdle';state={role:'APP_GATE',overlay:true,notes:[],chats:[],accounts:[],models:[],connection:{},rules:[],allPurposes:[],purposeOrders:{}};
- renderedRoute='gateIdle';$('#app').replaceChildren();++domRevision;signalRendered();
-}
-let gateRegions=[];
-function presentGate(name,payload,navigation){
- if(navigation<nativeNavigation)return;
- const same=screen===name&&state?.gate?.pkg===payload.gate.pkg;
- nativeNavigation=navigation;closeSheet();selected='';minutes=5;purposeEntry=null;
- state={...state,...payload,role:'APP_GATE',overlay:true,purposeOrders:{[payload.scope]:payload.purposes}};
- screen=name;const main=$('.gate-page');
- const template=document.createElement('template');template.innerHTML=gate();
- const wanted=template.content.firstElementChild;
- if(same&&main){
-  for(let i=0;i<wanted.children.length;i++){const old=main.children[i],next=wanted.children[i];if(gateRegions[i]!==next.outerHTML){if(old)old.replaceWith(next.cloneNode(true));else main.append(next.cloneNode(true));}}
-  bind();viewportChanged();renderedRoute=screen;++domRevision;signalRendered();
- }else render();
- gateRegions=[...wanted.children].map(el=>el.outerHTML);
- document.querySelectorAll('[data-min]').forEach(el=>{el.classList.toggle('selected',Number(el.dataset.min)===minutes);el.setAttribute('aria-pressed',Number(el.dataset.min)===minutes);});
- startPolling();
-}
 function presentScreen(name){const previous=nativeNavigation++;Native.request('0','present',JSON.stringify({screen:name,previous,navigation:nativeNavigation,chat:chatId}));}
 function signalRendered(){Native.request('0','rendered',JSON.stringify({screen,navigation:nativeNavigation,revision:domRevision}));}
 function nativeRestore(){if($('#app')?.childElementCount)signalRendered();else return refresh(true);}
-function render(){const previousPresetScroll=$('.preset-scroll')?.scrollTop||0;if($('#quickQuestion'))quickQuestionDraft=$('#quickQuestion').value;if($('#word'))dictionaryWordDraft=$('#word').value;let html='';switch(screen){case 'gateIdle':break;case 'unlock':case 'home':html=home();break;case 'setup':html=setup();break;case 'settings':html=settings();break;case 'apps':html=appsPage();break;case 'usageApps':html=usageAppsPage();break;case 'app':case 'renew':case 'blocked':html=gate();break;case 'timer':html=timer();break;case 'notes':html=notesPage();break;case 'chats':html=chats();break;case 'chat':html=chat();break;case 'brief':html=brief();break;case 'week':briefDays=7;screen='brief';html=brief();break;default:screen='home';html=home();}
+function render(){const previousPresetScroll=$('.preset-scroll')?.scrollTop||0;if($('#quickQuestion'))quickQuestionDraft=$('#quickQuestion').value;if($('#word'))dictionaryWordDraft=$('#word').value;let html='';switch(screen){case 'unlock':case 'home':html=home();break;case 'setup':html=setup();break;case 'settings':html=settings();break;case 'apps':html=appsPage();break;case 'usageApps':html=usageAppsPage();break;case 'timer':html=timer();break;case 'notes':html=notesPage();break;case 'chats':html=chats();break;case 'chat':html=chat();break;case 'brief':html=brief();break;case 'week':briefDays=7;screen='brief';html=brief();break;default:screen='home';html=home();}
  document.body.classList.toggle('start-screen',starts.includes(screen));$('#app').innerHTML=html+nav();bind();if(state?.role==='PHONE_START'&&screen==='chat'&&$('#chatInput')&&state.phoneSession?.chat===chatId)$('#chatInput').value=state.phoneSession.chatDraft||'';if($('.preset-scroll'))$('.preset-scroll').scrollTop=previousPresetScroll;viewportChanged();if(screen==='chat'&&quickTurns.has(chatId))applyMessages(quickMessages(quickTurns.get(chatId)),true);renderedRoute=screen;if(['home','unlock'].includes(screen))startNoteSnapshot=noteSnapshot();++domRevision;signalRendered();}
 // Refresh data without discarding the prepared start document or its editors.
 function noteSnapshot(){const n=currentNote();return {note:{id:n.id,title:n.title,body:n.body,checks:n.checks||'[]',mode:n.mode},count:state.notes.length};}
@@ -137,11 +112,11 @@ function prepareStart(order=null){
  purposeEntry=null;reshufflePurposesForStart();return domRevision;
 }
 function reshufflePurposesForStart(){
- if(!state||!['home','unlock','app'].includes(screen)||$('#sheet')?.innerHTML)return;
+ if(!state||!['home','unlock'].includes(screen)||$('#sheet')?.innerHTML)return;
  const grid=$('.start-purposes .reason-grid');if(!grid)return;
  const items=[...grid.querySelectorAll(':scope > .purpose-item')];
  const byId=new Map(items.map(el=>[el.querySelector('[data-purpose]').dataset.purpose,el]));
- const order=visiblePurposes(screen==='app').map(p=>byId.get(p.id));
+ const order=visiblePurposes(false).map(p=>byId.get(p.id));
  if(order.length!==items.length||order.some(el=>!el)||order.every((el,i)=>el===items[i]))return;
  const scroller=$('.preset-scroll'),scroll=scroller?.scrollTop||0,end=grid.querySelector('.more-reasons');
  order.forEach(el=>grid.insertBefore(el,end));if(scroller)scroller.scrollTop=scroll;if(!scroller)layoutStart();++domRevision;signalRendered();
@@ -157,9 +132,15 @@ function visiblePurposes(isApp){
  purposePositions.set(scope,order);
  return available.sort((a,b)=>order.indexOf(a.id)-order.indexOf(b.id));
 }
+function purposeLinkIcon(p,isApp){
+ if(!p.pkg&&!p.uri)return '';
+ const image=!isApp&&state?.role==='PHONE_START'&&state.purposeIcons?.[p.id];
+ return image?`<span class="purpose-link-icon" aria-hidden="true"><img class="linked-app-icon" src="${esc(image)}" alt="">${icon('link')}</span>`:icon('link');
+}
+document.addEventListener('error',event=>{const img=event.target;if(img.matches?.('.linked-app-icon')){img.parentElement.classList.add('icon-failed');}},true);
 function purposeGrid(isApp,all=false){
  const ps=visiblePurposes(isApp);
- const items=ps.map(p=>`<div class="purpose-item"><button class="reason ${p.id===selected?'selected':''} ${p.aimless?'aimless':''}" data-purpose="${esc(p.id)}"><span>${esc(p.label)}</span>${p.pkg||p.uri?icon('link'):''}</button></div>`).join('');
+ const items=ps.map(p=>`<div class="purpose-item"><button class="reason ${p.id===selected?'selected':''} ${p.aimless?'aimless':''} ${!isApp&&state?.role==='PHONE_START'?'phone-purpose':''}" data-purpose="${esc(p.id)}"><span>${esc(p.label)}</span>${purposeLinkIcon(p,isApp)}</button></div>`).join('');
  const direct=`<button class="reason direct" data-act="direct">${icon('plus')} 직접 적기</button>`;
  if(!isApp&&!all)return `<div class="reason-picker">${direct}<div class="preset-scroll" role="region" tabindex="0" aria-label="목적 프리셋 목록"><div class="reason-grid">${items}</div></div></div>`;
  return `<div class="reason-grid ${all?'all-reasons':''}">${direct}${items}${!all?`<button class="reason more-reasons" data-act="morePurposes" hidden>${icon('more')} 전체 ${ps.length}개 보기</button>`:''}</div>`;
@@ -169,16 +150,10 @@ let memoBase=null;
 function newCheckId(){return 'check-'+Array.from(crypto.getRandomValues(new Uint32Array(4)),n=>n.toString(16).padStart(8,'0')).join('');}
 function memoHTML(full){let n=currentNote(),checks=[];try{checks=JSON.parse(n.checks||'[]');}catch{}checks.forEach(c=>c.id=c.id||newCheckId());memoBase={id:n.id,title:n.title,body:n.body,mode:n.mode,checks:structuredClone(checks)};const check=n.mode==='check';return `<div class="note-panel ${full?'full-note':'compact-note'}"><div class="mini-head">${full?`<input class="note-title" id="noteTitle" maxlength="100" value="${esc(n.title)}" aria-label="메모 제목">`:`<button class="note-heading" data-nav="notes">${icon('note')} ${esc(n.title||'메모')}</button>${state.notes.length>1?`<button class="iconbtn" data-note-step="-1" aria-label="이전 메모">${icon('back')}</button><button class="iconbtn" data-note-step="1" aria-label="다음 메모">${icon('arrow')}</button>`:'' }<button class="iconbtn" data-nav="notes" aria-label="메모 크게 보기">${icon('expand')}</button>`}</div>${full?`<div class="note-tabs">${state.notes.map(n=>`<button class="${n.id===noteId?'selected':''}" data-note="${esc(n.id)}">${esc(n.title||'메모')}</button>`).join('')}</div>`:''}<div class="note-content">${check?`<div id="checks">${checks.map((c,i)=>`<div class="checkrow ${c.done?'done':''}" data-checkid="${esc(c.id)}"><input type="checkbox" data-check="${i}" ${c.done?'checked':''} aria-label="완료"><textarea data-checktext="${i}" rows="1" aria-label="할 일">${esc(c.text)}</textarea><button data-delcheck="${i}" aria-label="할 일 삭제">${icon('close')}</button></div>`).join('')}</div>`:`<textarea id="noteBody" placeholder="메모를 바로 적으세요" aria-label="메모 내용">${esc(n.body)}</textarea>`}</div><div class="note-actions"><span id="saveState" class="small muted">자동 저장</span>${check?`<button class="iconbtn" data-act="addCheck" aria-label="체크 항목 추가">${icon('plus')}</button>`:''}${full?`<select id="noteMode" aria-label="메모 종류"><option value="text" ${!check?'selected':''}>글 메모</option><option value="check" ${check?'selected':''}>체크 메모</option></select>`:''}<button class="iconbtn" data-act="newNote" aria-label="새 메모">${icon('newnote')}</button>${full&&n.id?`<button class="iconbtn danger" data-act="deleteNote" aria-label="메모 삭제">${icon('trash')}</button>`:''}</div></div>`;}
 function notesPage(){return `<main class="page notes-page ${compactHost()?'overlay-note':''}">${header(true,'메모')}${memoHTML(true)}</main>`;}
-function gate(){
- const g=state.gate,locked=screen==='blocked',renew=screen==='renew';
- const rule=state.rules.find(r=>r.pkg===g.pkg),policyBlock=rule?.mode==='locked';
- const duration=`<section class="duration"><div class="sectionhead"><h3>${renew?'추가할 시간':'사용할 시간'}</h3><span class="small muted">분</span></div><div class="minutes">${[5,6,7,8,9,10].map(m=>`<button data-min="${m}" class="${minutes===m?'selected':''}" aria-pressed="${minutes===m}">${m}</button>`).join('')}</div></section>`;
- return `<main class="start-page gate-page overlay-start ${locked?'blocked-page':renew?'renew-page':''}">${header(false,locked?'사용 제한':renew?'사용 연장':'앱 시작')}<div class="gate-info"><div class="gate-app">${esc(g.label||'앱 사용')}</div><h2>${locked?(policyBlock?'집중 시간에는 차단된 앱이에요':'오늘의 사용 시간을 모두 썼어요'):renew?'같은 목적으로 더 사용하나요?':'무엇을 하러 들어가나요?'}</h2>${!locked?`<div class="daily-budget"><span>오늘 남은 시간</span><strong id="dailyLeft">${fmt(g.daily)}</strong></div>`:''}</div>${locked?`<section class="block-detail"><span>다시 사용할 수 있는 시간</span><strong>${time(state.prefs.end)}<small>자유 시간 시작</small></strong><p class="muted">${time(state.prefs.start)}–${time(state.prefs.end)} 집중 시간</p></section>`:renew?`<div class="gate-note"><span>처음 정한 목적</span><strong>${esc(g.purpose||'선택한 목적 없음')}</strong></div>${duration}`:`<div class="app-decision">${duration}<section class="start-purposes"><div class="purpose-intro sectionhead"><h3>사용 목적</h3><button class="textbtn" data-act="managePurposes" aria-label="앱 사용 목적 편집">편집</button></div>${purposeGrid(true)}</section></div>`}<footer class="start-footer">${renew?`<button id="startApp" class="primary" data-act="extend">${minutes}분 연장 ${icon('arrow')}</button>`:''}${dismissButton()}</footer></main>`;
-}
 async function choosePurpose(id){
- if(purposeStarting)return;purposeStarting=true;const target=screen,chosenMinutes=minutes;
+ if(purposeStarting)return;purposeStarting=true;
  const controls=[...document.querySelectorAll('[data-purpose],[data-min],[data-act=direct]')];controls.forEach(el=>el.disabled=true);
- try{await flushMemo();await api(target==='app'?'grant':'choose',target==='app'?{id,minutes:chosenMinutes}:{id});closeSheet();}
+ try{await flushMemo();await api('choose',{id});closeSheet();}
  finally{purposeStarting=false;controls.forEach(el=>{if(el.isConnected)el.disabled=false;});}
 }
 
@@ -476,7 +451,7 @@ function renderBrief(b){
  for(const d of area.querySelectorAll('details'))if(opened.has(d.id))d.open=true;bind(area);window.scrollTo(0,position);
 }
 
-function sheet(content){$('#sheet').innerHTML=`<section class="sheet" role="dialog" aria-modal="true">${content}</section>`;$('#sheet').onclick=e=>{if(e.target===$('#sheet'))closeSheet();};bind($('#sheet'));viewportChanged();}
+function sheet(content){$('#sheet').innerHTML=`<section class="sheet" role="dialog" aria-modal="true">${content}</section>`;$('#sheet').onclick=e=>{if(e.target===$('#sheet')){if(state?.purposeEditor)back();else closeSheet();}};bind($('#sheet'));viewportChanged();}
 function sheetHead(title){return `<div class="sectionhead"><h2>${esc(title)}</h2><button class="iconbtn" data-act="closeSheet" aria-label="닫기">${icon('close')}</button></div>`;}
 function closeSheet(){if($('#sheet'))$('#sheet').innerHTML='';}
 async function populatePurposeApps(pkg='',scope='phone'){
@@ -505,7 +480,7 @@ function renderPurposeAppResults(){
  bind(list);
 }
 function purposeSheet(id=null,direct=false){
- const p=state.allPurposes.find(x=>x.id===id)||{label:'',pkg:'',uri:'',scope:gated.includes(screen)?(state.gate.pkg||'app'):direct?'phone':purposeScope};
+ const p=state.allPurposes.find(x=>x.id===id)||{label:'',pkg:'',uri:'',scope:direct?'phone':purposeScope};
  sheet(`${sheetHead(direct?'이번에 할 일':'사용 목적')}<div class="formrow"><label for="purposeLabel">목적</label><input class="field" id="purposeLabel" maxlength="100" value="${esc(p.label)}" placeholder="예: 친구에게 답장"></div><label class="link-toggle"><input id="purposeLink" type="checkbox" ${p.pkg||p.uri?'checked':''}> 목적 선택 시 앱이나 동작 열기</label><div id="purposeConnection" ${p.pkg||p.uri?'':'hidden'}><div class="formrow"><label for="purposeAppSearch">앱 아이콘에서 찾기</label><input class="field" id="purposeAppSearch" type="search" placeholder="앱 이름으로 검색" autocomplete="off"><div id="purposeAppPreview" class="purpose-app-preview"></div><div id="purposeAppResults" class="purpose-app-results"></div><p class="small muted" id="purposeAppCount">앱 목록 준비 중</p><label for="purposeApp" class="small muted">전체 앱 목록에서 선택</label><select class="field" id="purposeApp" disabled><option value="${esc(p.pkg)}">${esc(p.pkg?`기존 연결 · ${p.pkg}`:'목록 준비 중')}</option></select></div><div class="formrow"><label for="purposeUri">앱 동작 주소 · 선택</label><input class="field" id="purposeUri" value="${esc(p.uri)}" placeholder="앱이 지원하는 딥링크"><button class="textbtn" data-act="testPurposeLink">연결 시험 ${icon('arrow')}</button></div></div>${!direct?`<div class="formrow"><label for="purposeScope">표시할 화면</label><select class="field" id="purposeScope"><option value="phone" ${p.scope==='phone'?'selected':''}>휴대폰 시작</option><option value="app" ${p.scope==='app'?'selected':''}>모든 관리 앱</option>${p.scope!=='phone'&&p.scope!=='app'?`<option value="${esc(p.scope)}" selected>선택한 앱</option>`:''}</select></div>`:''}<div class="sheet-actions"><button class="primary" id="savePurpose" data-act="savePurpose" data-id="${esc(id||'')}" data-scope="${esc(p.scope)}" data-direct="${direct}" data-aimless="${p.aimless?1:0}">${direct?'저장하고 시작':'저장'} ${icon('check')}</button>${id&&!direct?`<button class="iconbtn danger" data-act="deletePurpose" data-id="${esc(id)}" aria-label="목적 삭제">${icon('trash')}</button>`:''}</div>`);
  const link=$('#purposeLink');link.onchange=()=>{const enabled=link.checked;$('#purposeConnection').hidden=!enabled;if(enabled)safe(()=>populatePurposeApps(p.pkg,p.scope));};
  if(!direct||link.checked)safe(()=>populatePurposeApps(p.pkg,p.scope));
@@ -513,7 +488,8 @@ function purposeSheet(id=null,direct=false){
  if($('#purposeApp'))$('#purposeApp').onchange=renderPurposeAppResults;
  $('#purposeLabel').focus({preventScroll:true});
 }
-function managePurposes(scope=purposeScope){purposeScope=scope;sheet(`${sheetHead('사용 목적')}<div class="segmented"><button data-switchscope="phone" class="${purposeScope==='phone'?'active':''}">휴대폰 시작</button><button data-switchscope="app" class="${purposeScope==='app'?'active':''}">앱 시작</button></div><div class="purpose-manage">${state.allPurposes.filter(p=>purposeScope==='phone'?p.scope==='phone'||p.scope==='*':p.scope!=='phone'&&p.scope!=='*').map(p=>`<div class="app-row"><div class="info"><strong>${esc(p.label)}</strong><p>${esc(p.pkg?'연결 앱 · '+(appsCache?.find(a=>a.pkg===p.pkg)?.label||p.pkg):p.uri?'연결된 동작':'앱 연결 없음')}</p></div><button class="iconbtn" data-editpurpose="${esc(p.id)}" aria-label="목적 편집">${icon('more')}</button><button class="iconbtn danger" data-remove="${esc(p.id)}" aria-label="목적 삭제">${icon('trash')}</button></div>`).join('')}</div><div class="sheet-actions"><button class="primary" data-act="addPurpose">${icon('plus')} 추가</button></div>`);}
+async function openPurposeManager(pkg,navigation){await navigate('settings',navigation);managePurposes('app');}
+function managePurposes(scope=purposeScope){purposeScope=scope;const heading=sheetHead('사용 목적').replace('data-act=\"closeSheet\"',state.purposeEditor?'data-act=\"finishPurposeEditing\"':'data-act=\"closeSheet\"');sheet(`${heading}<div class="segmented"><button data-switchscope="phone" class="${purposeScope==='phone'?'active':''}">휴대폰 시작</button><button data-switchscope="app" class="${purposeScope==='app'?'active':''}">앱 시작</button></div><div class="purpose-manage">${state.allPurposes.filter(p=>purposeScope==='phone'?p.scope==='phone'||p.scope==='*':p.scope!=='phone'&&p.scope!=='*').map(p=>`<div class="app-row"><div class="info"><strong>${esc(p.label)}</strong><p>${esc(p.pkg?'연결 앱 · '+(appsCache?.find(a=>a.pkg===p.pkg)?.label||p.pkg):p.uri?'연결된 동작':'앱 연결 없음')}</p></div><button class="iconbtn" data-editpurpose="${esc(p.id)}" aria-label="목적 편집">${icon('more')}</button><button class="iconbtn danger" data-remove="${esc(p.id)}" aria-label="목적 삭제">${icon('trash')}</button></div>`).join('')}</div><div class="sheet-actions"><button class="primary" data-act="addPurpose">${icon('plus')} 추가</button></div>`);}
 async function ruleSheet(pkg){await getApps();let a=appsCache.find(a=>a.pkg===pkg),r=state.rules.find(r=>r.pkg===pkg)||{mode:'limited',minutes:60};if(!a)return;
  sheet(`${sheetHead(a.label)}<label for="ruleMode">관리 방식</label><select class="field" id="ruleMode"><option value="none" ${r.mode==='none'?'selected':''}>관리 안 함</option><option value="limited" ${r.mode==='limited'?'selected':''}>시간 조절</option><option value="locked" ${r.mode==='locked'?'selected':''}>집중 중 잠금</option></select><div class="formrow" id="dailyControl"><label for="dailyMinutes">하루 <b id="dailyValue">${r.minutes}</b>분</label><input id="dailyMinutes" type="range" min="5" max="120" step="5" value="${r.minutes}"></div><p class="small muted">변경 즉시 적용 · 기본 60분, 최대 120분</p>`);
  const save=()=>safe(async()=>{const rule={pkg,mode:$('#ruleMode').value,minutes:Number($('#dailyMinutes').value)};await api('rule',rule);state=await api('state');renderApps();});const update=()=>{const c=$('#dailyControl');if(c)c.style.display=$('#ruleMode').value==='limited'?'':'none';};$('#ruleMode').onchange=()=>{update();save();};$('#dailyMinutes').oninput=()=>$('#dailyValue').textContent=$('#dailyMinutes').value;$('#dailyMinutes').onchange=save;update();}
@@ -642,13 +618,13 @@ async function searchDictionary(word){releasePhoneNavigation('dictionary');
  }finally{dictionarySearching=false;}
 }
 async function lookup(){const word=$('#word')?.value.trim();if(!word)throw Error('찾을 단어를 입력해 주세요.');if(!state.dictionary){await dictionaryChoice(word);return;}await searchDictionary(word);}
-async function action(name,el){switch(name){case 'viewDiagnostics':await viewUnlockDiagnostics();break;case 'saveDiagnostics':await api('saveDiagnostics');break;case 'deleteDiagnostics':sheet(`${sheetHead('진단 기록 삭제')}<p>기기에 보관한 잠금 해제 진단 기록을 모두 삭제할까요?</p><div class="sheet-actions"><button class="primary" data-act="confirmDeleteDiagnostics">모두 삭제</button><button class="secondary" data-act="closeSheet">취소</button></div>`);break;case 'confirmDeleteDiagnostics':await api('clearDiagnostics');closeSheet();await refresh(true);toast('진단 기록을 삭제했습니다.');break;case 'back':back();break;case 'closeSheet':closeSheet();break;case 'exit':await flushMemo();await api('exit');break;case 'dismiss':await flushMemo();await api('dismiss');break;
- case 'direct':await purposeSheet(null,true);break;case 'addPurpose':await purposeSheet();break;case 'managePurposes':managePurposes(screen==='app'?'app':screen==='home'||screen==='unlock'?'phone':purposeScope);break;
- case 'morePurposes':sheet(`${sheetHead('사용 목적')}${purposeGrid(screen==='app',true)}`);break;
+async function action(name,el){switch(name){case 'finishPurposeEditing':await api('finishPurposeEditing');break;case 'viewDiagnostics':await viewUnlockDiagnostics();break;case 'saveDiagnostics':await api('saveDiagnostics');break;case 'deleteDiagnostics':sheet(`${sheetHead('진단 기록 삭제')}<p>기기에 보관한 잠금 해제 진단 기록을 모두 삭제할까요?</p><div class="sheet-actions"><button class="primary" data-act="confirmDeleteDiagnostics">모두 삭제</button><button class="secondary" data-act="closeSheet">취소</button></div>`);break;case 'confirmDeleteDiagnostics':await api('clearDiagnostics');closeSheet();await refresh(true);toast('진단 기록을 삭제했습니다.');break;case 'back':back();break;case 'closeSheet':if(state?.purposeEditor)managePurposes('app');else closeSheet();break;case 'exit':await flushMemo();await api('exit');break;case 'dismiss':await flushMemo();await api('dismiss');break;
+ case 'direct':await purposeSheet(null,true);break;case 'addPurpose':await purposeSheet();break;case 'managePurposes':managePurposes(screen==='home'||screen==='unlock'?'phone':purposeScope);break;
+
  case 'savePurpose':{if(el.disabled)return;el.disabled=true;try{if($('#purposeLink').checked&&$('#purposeApp').disabled)throw Error('앱 목록을 불러오는 중입니다.');if($('#purposeLink').checked&&!$('#purposeApp').value&&!$('#purposeUri').value.trim())throw Error('연결할 앱이나 동작 주소를 선택해 주세요.');const p={label:$('#purposeLabel').value,pkg:$('#purposeLink').checked?$('#purposeApp').value:'',uri:$('#purposeLink').checked?$('#purposeUri').value:'',scope:$('#purposeScope')?.value||el.dataset.scope,aimless:el.dataset.aimless==='1'};if(el.dataset.id)p.id=el.dataset.id;const saved=await api('purpose',p);closeSheet();state=await api('state');if(el.dataset.direct==='true'){await choosePurpose(saved.id);render();}else {render();if(screen==='settings')managePurposes();}}finally{if(el.isConnected)el.disabled=false;}break;}
  case 'deletePurpose':await api('removePurpose',{id:el.dataset.id});closeSheet();await refresh(true);break;
  case 'testPurposeLink':await api('linkTest',{pkg:$('#purposeApp').value,uri:$('#purposeUri').value});break;
- case 'grant':await flushMemo();await api('grant',{id:selected,minutes});break;case 'extend':await api('extend',{minutes});break;case 'stop':await api('stop');break;
+ case 'stop':await api('stop');break;
  case 'newNote':await flushMemo();sheet(`${sheetHead('새 메모')}<div class="split"><button class="secondary" data-newnote="text">${icon('note')} 글 메모</button><button class="secondary" data-newnote="check">${icon('check')} 체크 메모</button></div>`);break;
  case 'addCheck':insertCheckRow(null,'');break;
  case 'deleteNote':await flushMemo();confirmSheet('메모 삭제','이 메모를 삭제할까요?','deleteNote',{id:noteId});break;
@@ -672,7 +648,6 @@ function bind(root=$('#app')){
  root.querySelectorAll('[data-act]').forEach(el=>el.onclick=()=>safe(()=>action(el.dataset.act,el)));
  root.querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>safe(()=>navigate(el.dataset.nav)));
  root.querySelectorAll('[data-purpose]').forEach(el=>el.onclick=()=>safe(()=>choosePurpose(el.dataset.purpose)));
- root.querySelectorAll('[data-min]').forEach(el=>el.onclick=()=>{minutes=Number(el.dataset.min);render();});
  root.querySelectorAll('[data-note]').forEach(el=>el.onclick=()=>safe(async()=>{await flushMemo();noteId=el.dataset.note;render();remember();}));
  root.querySelectorAll('[data-note-step]').forEach(el=>el.onclick=()=>safe(async()=>{await flushMemo();const notes=state.notes;if(notes.length<2)return;const index=notes.findIndex(n=>n.id===noteId);noteId=notes[(index+Number(el.dataset.noteStep)+notes.length)%notes.length].id;render();remember();}));
  root.querySelectorAll('[data-newnote]').forEach(el=>el.onclick=()=>safe(async()=>{noteId=crypto.randomUUID();await api('saveNote',{id:noteId,title:'새 메모',body:'',checks:[],mode:el.dataset.newnote});closeSheet();await refresh(true);if(el.dataset.newnote==='check')await action('addCheck');else $('#noteBody')?.focus();remember();}));
@@ -727,7 +702,7 @@ function bind(root=$('#app')){
   });
   if($('#model'))$('#model').onchange=()=>safe(()=>api('settings',{model:$('#model').value}));
 }
-function back(){if($('#sheet').innerHTML){closeSheet();return;}if(screen==='chat'){navigate(chatReturn||'chats');return;}if(screen==='chats'){navigate(chatsReturn||'home');return;}if(gated.includes(screen)){api('stop');return;}if(state?.role==='PHONE_START'){if(screen!=='unlock')navigate('unlock');return;}if(state?.overlay){navigate(state.gate.mode||'app');return;}if(screen==='apps'||screen==='usageApps'){navigate('settings');return;}if(screen==='home'||screen==='setup'){api('exit');return;}navigate('home');}
+function back(){if(state?.purposeEditor){if($('#sheet [data-act=finishPurposeEditing]')||!$('#sheet').innerHTML){api('finishPurposeEditing');return;}managePurposes('app');return;}if($('#sheet').innerHTML){closeSheet();return;}if(screen==='chat'){navigate(chatReturn||'chats');return;}if(screen==='chats'){navigate(chatsReturn||'home');return;}if(state?.role==='PHONE_START'){if(screen!=='unlock')navigate('unlock');return;}if(state?.overlay){navigate(state.gate.mode||'app');return;}if(screen==='apps'||screen==='usageApps'){navigate('settings');return;}if(screen==='home'||screen==='setup'){api('exit');return;}navigate('home');}
 window.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'){clearInterval(poll);poll=null;safe(flushMemo);remember();}else{startPolling();if((state?.role==='PHONE_START'||screen==='unlock')&&$('#app')?.childElementCount)return;refresh();}});
 window.addEventListener('resize',()=>viewportChanged(nativeKeyboard));window.visualViewport?.addEventListener('resize',()=>viewportChanged(nativeKeyboard));window.visualViewport?.addEventListener('scroll',()=>viewportChanged());
 document.addEventListener('focusin',()=>{if(nativeKeyboard)viewportChanged(true);});

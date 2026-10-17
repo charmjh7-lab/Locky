@@ -31,7 +31,7 @@ public class PhoneStartActivityTest {
         activity.newIntent(PhoneStartActivity.intent(app,2));
         phone.onConfigurationChanged(new android.content.res.Configuration(phone.getResources().getConfiguration()));
         assertSame(host,phone.host);assertSame(web,host.view);assertEquals(nav,host.navigationGeneration);assertEquals(2,phone.cycle);
-        assertNull(host.loadingView);assertEquals(WebHost.Role.PHONE_START,host.role);assertFalse(host.isOverlay);assertFalse(phone.isFinishing());
+        assertEquals(WebHost.Role.PHONE_START,host.role);assertFalse(phone.isFinishing());
         phone.chosen=true;activity.newIntent(PhoneStartActivity.intent(app,2));assertTrue(phone.chosen); // late same-cycle intent cannot repeat a selection
     }
     @Test public void manifestSeparatesTasksAndDoesNotCoverOrWakeKeyguard() throws Exception {

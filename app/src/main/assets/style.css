@@ -122,3 +122,11 @@
 .compact-note .note-content{padding-bottom:10px;scroll-padding-bottom:10px;isolation:isolate}
 .compact-note .note-content.has-more{mask-image:linear-gradient(to bottom,#000 calc(100% - 10px),transparent);-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 10px),transparent)}
 .compact-note .note-actions{position:relative;z-index:1}
+
+/* Phone purpose metadata only: preserve the existing two-column button geometry. */
+.reason.phone-purpose>span:first-child{flex:1;min-width:0}
+.purpose-link-icon{display:flex!important;flex:0 0 22px;width:22px;height:22px;align-items:center;justify-content:center;margin-left:auto}
+.purpose-link-icon .linked-app-icon{width:22px;height:22px;object-fit:contain;display:block}
+.purpose-link-icon>svg{display:none}
+.purpose-link-icon.icon-failed .linked-app-icon{display:none}
+.purpose-link-icon.icon-failed>svg{display:block}
