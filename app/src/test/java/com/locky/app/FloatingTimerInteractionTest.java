@@ -64,7 +64,8 @@ public class FloatingTimerInteractionTest {
         assertTrue((timer.panelLayout.flags&WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)!=0);
         assertTrue((timer.panelLayout.flags&WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)!=0);
         // Touching the panel is still use of the foreground app, with the same event.
-        g.segmentWall=System.currentTimeMillis()-2000;g.segmentElapsed=SystemClock.elapsedRealtime()-2000;g.checkpoint();g.syncFloatingTimer();
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(Duration.ofSeconds(2));
+        g.segmentWall=System.currentTimeMillis()-2000;g.segmentElapsed=SystemClock.elapsedRealtime()-2000;g.segmentUptime=SystemClock.uptimeMillis()-2000;g.checkpoint();g.syncFloatingTimer();
         assertEquals("04:30",timer.sessionTime.getText().toString());assertEquals("59:58",timer.dailyTime.getText().toString());assertFalse(g.overlayVisible);assertEquals("user.video",g.foreground);
         motion(timer.panel,MotionEvent.ACTION_OUTSIDE,0,0,SystemClock.uptimeMillis());assertNull(timer.panel);assertNotNull(timer.root);
         assertEquals(session,g.sessionEvent);assertEquals(1,g.store.rows("SELECT id FROM events WHERE kind='app'").length());

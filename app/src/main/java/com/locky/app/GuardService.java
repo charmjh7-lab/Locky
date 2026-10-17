@@ -120,7 +120,7 @@ public final class GuardService extends AccessibilityService {
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
         if(store==null)return;
         boolean currentInteractive=getSystemService(PowerManager.class).isInteractive();
-        if(currentInteractive!=interactive){if(!currentInteractive){store.screenState(ScreenHistory.OFF);checkpoint();cancelLinkedLaunch();}interactive=currentInteractive;beginScreenObservation();}
+        if(currentInteractive!=interactive){if(!currentInteractive)screenOff();else {interactive=true;beginScreenObservation();}}
         if(!interactive||keyguardLocked())return;
         completeUnlock();
         observeForeground(event);
@@ -253,7 +253,9 @@ public final class GuardService extends AccessibilityService {
             boolean suspended=segmentUptime>0&&delta-(SystemClock.uptimeMillis()-segmentUptime)>1000;
             boolean currentActive=getSystemService(PowerManager.class).isInteractive()&&!keyguardLocked();
             if((suspended&&!evidence.hasInactive)||(!currentActive&&!evidence.hasStop&&!evidence.hasInactive))evidence=ScreenHistory.read(this,from,wall,ScreenHistory.UNKNOWN,false);
-            for(long[] span:evidence.active()){long at=span[0],end=span[1];while(at<end){long boundary=Math.min(end,Math.min(Rules.nextDay(at,ZoneId.systemDefault()),Rules.nextBoundary(at,store.settings.getInt("start",540),store.settings.getInt("end",1260),ZoneId.systemDefault())));boolean managed=store.managed(at);store.usage(at,boundary,pkg,label,charge&&managed,charge?sessionEvent:phoneEvent);if(charge&&managed)sessionRemaining=Math.max(0,sessionRemaining-(boundary-at));at=boundary;}}
+            long firstInactive=Long.MAX_VALUE;for(ScreenHistory.Span span:evidence.spans)if(span.state==ScreenHistory.OFF)firstInactive=Math.min(firstInactive,span.start);
+            for(long[] span:evidence.active()){if(span[0]>=firstInactive){clearSessions();cancelLinkedLaunch();charge=false;}long at=span[0],end=span[1];while(at<end){long boundary=Math.min(end,Math.min(Rules.nextDay(at,ZoneId.systemDefault()),Rules.nextBoundary(at,store.settings.getInt("start",540),store.settings.getInt("end",1260),ZoneId.systemDefault())));boolean managed=store.managed(at);store.usage(at,boundary,pkg,label,charge&&managed,charge?sessionEvent:phoneEvent);if(charge&&managed)sessionRemaining=Math.max(0,sessionRemaining-(boundary-at));at=boundary;}}
+            if(firstInactive<wall){clearSessions();cancelLinkedLaunch();}
         }
         segmentWall=wall;segmentElapsed=elapsed;segmentUptime=SystemClock.uptimeMillis();store.settings.edit().putLong("checkpoint",wall).putString("last-package",foreground).putBoolean("checkpoint-interactive",interactive).apply();
     }

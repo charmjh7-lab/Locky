@@ -46,8 +46,8 @@ public class QuickQuestionTest {
     }
     @Test public void upgradingVersionTwoRetainsExistingHistoryAndDeletedChatsCannotResurrect() throws Exception {
         String old=store.newChat();store.appendTurn(old,"기존 대화");
-        // Recreate the real v2 schema, rather than only relabel a v4 database.
-        for(String table:new String[]{"focus_config_history","briefing_results","briefing_delivery","service_observations","quick_requests"})store.getWritableDatabase().execSQL("DROP TABLE "+table);
+        // Recreate the real v2 schema, including removal of post-v2 screen evidence.
+        for(String table:new String[]{"focus_config_history","briefing_results","briefing_delivery","service_observations","quick_requests","screen_states"})store.getWritableDatabase().execSQL("DROP TABLE "+table);
         store.getWritableDatabase().execSQL("ALTER TABLE usage DROP COLUMN source");store.getWritableDatabase().execSQL("ALTER TABLE usage DROP COLUMN rule_mode");store.getWritableDatabase().execSQL("ALTER TABLE usage DROP COLUMN surface");store.getWritableDatabase().setVersion(2);store.close();Store.instance=null;
         store=Store.get(RuntimeEnvironment.getApplication());assertEquals(2,store.messages(old).length());assertEquals(0,store.rows("SELECT * FROM quick_requests").length());
         engine=new ChatEngine(RuntimeEnvironment.getApplication(),null,responses::add);

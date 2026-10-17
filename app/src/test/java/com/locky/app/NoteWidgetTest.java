@@ -15,8 +15,8 @@ import static org.junit.Assert.*;
 @Config(application=Application.class,sdk=35)
 public class NoteWidgetTest {
     Application app;Store store;
-    @Before public void setup() throws Exception {Store.instance=null;app=RuntimeEnvironment.getApplication();store=Store.get(app);store.note(new JSONObject().put("id","a").put("title","A").put("mode","check").put("checks",new JSONArray().put(new JSONObject().put("text","완료한 할 일").put("done",true))));store.note(new JSONObject().put("id","b").put("title","B").put("body","두 번째 메모"));}
-    @After public void cleanup(){store.close();Store.instance=null;}
+    @Before public void setup() throws Exception {Store.instance=null;LockyApp.app=new LockyApp();app=RuntimeEnvironment.getApplication();store=Store.get(app);store.note(new JSONObject().put("id","a").put("title","A").put("mode","check").put("checks",new JSONArray().put(new JSONObject().put("text","완료한 할 일").put("done",true))));store.note(new JSONObject().put("id","b").put("title","B").put("body","두 번째 메모"));}
+    @After public void cleanup(){store.close();Store.instance=null;LockyApp.app.work.shutdownNow();LockyApp.app=null;}
     @Test public void independentSelectionsUseActualStoreAndDeletionFallsBack() throws Exception {
         store.settings.edit().putString("last-note","a").commit();assertEquals("a",NoteWidget.selected(app,10).getString("id"));
         store.settings.edit().putString(NoteWidget.key(10),"a").putString(NoteWidget.key(11),"b").commit();assertEquals("b",NoteWidget.selected(app,11).getString("id"));

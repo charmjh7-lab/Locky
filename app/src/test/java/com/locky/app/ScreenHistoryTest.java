@@ -47,8 +47,11 @@ public class ScreenHistoryTest {
     }
     @Test public void delayedCheckpointSplitsByPersistedScreenEvidence() throws Exception {
         GuardService g=Robolectric.buildService(GuardService.class).create().get();g.store=store;g.interactive=true;g.foreground=app.getPackageName();g.utility="첫 화면";
-        g.segmentWall=base;g.segmentElapsed=SystemClock.elapsedRealtime();g.segmentUptime=SystemClock.uptimeMillis();state(base,1);state(base+1000,0);state(base+9000,1);
-        ShadowSystemClock.advanceBy(Duration.ofSeconds(10));g.checkpoint();JSONArray rows=store.screenUsage(base,base+10000);
+        // Robolectric's wall clock and elapsed clock are independent. Model a
+        // real ten-second interval entirely after boot using both clock domains.
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(20));base=System.currentTimeMillis()-10000;
+        g.segmentWall=base;g.segmentElapsed=SystemClock.elapsedRealtime()-10000;g.segmentUptime=SystemClock.uptimeMillis()-10000;state(base,1);state(base+1000,0);state(base+9000,1);
+        g.checkpoint();JSONArray rows=store.screenUsage(base,base+10000);
         long sum=0;for(int i=0;i<rows.length();i++)sum+=rows.getJSONObject(i).getLong("end")-rows.getJSONObject(i).getLong("start");assertEquals(2000,sum);g.main.removeCallbacksAndMessages(null);
     }
 }

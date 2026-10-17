@@ -18,7 +18,7 @@ public final class NoteWidget extends AppWidgetProvider {
         Store s=Store.get(c);JSONArray notes=notes(c);String selected=s.settings.getString(key(id),"");
         if(selected.isEmpty()){
             JSONObject phone=new JSONObject(s.settings.getString("phone-start-session","{}"));
-            selected=phone.optString("note",s.settings.getString("last-note",""));
+            selected=s.settings.getString("recent-note",phone.optString("note",s.settings.getString("last-note","")));
         }
         for(int n=0;n<notes.length();n++)if(selected.equals(notes.getJSONObject(n).optString("id")))return notes.getJSONObject(n);
         return notes.length()==0?null:notes.getJSONObject(0);
