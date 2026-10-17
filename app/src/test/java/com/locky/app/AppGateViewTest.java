@@ -51,6 +51,10 @@ public class AppGateViewTest {
         bind(9,"app");view.setActive(false);view.presetButtons.get(0).performClick();view.stop.performClick();assertEquals(0,starts);assertEquals(0,stops);
         view.setActive(true);view.edit.performClick();view.edit.performClick();assertEquals(1,edits);
     }
+    @Test public void lateImeSubmitFromPreviousAppCannotStartTheNewApp() throws Exception {
+        bind(1,"app");view.direct.performClick();view.input.setText("이전 앱 목적");view.bind(2,"app","social",payload());view.setActive(true);
+        view.submitDirect();view.save.performClick();assertEquals(0,starts);assertEquals(View.GONE,view.editor.getVisibility());
+    }
     void measure(int width,int height){view.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(height,View.MeasureSpec.EXACTLY));view.layout(0,0,width,height);}
     @Test public void longListsScrollIndependentlyAndFooterStaysInsideSmallAndWideScreens() throws Exception {
         bind(1,"app");

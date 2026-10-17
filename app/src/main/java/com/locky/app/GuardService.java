@@ -317,7 +317,14 @@ public final class GuardService extends AccessibilityService {
             public void edit(long token,String pkg){gateAction(token,pkg,()->openPurposeEditor(pkg));}
         });
         overlayWindow=new android.widget.FrameLayout(this){
-            @Override public boolean dispatchTouchEvent(MotionEvent event){return !acceptGateInput()||super.dispatchTouchEvent(event);}
+            long touchTransition=-1;
+            @Override public boolean dispatchTouchEvent(MotionEvent event){
+                if(event.getActionMasked()==MotionEvent.ACTION_DOWN)touchTransition=gateTransition;
+                if(!acceptGateInput()||touchTransition!=gateTransition){
+                    MotionEvent cancel=MotionEvent.obtain(event);cancel.setAction(MotionEvent.ACTION_CANCEL);super.dispatchTouchEvent(cancel);cancel.recycle();return true;
+                }
+                return super.dispatchTouchEvent(event);
+            }
             @Override public boolean dispatchKeyEvent(KeyEvent event){return !acceptGateInput()||super.dispatchKeyEvent(event);}
         };
         overlayWindow.addView(overlay,new android.widget.FrameLayout.LayoutParams(-1,-1));

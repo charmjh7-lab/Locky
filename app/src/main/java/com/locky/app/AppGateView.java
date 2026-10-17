@@ -40,6 +40,7 @@ final class AppGateView extends FrameLayout {
     final EditText input;
     final Button save,cancel;
     private long token;
+    private long editorToken=-1;
     private String pkg="",mode="";
     private int minutes=5;
     private boolean active,submitting;
@@ -139,8 +140,8 @@ final class AppGateView extends FrameLayout {
     void setActive(boolean active){this.active=active;if(!active)closeEditor();setImportantForAccessibility(active?IMPORTANT_FOR_ACCESSIBILITY_AUTO:IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);}
     boolean claim(){if(!active||submitting)return false;submitting=true;return true;}
     void retry(){submitting=false;}
-    void openEditor(){if(!active||submitting)return;input.setText("");editor.setVisibility(VISIBLE);page.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);input.requestFocus();input.post(()->{if(active&&editor.getVisibility()==VISIBLE)((InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE)).showSoftInput(input,InputMethodManager.SHOW_IMPLICIT);});}
-    void submitDirect(){String label=input.getText().toString().trim();if(label.isEmpty()){input.setError("목적을 1~100자로 입력해 주세요.");return;}if(claim())actions.choose(token,pkg,"",label,minutes);}
+    void openEditor(){if(!active||submitting)return;editorToken=token;long expected=token;input.setText("");editor.setVisibility(VISIBLE);page.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);input.requestFocus();input.post(()->{if(active&&expected==token&&editorToken==expected&&editor.getVisibility()==VISIBLE)((InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE)).showSoftInput(input,InputMethodManager.SHOW_IMPLICIT);});}
+    void submitDirect(){if(!active||editor.getVisibility()!=VISIBLE||editorToken!=token)return;String label=input.getText().toString().trim();if(label.isEmpty()){input.setError("목적을 1~100자로 입력해 주세요.");return;}if(claim())actions.choose(token,pkg,"",label,minutes);}
     void closeEditor(){if(editor.getVisibility()==VISIBLE){((InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(input.getWindowToken(),0);editor.setVisibility(GONE);input.clearFocus();page.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_AUTO);}}
     @Override public boolean dispatchKeyEvent(KeyEvent event){if(event.getKeyCode()==KeyEvent.KEYCODE_BACK){if(event.getAction()==KeyEvent.ACTION_UP)closeEditor();return true;}return super.dispatchKeyEvent(event);}
     void close(){setActive(false);}
