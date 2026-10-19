@@ -99,4 +99,23 @@ public class GateRestoreTest {
         assertEquals(3595000,g.dailyRemaining("video"));
     }
 
+    @Test public void transientPurposeNormalizesWithoutAddingPresetAndKeepsScopeValidation() throws Exception {
+        GuardService.live=g;LockyApp.app=new LockyApp();Notices.channels(g);
+        try{
+            int minute=Rules.minute(System.currentTimeMillis(),java.time.ZoneId.systemDefault());g.store.settings.edit().putBoolean("enabled",true).putInt("start",(minute+60)%1440).putInt("end",(minute+59)%1440).commit();g.wasManaged=true;rule(60);
+            actualWindow("video");g.observeForeground(null);ready();WebHost host=g.overlay;
+            int count=g.store.rows("SELECT * FROM purposes").length();
+            org.json.JSONObject input=new org.json.JSONObject().put("transient",true).put("label","  이번 영상만  ").put("scope","video").put("aimless",true).put("minutes",8).put("gateNavigation",host.navigationGeneration);
+            assertEquals("이번 영상만",host.resolvePurpose(input).getString("label"));assertEquals(1,host.resolvePurpose(input).getInt("aimless"));
+            for(String label:new String[]{"   ","가".repeat(101)}){
+                try{host.resolvePurpose(new org.json.JSONObject(input.toString()).put("label",label));fail("invalid purpose accepted");}catch(org.json.JSONException expected){}
+            }
+            host.handle("wrong","grant",new org.json.JSONObject(input.toString()).put("scope","phone").toString());assertEquals("",g.sessionPkg);
+            host.handle("stale","grant",new org.json.JSONObject(input.toString()).put("gateNavigation",-1).toString());assertEquals("",g.sessionPkg);
+            host.handle("ok","grant",input.toString());assertEquals("video",g.sessionPkg);assertEquals("이번 영상만",g.purpose);assertEquals(480000,g.sessionRemaining);
+            assertEquals(count,g.store.rows("SELECT * FROM purposes").length());assertEquals("이번 영상만",g.store.rows("SELECT * FROM events WHERE kind='app'").getJSONObject(0).getString("purpose"));
+            assertEquals(1,g.store.rows("SELECT * FROM events WHERE kind='app'").getJSONObject(0).getInt("aimless"));
+        }finally{LockyApp.app.work.shutdownNow();LockyApp.app=null;}
+    }
+
 }

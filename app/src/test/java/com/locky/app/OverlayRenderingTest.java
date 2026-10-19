@@ -146,4 +146,15 @@ public class OverlayRenderingTest {
         androidx.core.view.ViewCompat.dispatchApplyWindowInsets(host.root,ime);Shadows.shadowOf(Looper.getMainLooper()).idle();
         assertEquals(count+1,view.scripts.stream().filter(s->s.startsWith("insetsChanged")).count());assertEquals(300,host.root.getPaddingBottom());
     }
+    @Test public void unchangedSameAppEntryReusesFrameOnlyAfterNewNavigationAcknowledgement() throws Exception {
+        org.json.JSONObject payload=new org.json.JSONObject().put("gate",new org.json.JSONObject().put("pkg","video"));
+        host.gateScreen("app",payload);host.rendered(view,"app",host.navigationGeneration,1);view.complete(view.frames.size()-1);
+        assertTrue(host.currentGateReady());long visual=host.visualGeneration,old=host.navigationGeneration;int frames=view.frames.size();
+        host.gateScreen("app",payload);assertEquals(visual,host.visualGeneration);assertTrue(host.frameReady);assertFalse(host.currentGateReady());
+        host.rendered(view,"app",old,1);assertFalse(host.currentGateReady());
+        host.rendered(view,"app",host.navigationGeneration,1);assertTrue(host.currentGateReady());assertEquals(frames,view.frames.size());assertEquals(1f,view.getAlpha(),0);
+        host.gateScreen("app",new org.json.JSONObject().put("gate",new org.json.JSONObject().put("pkg","social")));
+        assertFalse(host.frameReady);assertFalse(host.hasUsableFrame());assertEquals(0f,view.getAlpha(),0);
+    }
+
 }

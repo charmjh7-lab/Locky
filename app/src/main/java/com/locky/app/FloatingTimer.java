@@ -1,6 +1,9 @@
 package com.locky.app;
 
 import android.annotation.SuppressLint;
+import android.animation.ValueAnimator;
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
@@ -41,7 +44,14 @@ final class FloatingTimer {
     Rect safe=new Rect();
     String positionKey="",pkg="",label="",purpose="";
     long event,milliseconds,daily;
+    enum MoveMode { IDLE, TOUCH, TEMP_DRAG, TEMPORARY, FIXED_DRAG, RETURNING }
+    MoveMode moveMode=MoveMode.IDLE;
     boolean compact,dragging,touchMoved;
+    private boolean temporaryPosition,returnScheduled;
+    private int motionGeneration;
+    private ValueAnimator returnAnimation;
+    private Rect displayBounds=new Rect();
+    private final Runnable returnPosition=()->{returnScheduled=false;animateReturn();};
     private GradientDrawable normalBackground,warningBackground;
     private Boolean warning;
     private float textWidth=-1;
@@ -61,7 +71,7 @@ final class FloatingTimer {
     private float downX,downY;
     private int downLeft,downTop,panelDesiredHeight;
     private long touchTime=-1,outsideTime=-2;
-    private final Runnable longPress=()->{if(root!=null&&!touchMoved)root.performLongClick();};
+    private final Runnable longPress=()->{if(root!=null&&moveMode==MoveMode.TOUCH&&!touchMoved)root.performLongClick();};
 
     FloatingTimer(GuardService service,WindowManager window){
         this.service=service;this.window=window;positions=service.store.settings;displays=service.getSystemService(DisplayManager.class);
@@ -83,7 +93,7 @@ final class FloatingTimer {
 
     void update(boolean visible,String pkg,long event,String label,String purpose,long milliseconds,long daily){
         if(!visible){hide();return;}
-        if(!this.pkg.equals(pkg)||this.event!=event){collapse();cancelTouch();}
+        if(!this.pkg.equals(pkg)||this.event!=event){collapse();cancelTouch();if(root!=null)placeTimer();}
         this.pkg=pkg;this.event=event;this.label=label;this.purpose=purpose;
         this.milliseconds=milliseconds;this.daily=daily;
         if(root==null){
@@ -93,9 +103,9 @@ final class FloatingTimer {
             TextView time=text(16,Color.WHITE);time.setGravity(Gravity.CENTER);time.setTypeface(Typeface.MONOSPACE,Typeface.BOLD);
             time.setPadding(dp(10),dp(3),dp(10),dp(3));time.setMinHeight(dp(32));time.setMinWidth(dp(68));time.setIncludeFontPadding(false);
             view.addView(time,new FrameLayout.LayoutParams(-2,-2,Gravity.CENTER));
-            root=view;remaining=time;timerLayout=layout(false);timerLayout.setTitle("Locky floating timer");
+            root=view;remaining=time;timerLayout=layout(true);timerLayout.setTitle("Locky floating timer");
             root.setOnClickListener(v->togglePanel());
-            root.setOnLongClickListener(v->{collapse();dragging=true;root.setPressed(true);return true;});
+            root.setOnLongClickListener(v->{collapse();cancelReturn();moveMode=MoveMode.FIXED_DRAG;dragging=true;root.setPressed(true);return true;});
             root.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or,ob)->{
                 if(root==v&&(r-l!=or-ol||b-t!=ob-ot))requestPlacement();
             });
@@ -119,7 +129,7 @@ final class FloatingTimer {
         String value=format(milliseconds);
         if(!TextUtils.equals(remaining.getText(),value)){
             remaining.setText(value);
-            root.setContentDescription("이번 사용 남은 시간 "+value+". 눌러서 상세 정보, 길게 눌러 위치 이동");
+            root.setContentDescription("이번 사용 남은 시간 "+value+". 눌러서 상세 정보, 바로 끌어 임시 이동, 다른 곳을 누르면 복귀, 길게 누른 뒤 끌어 위치 고정");
             float width=remaining.getPaint().measureText(value);
             if(textWidth>=0&&Float.compare(width,textWidth)!=0)requestPlacement();
             textWidth=width;
@@ -136,32 +146,67 @@ final class FloatingTimer {
 
     private boolean touch(MotionEvent e){
         switch(e.getActionMasked()){
+            case MotionEvent.ACTION_OUTSIDE:
+                if(moveMode==MoveMode.TEMPORARY&&!returnScheduled){returnScheduled=true;service.main.postDelayed(returnPosition,200);}
+                return false; // Non-modal WATCH_OUTSIDE_TOUCH observes; the app keeps the original touch.
             case MotionEvent.ACTION_DOWN:
+                cancelReturn();service.main.removeCallbacks(longPress);
                 touchTime=e.getEventTime();
                 downX=e.getRawX();downY=e.getRawY();downLeft=timerLayout.x;downTop=timerLayout.y;
-                touchMoved=false;dragging=false;root.setPressed(true);
+                touchMoved=false;dragging=false;moveMode=MoveMode.TOUCH;root.setPressed(true);
                 service.main.postDelayed(longPress,ViewConfiguration.getLongPressTimeout());return true;
             case MotionEvent.ACTION_MOVE:
                 float dx=e.getRawX()-downX,dy=e.getRawY()-downY;
+                if(moveMode==MoveMode.TOUCH&&Math.hypot(dx,dy)>ViewConfiguration.get(service).getScaledTouchSlop()){
+                    service.main.removeCallbacks(longPress);collapse();root.setPressed(false);
+                    moveMode=MoveMode.TEMP_DRAG;dragging=true;
+                }
                 if(dragging){
                     int x=clamp(Math.round(downLeft+dx),safe.left,safe.right-timerLayout.width);
                     int y=clamp(Math.round(downTop+dy),safe.top,safe.bottom-timerLayout.height);
-                    if(x!=timerLayout.x||y!=timerLayout.y){timerLayout.x=x;timerLayout.y=y;updateLayout(root,timerLayout);}
-                }else if(Math.hypot(dx,dy)>ViewConfiguration.get(service).getScaledTouchSlop()){
-                    touchMoved=true;service.main.removeCallbacks(longPress);root.setPressed(false);
+                    if(x!=timerLayout.x||y!=timerLayout.y){touchMoved=true;timerLayout.x=x;timerLayout.y=y;updateLayout(root,timerLayout);}
                 }
                 return true;
             case MotionEvent.ACTION_UP:
                 service.main.removeCallbacks(longPress);root.setPressed(false);
-                if(dragging){savePosition();dragging=false;}else if(!touchMoved&&touchTime!=outsideTime)root.performClick();return true;
+                MoveMode completed=moveMode;
+                if(completed==MoveMode.FIXED_DRAG&&touchMoved){savePosition();temporaryPosition=false;}
+                else if(completed==MoveMode.TEMP_DRAG)temporaryPosition=true;
+                dragging=false;moveMode=temporaryPosition?MoveMode.TEMPORARY:MoveMode.IDLE;
+                if(completed==MoveMode.TOUCH&&!touchMoved&&touchTime!=outsideTime)root.performClick();
+                return true;
             case MotionEvent.ACTION_CANCEL:
                 cancelTouch();placeTimer();return true;
             default:return false;
         }
     }
 
+    private void cancelReturn(){
+        ++motionGeneration;service.main.removeCallbacks(returnPosition);returnScheduled=false;
+        if(returnAnimation!=null){ValueAnimator animation=returnAnimation;returnAnimation=null;animation.cancel();}
+    }
     private void cancelTouch(){
-        service.main.removeCallbacks(longPress);dragging=false;touchMoved=false;if(root!=null)root.setPressed(false);
+        cancelReturn();service.main.removeCallbacks(longPress);dragging=false;touchMoved=false;temporaryPosition=false;moveMode=MoveMode.IDLE;
+        if(root!=null)root.setPressed(false);
+    }
+    private void animateReturn(){
+        if(root==null||moveMode!=MoveMode.TEMPORARY)return;
+        int x=timerLayout.x,y=timerLayout.y;
+        int targetX=safe.left+Math.round((safe.width()-timerLayout.width)*fraction(positionKey+".x",1));
+        int targetY=safe.top+Math.round((safe.height()-timerLayout.height)*fraction(positionKey+".y",0));
+        int generation=++motionGeneration;FrameLayout expected=root;long expectedEvent=event;String expectedPkg=pkg;
+        moveMode=MoveMode.RETURNING;ValueAnimator animation=ValueAnimator.ofFloat(0,1);returnAnimation=animation;animation.setDuration(180);
+        animation.addUpdateListener(value->{
+            if(generation!=motionGeneration||root!=expected||event!=expectedEvent||!pkg.equals(expectedPkg))return;
+            float progress=(float)value.getAnimatedValue();
+            timerLayout.x=clamp(Math.round(x+(targetX-x)*progress),safe.left,safe.right-timerLayout.width);
+            timerLayout.y=clamp(Math.round(y+(targetY-y)*progress),safe.top,safe.bottom-timerLayout.height);
+            updateLayout(root,timerLayout);placePanel();
+        });
+        animation.addListener(new AnimatorListenerAdapter(){@Override public void onAnimationEnd(Animator ended){
+            if(generation!=motionGeneration||root!=expected||event!=expectedEvent||!pkg.equals(expectedPkg))return;
+            returnAnimation=null;temporaryPosition=false;moveMode=MoveMode.IDLE;placeTimer();placePanel();
+        }});animation.start();
     }
 
     private void togglePanel(){
@@ -268,14 +313,17 @@ final class FloatingTimer {
 
     void placeTimer(){
         if(root==null)return;
-        Rect screen=screenBounds();safe=safeBounds(screen);
+        Rect screen=screenBounds(),nextSafe=safeBounds(screen);
+        if(!displayBounds.equals(screen)||!safe.equals(nextSafe)){cancelTouch();collapse();displayBounds=new Rect(screen);}
+        safe=nextSafe;
         String key="floating.position."+(Math.min(screen.width(),screen.height())/service.getResources().getDisplayMetrics().density>=600?"wide":"compact")
             +"."+(screen.width()>screen.height()?"landscape":"portrait");
         if(!key.equals(positionKey)){cancelTouch();positionKey=key;collapse();}
         root.measure(View.MeasureSpec.makeMeasureSpec(safe.width(),View.MeasureSpec.AT_MOST),View.MeasureSpec.makeMeasureSpec(safe.height(),View.MeasureSpec.AT_MOST));
         int width=root.getMeasuredWidth(),height=root.getMeasuredHeight();
-        int x=dragging?timerLayout.x:safe.left+Math.round((safe.width()-width)*fraction(positionKey+".x",1));
-        int y=dragging?timerLayout.y:safe.top+Math.round((safe.height()-height)*fraction(positionKey+".y",0));
+        boolean keep=dragging||temporaryPosition||moveMode==MoveMode.TOUCH||moveMode==MoveMode.RETURNING;
+        int x=keep?timerLayout.x:safe.left+Math.round((safe.width()-width)*fraction(positionKey+".x",1));
+        int y=keep?timerLayout.y:safe.top+Math.round((safe.height()-height)*fraction(positionKey+".y",0));
         x=clamp(x,safe.left,safe.right-width);y=clamp(y,safe.top,safe.bottom-height);
         boolean changed=timerLayout.width!=width||timerLayout.height!=height||timerLayout.x!=x||timerLayout.y!=y;
         timerLayout.width=width;timerLayout.height=height;

@@ -130,3 +130,6 @@
 .purpose-link-icon>svg{display:none}
 .purpose-link-icon.icon-failed .linked-app-icon{display:none}
 .purpose-link-icon.icon-failed>svg{display:block}
+
+/* Keep the shared duration node while preserving the existing renewal layout. */
+.renew-page .app-decision{display:contents}

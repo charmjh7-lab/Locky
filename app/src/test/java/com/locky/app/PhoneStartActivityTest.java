@@ -83,18 +83,64 @@ public class PhoneStartActivityTest {
         GuardService guard=Robolectric.buildService(GuardService.class).create().get();guard.store=store;guard.interactive=true;guard.homePackage="launcher";guard.homeClass=guard.launcherClass="launcher.Home";
         var home=new ForegroundPolicy.Result("launcher",false);
         var windows=java.util.List.of(new ForegroundPolicy.Window("launcher",1,true,true,1,false,true));
-        guard.overview=true;assertFalse(guard.restorePhoneFromHome(home,windows));guard.overview=false;
-        assertFalse(guard.restorePhoneFromHome(new ForegroundPolicy.Result("",true),windows));
-        assertFalse(guard.restorePhoneFromHome(new ForegroundPolicy.Result("settings",false),windows));
-        guard.launcherClass="launcher.RecentsActivity";assertFalse(guard.restorePhoneFromHome(home,windows));guard.launcherClass=guard.homeClass;
+        guard.overview=true;assertFalse(guard.restorePhoneFromForeground(home,windows,"",false,true));guard.overview=false;
+        assertFalse(guard.restorePhoneFromForeground(new ForegroundPolicy.Result("",true),windows,"",false,true));
+        assertFalse(guard.restorePhoneFromForeground(new ForegroundPolicy.Result("settings",false),windows,"",false,true));
+        guard.launcherClass="launcher.RecentsActivity";assertFalse(guard.restorePhoneFromForeground(home,windows,"",false,true));guard.launcherClass=guard.homeClass;
         ActivityInfo alias=new ActivityInfo();alias.name="launcher.HomeAlias";alias.targetActivity=guard.homeClass;guard.rememberHome(alias);
         guard.launcherClass=alias.name;assertTrue(guard.isHomeClass(alias.name));
-        assertFalse(guard.restorePhoneFromHome(home,java.util.List.of(new ForegroundPolicy.Window("launcher",1,true,true,1,false,false))));
-        assertTrue(guard.restorePhoneFromHome(home,windows));assertEquals(1,TaskMoves.moves);assertEquals(phone.getTaskId(),TaskMoves.lastTask);
+        assertFalse(guard.restorePhoneFromForeground(home,java.util.List.of(new ForegroundPolicy.Window("launcher",1,true,true,1,false,false)),"",false,true));
+        assertTrue(guard.restorePhoneFromForeground(home,windows,"",false,true));assertEquals(1,TaskMoves.moves);assertEquals(phone.getTaskId(),TaskMoves.lastTask);
         assertTrue(guard.homeObserved);
-        assertFalse(guard.restorePhoneFromHome(home,windows));assertEquals(1,TaskMoves.moves);assertSame(web,phone.host.view);assertEquals(nav,phone.host.navigationGeneration);
-        activity.start().resume();phone.releaseNavigation("memo");activity.pause().stop();assertFalse(guard.restorePhoneFromHome(home,windows));assertEquals(1,TaskMoves.moves);
+        assertTrue(guard.restorePhoneFromForeground(home,windows,"",false,true));assertEquals(1,TaskMoves.moves);assertSame(web,phone.host.view);assertEquals(nav,phone.host.navigationGeneration);
+        activity.start().resume();phone.releaseNavigation("memo");activity.pause().stop();assertFalse(guard.restorePhoneFromForeground(home,windows,"",false,true));assertEquals(1,TaskMoves.moves);
         guard.main.removeCallbacksAndMessages(null);
+    }
+
+    GuardService guard(){
+        GuardService guard=Robolectric.buildService(GuardService.class).create().get();guard.store=store;guard.interactive=true;
+        Shadows.shadowOf(app.getSystemService(KeyguardManager.class)).setKeyguardLocked(false);return guard;
+    }
+    @Test public void externalEntryReusesTaskAndSelectionFinishesWithoutRelaunchOrHome() throws Exception {
+        PhoneStartActivity phone=open(11);Object web=phone.host.view;activity.pause().stop();GuardService guard=guard();
+        var visible=new ForegroundPolicy.Result("messages",false);
+        var windows=java.util.List.of(new ForegroundPolicy.Window("messages",1,true,true,1,false,true));
+        assertTrue(guard.restorePhoneFromForeground(visible,windows,"messages",true,false));assertEquals(1,TaskMoves.moves);
+        assertTrue(guard.restorePhoneFromForeground(visible,windows,"messages",true,false));assertEquals(1,TaskMoves.moves);
+        assertSame(web,phone.host.view);activity.start().resume();
+        phone.choose(new JSONObject().put("label","답장하기"));
+        assertTrue(phone.isFinishing());assertNull(Shadows.shadowOf(phone).getNextStartedActivity());
+        assertEquals("답장하기",store.rows("SELECT * FROM events WHERE kind='unlock'").getJSONObject(0).getString("purpose"));
+    }
+    @Test public void externalGuardRejectsSystemOverviewUnfocusedAndReleasedNavigation(){
+        PhoneStartActivity phone=open(11);activity.pause().stop();GuardService guard=guard();
+        var visible=new ForegroundPolicy.Result("messages",false);
+        var windows=java.util.List.of(new ForegroundPolicy.Window("messages",1,true,true,1,false,true));
+        guard.overview=true;assertFalse(guard.restorePhoneFromForeground(visible,windows,"messages",true,false));guard.overview=false;
+        guard.systemPackages.add("messages");assertFalse(guard.restorePhoneFromForeground(visible,windows,"messages",true,false));guard.systemPackages.clear();
+        assertFalse(guard.restorePhoneFromForeground(visible,java.util.List.of(new ForegroundPolicy.Window("messages",1,false,true,1,false,true)),"messages",true,false));
+        assertTrue(guard.restorePhoneFromForeground(visible,windows,"",false,false));assertEquals(0,TaskMoves.moves);assertTrue(guard.foregroundUncertain);
+        assertTrue(guard.restorePhoneFromForeground(visible,windows,"",false,true));assertEquals(1,TaskMoves.moves);
+        activity.start().resume();phone.releaseNavigation("ChatGPT");activity.pause().stop();
+        assertFalse(guard.restorePhoneFromForeground(visible,windows,"messages",true,false));assertEquals(1,TaskMoves.moves);
+    }
+    @Test public void newCycleClearsExternalReturnAndNormalSelectionStillOpensHome() throws Exception {
+        PhoneStartActivity phone=open(11);activity.pause().stop();phone.returnFromForeground(true);phone.acceptCycle(12);activity.start().resume();
+        phone.choose(new JSONObject().put("label","일반 시작"));assertTrue(Shadows.shadowOf(phone).getNextStartedActivity().hasCategory(Intent.CATEGORY_HOME));
+    }
+
+    android.view.accessibility.AccessibilityWindowInfo window(String pkg,int type,int layer){
+        var node=android.view.accessibility.AccessibilityNodeInfo.obtain();node.setPackageName(pkg);
+        var window=android.view.accessibility.AccessibilityWindowInfo.obtain();var shadow=Shadows.shadowOf(window);
+        shadow.setRoot(node);shadow.setType(type);shadow.setFocused(true);shadow.setActive(true);shadow.setLayer(layer);shadow.setBoundsInScreen(new android.graphics.Rect(0,0,1000,2000));return window;
+    }
+    @Test public void notificationAndSideGestureObserveActualAppRatherThanGestureWindow(){
+        PhoneStartActivity phone=open(11);activity.pause().stop();GuardService guard=guard();
+        Shadows.shadowOf(guard).setWindows(java.util.List.of(window("messages",1,1),window("com.samsung.android.sidegesturepad",1,10)));
+        var event=android.view.accessibility.AccessibilityEvent.obtain(android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
+        event.setPackageName("messages");event.setClassName("messages.Conversation");guard.observeForeground(event);
+        assertEquals(1,TaskMoves.moves);assertEquals("",guard.sessionPkg);assertFalse(guard.overlayVisible);
+        guard.observeForeground(event);assertEquals(1,TaskMoves.moves);guard.main.removeCallbacksAndMessages(null);event.recycle();
     }
 
 }

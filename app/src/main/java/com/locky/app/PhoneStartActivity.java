@@ -16,7 +16,7 @@ public final class PhoneStartActivity extends Activity {
     boolean resumed;volatile boolean chosen;
     private boolean dictionaryJourney;
     PhoneNavigation navigation;
-    private boolean homeReturnPending;
+    private boolean foregroundReturnPending,returnToExternalApp;
     private final Set<String> dictionaryPackages=new HashSet<>();
     private android.window.OnBackInvokedCallback backCallback;
     static PhoneStartActivity current(){return live.get();}
@@ -39,11 +39,11 @@ public final class PhoneStartActivity extends Activity {
         if(Build.VERSION.SDK_INT>=33){backCallback=this::handleBack;getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,backCallback);}
         trace("onCreate webview=new restored="+(saved!=null));
     }
-    void acceptCycle(long next){if(next<=cycle)return;cycle=next;chosen=false;navigation.begin(cycle);homeReturnPending=false;if(host!=null)host.ensurePurposeDay();}
+    void acceptCycle(long next){if(next<=cycle)return;cycle=next;chosen=false;navigation.begin(cycle);clearExternalReturn();if(host!=null)host.ensurePurposeDay();}
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);acceptCycle(intent.getLongExtra("cycle",cycle));trace("onNewIntent webview=reused");}
     @Override protected void onStart(){super.onStart();trace("onStart");}
     @Override protected void onResume(){
-        super.onResume();resumed=true;homeReturnPending=false;
+        super.onResume();resumed=true;foregroundReturnPending=false;
         trace("onResume webview=reused");host.resume();host.ensurePurposeDay();
         GuardService g=GuardService.live;if(g!=null){g.pauseForActivity();g.useUtility("notes".equals(host.pendingScreen)?"메모":Set.of("chat","chats").contains(host.pendingScreen)?"ChatGPT":"첫 화면");}
         dictionaryJourney=false;
@@ -70,14 +70,16 @@ public final class PhoneStartActivity extends Activity {
             linked=Links.intent(this,purpose.optString("pkg"),purpose.optString("uri"));
             if(linked==null)throw new IllegalStateException("연결한 앱이나 동작을 열 수 없습니다. 목적 연결을 확인해 주세요.");
         }
-        releaseNavigation("purpose");chosen=true;
+        boolean returnExternal=returnToExternalApp;
+        chosen=true;
         GuardService guard=GuardService.live;
         try{if(guard!=null)guard.choosePhone(purpose);else Store.get(this).event("unlock",purpose.getString("label"),"",purpose.optString("pkg"),0,purpose.optInt("aimless",0)==1);}
         catch(Exception error){chosen=false;throw error;}
+        releaseNavigation("purpose");
         trace("exit reason=purpose");
         host.clearPhoneSession();
         if(linked!=null){if(guard!=null)guard.prepareLinkedLaunch(purpose,linked);try{startActivity(linked.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}catch(RuntimeException error){if(guard!=null)guard.cancelLinkedLaunch();android.widget.Toast.makeText(this,"목적은 기록했지만 연결한 앱을 열지 못했습니다.",android.widget.Toast.LENGTH_LONG).show();}}
-        else startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        else if(!returnExternal)startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         finish();
     }
     void dismiss(){GuardService g=GuardService.live;if(g==null)throw new IllegalStateException("화면을 잠그려면 접근성 서비스를 켜 주세요.");trace("lock requested by user");g.dismissStart();}
@@ -90,12 +92,14 @@ public final class PhoneStartActivity extends Activity {
         catch(Exception error){dictionaryJourney=false;throw error;}
     }
     void releaseNavigation(String reason){
-        if(navigation.release(cycle)){homeReturnPending=false;trace("navigation released reason="+reason);}
+        if(navigation.release(cycle)){clearExternalReturn();trace("navigation released reason="+reason);}
     }
     boolean purposePending(){return !chosen&&navigation.state(cycle)==PhoneNavigation.State.PURPOSE_PENDING;}
-    boolean returnFromHome(){
-        if(!purposePending()||homeReturnPending||resumed||isFinishing()||isDestroyed())return false;
-        homeReturnPending=true;trace("home return requested existing-task");
+    void clearExternalReturn(){foregroundReturnPending=false;returnToExternalApp=false;}
+    boolean returnFromForeground(boolean external){
+        if(!purposePending()||resumed||isFinishing()||isDestroyed())return false;
+        if(foregroundReturnPending)return true; // Same departure stays latched, even if Android rejects it.
+        foregroundReturnPending=true;returnToExternalApp=external;trace("foreground return requested existing-task");
         try{
             // The same task/window/document, with no app-supplied transition animation.
             getSystemService(ActivityManager.class).moveTaskToFront(getTaskId(),ActivityManager.MOVE_TASK_NO_USER_ACTION,
@@ -103,7 +107,7 @@ public final class PhoneStartActivity extends Activity {
             return true;
         }catch(RuntimeException error){
             // Keep this departure latched: a blocked request must not become an event loop.
-            UnlockDiagnostics.get(this).failure("home-task-return",error);return false;
+            UnlockDiagnostics.get(this).failure("foreground-task-return",error);return true;
         }
     }
     boolean allowsDictionary(String pkg){return dictionaryJourney&&(dictionaryPackages.contains(pkg)||pkg.equals("android")||pkg.contains("intentresolver"));}

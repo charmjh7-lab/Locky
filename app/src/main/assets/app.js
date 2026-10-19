@@ -62,35 +62,68 @@ async function openNoteById(id,navigation=null){await flushMemo();noteId=id;awai
 function openChatById(id,navigation=null){chatId=id;return navigate('chat',navigation);}
 // APP_GATE owns a single prepared document. Gate data comes with the native entry,
 // so navigation never waits behind memo/chat bridge work or displays the old app.
+let gatePurposeHTML=null;
 function prepareGate(navigation=0){
- clearInterval(poll);poll=null;gateRegions=[];
- nativeNavigation=navigation;screen='gateIdle';state={role:'APP_GATE',overlay:true,notes:[],chats:[],accounts:[],models:[],connection:{},rules:[],allPurposes:[],purposeOrders:{}};
- renderedRoute='gateIdle';$('#app').replaceChildren();++domRevision;signalRendered();
+ clearInterval(poll);poll=null;closeSheet();
+ nativeNavigation=navigation;screen='gateIdle';state={role:'APP_GATE',overlay:true,gate:{},prefs:{start:0,end:0},notes:[],chats:[],accounts:[],models:[],connection:{},rules:[],allPurposes:[],purposeOrders:{}};
+ purposeEntry=null;gatePurposeHTML=null;
+ const template=document.createElement('template');template.innerHTML=gate();const main=$('.gate-page');
+ const changed=main?patchGateNode(main,template.content.firstElementChild):($('#app').replaceChildren(template.content),true);
+ if(changed){bind();++domRevision;}
+ $('.gate-page').inert=true;document.body.classList.add('start-screen');renderedRoute=screen;signalRendered();
 }
-let gateRegions=[];
+// Patch attributes/text in place. Only changed list membership creates/removes nodes.
+function patchGateNode(old,next){
+ if(old.nodeType!==next.nodeType||old.nodeName!==next.nodeName){old.replaceWith(next.cloneNode(true));return true;}
+ if(old.nodeType===Node.TEXT_NODE){if(old.data===next.data)return false;old.data=next.data;return true;}
+ let changed=false;
+ for(const attr of [...old.attributes])if(!next.hasAttribute(attr.name)){old.removeAttribute(attr.name);changed=true;}
+ for(const attr of [...next.attributes])if(old.getAttribute(attr.name)!==attr.value){old.setAttribute(attr.name,attr.value);changed=true;}
+ const key=node=>node.nodeType===Node.ELEMENT_NODE?(node.dataset.purpose||node.querySelector(':scope > [data-purpose]')?.dataset.purpose||node.dataset.act||node.dataset.min||node.id||''):'';
+ const existing=new Map([...old.childNodes].map(node=>[key(node),node]).filter(([key])=>key));
+ for(let i=0;i<next.childNodes.length;i++){
+  const wanted=next.childNodes[i],id=key(wanted);let node=id?existing.get(id):old.childNodes[i];
+  if(node&&id!==key(node))node=null;
+  if(!node){node=wanted.cloneNode(true);old.insertBefore(node,old.childNodes[i]||null);changed=true;}
+  else {if(old.childNodes[i]!==node){old.insertBefore(node,old.childNodes[i]||null);changed=true;}changed=patchGateNode(node,wanted)||changed;}
+ }
+ while(old.childNodes.length>next.childNodes.length){old.lastChild.remove();changed=true;}
+ return changed;
+}
 function presentGate(name,payload,navigation){
  if(navigation<nativeNavigation)return;
  const same=screen===name&&state?.gate?.pkg===payload.gate.pkg;
  const transition=!same||navigation!==nativeNavigation;nativeNavigation=navigation;
  if(transition){closeSheet();selected='';minutes=5;purposeEntry=null;}
  state={...state,...payload,role:'APP_GATE',overlay:true,purposeOrders:{[payload.scope]:payload.purposes}};
- screen=name;const main=$('.gate-page');
- const template=document.createElement('template');template.innerHTML=gate();
- const wanted=template.content.firstElementChild;
- if(same&&main){
-  let changed=false;
-  for(let i=0;i<wanted.children.length;i++){const old=main.children[i],next=wanted.children[i];if(!old||gateRegions[i]!==next.outerHTML){if(old)old.replaceWith(next.cloneNode(true));else main.append(next.cloneNode(true));changed=true;}}
-  if(changed){bind();viewportChanged();++domRevision;}renderedRoute=screen;signalRendered();
- }else render();
- gateRegions=[...wanted.children].map(el=>el.outerHTML);
- document.querySelectorAll('[data-min]').forEach(el=>{el.classList.toggle('selected',Number(el.dataset.min)===minutes);el.setAttribute('aria-pressed',Number(el.dataset.min)===minutes);});
- startPolling();
+ screen=name;let main=$('.gate-page'),changed=false;
+ if(!main){$('#app').innerHTML=gate();main=$('.gate-page');bind();gatePurposeHTML=null;changed=true;}
+ const g=state.gate,locked=name==='blocked',renew=name==='renew',policyBlock=state.rules.find(r=>r.pkg===g.pkg)?.mode==='locked';
+ const text=(selector,value,first=false)=>{const el=main.querySelector(selector),node=first?el.firstChild:el;if((first?node.data:node.textContent)!==value){if(first)node.data=value;else node.textContent=value;changed=true;}};
+ const hidden=(selector,value)=>{const el=main.querySelector(selector);if(el.hidden!==value){el.hidden=value;changed=true;}};
+ const classes=`start-page gate-page overlay-start ${locked?'blocked-page':renew?'renew-page':''}`;
+ if(main.className!==classes){main.className=classes;changed=true;}
+ text('.top>strong',locked?'사용 제한':renew?'사용 연장':'앱 시작');text('.top .pill',state.free?'자유 시간':'집중 시간');
+ text('.gate-app',g.label||'앱 사용');text('.gate-info h2',locked?(policyBlock?'집중 시간에는 차단된 앱이에요':'오늘의 사용 시간을 모두 썼어요'):renew?'같은 목적으로 더 사용하나요?':'무엇을 하러 들어가나요?');
+ hidden('.daily-budget',locked);if(!locked)text('#dailyLeft',fmt(g.daily));
+ hidden('.block-detail',!locked);if(locked){text('.block-detail>strong',time(state.prefs.end),true);text('.block-detail p',`${time(state.prefs.start)}–${time(state.prefs.end)} 집중 시간`);}
+ hidden('.gate-note',!renew);if(renew)text('.gate-note strong',g.purpose||'선택한 목적 없음');
+ hidden('.app-decision',locked);hidden('.app-decision .start-purposes',locked||renew);
+ if(!locked){text('.duration h3',renew?'추가할 시간':'사용할 시간');for(const el of main.querySelectorAll('[data-min]')){const chosen=Number(el.dataset.min)===minutes;if(el.classList.contains('selected')!==chosen){el.classList.toggle('selected',chosen);el.setAttribute('aria-pressed',chosen);changed=true;}}}
+ hidden('#startApp',!renew);if(renew)text('#startApp',`${minutes}분 연장 `,true);
+ if(!locked&&!renew){
+  const html=purposeGrid(true);
+  if(html!==gatePurposeHTML){const template=document.createElement('template');template.innerHTML=html;const grid=main.querySelector('.app-decision .reason-grid');if(patchGateNode(grid,template.content.firstElementChild)){bind(main.querySelector('.app-decision .start-purposes'));changed=true;}gatePurposeHTML=html;}
+ }
+ main.inert=false;document.body.classList.add('start-screen');
+ if(changed){viewportChanged();++domRevision;}
+ renderedRoute=screen;signalRendered();startPolling();
 }
 function presentScreen(name){const previous=nativeNavigation++;Native.request('0','present',JSON.stringify({screen:name,previous,navigation:nativeNavigation,chat:chatId}));}
 function signalRendered(){Native.request('0','rendered',JSON.stringify({screen,navigation:nativeNavigation,revision:domRevision}));}
 function nativeRestore(){if($('#app')?.childElementCount)signalRendered();else return refresh(true);}
 function render(){const previousPresetScroll=$('.preset-scroll')?.scrollTop||0;if($('#quickQuestion'))quickQuestionDraft=$('#quickQuestion').value;if($('#word'))dictionaryWordDraft=$('#word').value;let html='';switch(screen){case 'gateIdle':break;case 'unlock':case 'home':html=home();break;case 'setup':html=setup();break;case 'settings':html=settings();break;case 'apps':html=appsPage();break;case 'usageApps':html=usageAppsPage();break;case 'app':case 'renew':case 'blocked':html=gate();break;case 'timer':html=timer();break;case 'notes':html=notesPage();break;case 'chats':html=chats();break;case 'chat':html=chat();break;case 'brief':html=brief();break;case 'week':briefDays=7;screen='brief';html=brief();break;default:screen='home';html=home();}
- document.body.classList.toggle('start-screen',starts.includes(screen));$('#app').innerHTML=html+nav();bind();if(state?.role==='PHONE_START'&&screen==='chat'&&$('#chatInput')&&state.phoneSession?.chat===chatId)$('#chatInput').value=state.phoneSession.chatDraft||'';if($('.preset-scroll'))$('.preset-scroll').scrollTop=previousPresetScroll;viewportChanged();if(screen==='chat'&&quickTurns.has(chatId))applyMessages(quickMessages(quickTurns.get(chatId)),true);renderedRoute=screen;if(['home','unlock'].includes(screen))startNoteSnapshot=noteSnapshot();++domRevision;signalRendered();}
+ document.body.classList.toggle('start-screen',starts.includes(screen));$('#app').innerHTML=html+nav();if(gated.includes(screen))gatePurposeHTML=null;bind();if(state?.role==='PHONE_START'&&screen==='chat'&&$('#chatInput')&&state.phoneSession?.chat===chatId)$('#chatInput').value=state.phoneSession.chatDraft||'';if($('.preset-scroll'))$('.preset-scroll').scrollTop=previousPresetScroll;viewportChanged();if(screen==='chat'&&quickTurns.has(chatId))applyMessages(quickMessages(quickTurns.get(chatId)),true);renderedRoute=screen;if(['home','unlock'].includes(screen))startNoteSnapshot=noteSnapshot();++domRevision;signalRendered();}
 // Refresh data without discarding the prepared start document or its editors.
 function noteSnapshot(){const n=currentNote();return {note:{id:n.id,title:n.title,body:n.body,checks:n.checks||'[]',mode:n.mode},count:state.notes.length};}
 function updateStart(){
@@ -181,15 +214,16 @@ function newCheckId(){return 'check-'+Array.from(crypto.getRandomValues(new Uint
 function memoHTML(full){let n=currentNote(),checks=[];try{checks=JSON.parse(n.checks||'[]');}catch{}checks.forEach(c=>c.id=c.id||newCheckId());memoBase={id:n.id,title:n.title,body:n.body,mode:n.mode,checks:structuredClone(checks)};const check=n.mode==='check';return `<div class="note-panel ${full?'full-note':'compact-note'}"><div class="mini-head">${full?`<input class="note-title" id="noteTitle" maxlength="100" value="${esc(n.title)}" aria-label="메모 제목">`:`<button class="note-heading" data-nav="notes">${icon('note')} ${esc(n.title||'메모')}</button>${state.notes.length>1?`<button class="iconbtn" data-note-step="-1" aria-label="이전 메모">${icon('back')}</button><button class="iconbtn" data-note-step="1" aria-label="다음 메모">${icon('arrow')}</button>`:'' }<button class="iconbtn" data-nav="notes" aria-label="메모 크게 보기">${icon('expand')}</button>`}</div>${full?`<div class="note-tabs">${state.notes.map(n=>`<button class="${n.id===noteId?'selected':''}" data-note="${esc(n.id)}">${esc(n.title||'메모')}</button>`).join('')}</div>`:''}<div class="note-content">${check?`<div id="checks">${checks.map((c,i)=>`<div class="checkrow ${c.done?'done':''}" data-checkid="${esc(c.id)}"><input type="checkbox" data-check="${i}" ${c.done?'checked':''} aria-label="완료"><textarea data-checktext="${i}" rows="1" aria-label="할 일">${esc(c.text)}</textarea><button data-delcheck="${i}" aria-label="할 일 삭제">${icon('close')}</button></div>`).join('')}</div>`:`<textarea id="noteBody" placeholder="메모를 바로 적으세요" aria-label="메모 내용">${esc(n.body)}</textarea>`}</div><div class="note-actions"><span id="saveState" class="small muted">자동 저장</span>${check?`<button class="iconbtn" data-act="addCheck" aria-label="체크 항목 추가">${icon('plus')}</button>`:''}${full?`<select id="noteMode" aria-label="메모 종류"><option value="text" ${!check?'selected':''}>글 메모</option><option value="check" ${check?'selected':''}>체크 메모</option></select>`:''}<button class="iconbtn" data-act="newNote" aria-label="새 메모">${icon('newnote')}</button>${full&&n.id?`<button class="iconbtn danger" data-act="deleteNote" aria-label="메모 삭제">${icon('trash')}</button>`:''}</div></div>`;}
 function notesPage(){return `<main class="page notes-page ${compactHost()?'overlay-note':''}">${header(true,'메모')}${memoHTML(true)}</main>`;}
 function gate(){
- const g=state.gate,locked=screen==='blocked',renew=screen==='renew';
+ const g=state.gate,locked=screen==='blocked',renew=screen==='renew',idle=screen==='gateIdle';
  const rule=state.rules.find(r=>r.pkg===g.pkg),policyBlock=rule?.mode==='locked';
  const duration=`<section class="duration"><div class="sectionhead"><h3>${renew?'추가할 시간':'사용할 시간'}</h3><span class="small muted">분</span></div><div class="minutes">${[5,6,7,8,9,10].map(m=>`<button data-min="${m}" class="${minutes===m?'selected':''}" aria-pressed="${minutes===m}">${m}</button>`).join('')}</div></section>`;
- return `<main class="start-page gate-page overlay-start ${locked?'blocked-page':renew?'renew-page':''}">${header(false,locked?'사용 제한':renew?'사용 연장':'앱 시작')}<div class="gate-info"><div class="gate-app">${esc(g.label||'앱 사용')}</div><h2>${locked?(policyBlock?'집중 시간에는 차단된 앱이에요':'오늘의 사용 시간을 모두 썼어요'):renew?'같은 목적으로 더 사용하나요?':'무엇을 하러 들어가나요?'}</h2>${!locked?`<div class="daily-budget"><span>오늘 남은 시간</span><strong id="dailyLeft">${fmt(g.daily)}</strong></div>`:''}</div>${locked?`<section class="block-detail"><span>다시 사용할 수 있는 시간</span><strong>${time(state.prefs.end)}<small>자유 시간 시작</small></strong><p class="muted">${time(state.prefs.start)}–${time(state.prefs.end)} 집중 시간</p></section>`:renew?`<div class="gate-note"><span>처음 정한 목적</span><strong>${esc(g.purpose||'선택한 목적 없음')}</strong></div>${duration}`:`<div class="app-decision">${duration}<section class="start-purposes"><div class="purpose-intro sectionhead"><h3>사용 목적</h3><button class="textbtn" data-act="managePurposes" aria-label="앱 사용 목적 편집">편집</button></div>${purposeGrid(true)}</section></div>`}<footer class="start-footer">${renew?`<button id="startApp" class="primary" data-act="extend">${minutes}분 연장 ${icon('arrow')}</button>`:''}${dismissButton()}</footer></main>`;
+ return `<main class="start-page gate-page overlay-start ${locked?'blocked-page':renew?'renew-page':''}" ${idle?'inert':''}>${header(false,locked?'사용 제한':renew?'사용 연장':'앱 시작')}<div class="gate-info"><div class="gate-app">${esc(g.label||'앱 사용')}</div><h2>${locked?(policyBlock?'집중 시간에는 차단된 앱이에요':'오늘의 사용 시간을 모두 썼어요'):renew?'같은 목적으로 더 사용하나요?':'무엇을 하러 들어가나요?'}</h2><div class="daily-budget" ${locked?'hidden':''}><span>오늘 남은 시간</span><strong id="dailyLeft">${fmt(g.daily||0)}</strong></div></div><section class="block-detail" ${locked?'':'hidden'}><span>다시 사용할 수 있는 시간</span><strong>${time(state.prefs.end)}<small>자유 시간 시작</small></strong><p class="muted">${time(state.prefs.start)}–${time(state.prefs.end)} 집중 시간</p></section><div class="gate-note" ${renew?'':'hidden'}><span>처음 정한 목적</span><strong>${esc(g.purpose||'선택한 목적 없음')}</strong></div><div class="app-decision" ${locked?'hidden':''}>${duration}<section class="start-purposes" ${locked||renew?'hidden':''}><div class="purpose-intro sectionhead"><h3>사용 목적</h3><button class="textbtn" data-act="managePurposes" aria-label="앱 사용 목적 편집">편집</button></div>${idle?'<div class="reason-grid"><button class="reason direct" data-act="direct">'+icon('plus')+' 직접 적기</button></div>':purposeGrid(true)}</section></div><footer class="start-footer"><button id="startApp" class="primary" data-act="extend" ${renew?'':'hidden'}>${minutes}분 연장 ${icon('arrow')}</button>${dismissButton()}</footer></main>`;
 }
 async function choosePurpose(id){
+ if(screen==='gateIdle')return;
  if(purposeStarting)return;purposeStarting=true;const target=screen,chosenMinutes=minutes,entry=nativeNavigation,targetPkg=state?.gate?.pkg,appEntry=state?.role==='APP_GATE';
  const controls=[...document.querySelectorAll('[data-purpose],[data-min],[data-act=direct]')];controls.forEach(el=>el.disabled=true);
- try{await flushMemo();if(appEntry&&(entry!==nativeNavigation||targetPkg!==state?.gate?.pkg))return;await api(target==='app'?'grant':'choose',target==='app'?{id,minutes:chosenMinutes,gateNavigation:entry}:{id});if(appEntry&&entry!==nativeNavigation)return;closeSheet();}
+ try{await flushMemo();if(appEntry&&(entry!==nativeNavigation||targetPkg!==state?.gate?.pkg))return;const purpose=typeof id==='object'?id:{id};await api(target==='app'?'grant':'choose',target==='app'?{...purpose,minutes:chosenMinutes,gateNavigation:entry}:purpose);if(appEntry&&entry!==nativeNavigation)return;closeSheet();}
  finally{purposeStarting=false;controls.forEach(el=>{if(el.isConnected)el.disabled=false;});}
 }
 
@@ -517,7 +551,8 @@ function renderPurposeAppResults(){
 }
 function purposeSheet(id=null,direct=false){
  const p=state.allPurposes.find(x=>x.id===id)||{label:'',pkg:'',uri:'',scope:gated.includes(screen)?(state.gate.pkg||'app'):direct?'phone':purposeScope};
- sheet(`${sheetHead(direct?'이번에 할 일':'사용 목적')}<div class="formrow"><label for="purposeLabel">목적</label><input class="field" id="purposeLabel" maxlength="100" value="${esc(p.label)}" placeholder="예: 친구에게 답장"></div><label class="link-toggle"><input id="purposeLink" type="checkbox" ${p.pkg||p.uri?'checked':''}> 목적 선택 시 앱이나 동작 열기</label><div id="purposeConnection" ${p.pkg||p.uri?'':'hidden'}><div class="formrow"><label for="purposeAppSearch">앱 아이콘에서 찾기</label><input class="field" id="purposeAppSearch" type="search" placeholder="앱 이름으로 검색" autocomplete="off"><div id="purposeAppPreview" class="purpose-app-preview"></div><div id="purposeAppResults" class="purpose-app-results"></div><p class="small muted" id="purposeAppCount">앱 목록 준비 중</p><label for="purposeApp" class="small muted">전체 앱 목록에서 선택</label><select class="field" id="purposeApp" disabled><option value="${esc(p.pkg)}">${esc(p.pkg?`기존 연결 · ${p.pkg}`:'목록 준비 중')}</option></select></div><div class="formrow"><label for="purposeUri">앱 동작 주소 · 선택</label><input class="field" id="purposeUri" value="${esc(p.uri)}" placeholder="앱이 지원하는 딥링크"><button class="textbtn" data-act="testPurposeLink">연결 시험 ${icon('arrow')}</button></div></div>${!direct?`<div class="formrow"><label for="purposeScope">표시할 화면</label><select class="field" id="purposeScope"><option value="phone" ${p.scope==='phone'?'selected':''}>휴대폰 시작</option><option value="app" ${p.scope==='app'?'selected':''}>모든 관리 앱</option>${p.scope!=='phone'&&p.scope!=='app'?`<option value="${esc(p.scope)}" selected>선택한 앱</option>`:''}</select></div>`:''}<div class="sheet-actions"><button class="primary" id="savePurpose" data-act="savePurpose" data-id="${esc(id||'')}" data-scope="${esc(p.scope)}" data-direct="${direct}" data-aimless="${p.aimless?1:0}">${direct?'저장하고 시작':'저장'} ${icon('check')}</button>${id&&!direct?`<button class="iconbtn danger" data-act="deletePurpose" data-id="${esc(id)}" aria-label="목적 삭제">${icon('trash')}</button>`:''}</div>`);
+ sheet(`${sheetHead(direct?'이번에 할 일':'사용 목적')}<div class="formrow"><label for="purposeLabel">목적</label><input class="field" id="purposeLabel" maxlength="100" value="${esc(p.label)}" placeholder="예: 친구에게 답장"></div>${direct?'<label class="link-toggle"><input id="purposeSave" type="checkbox"> 목적 목록에 저장하기</label>':''}<label class="link-toggle"><input id="purposeLink" type="checkbox" ${p.pkg||p.uri?'checked':''}> 목적 선택 시 앱이나 동작 열기</label><div id="purposeConnection" ${p.pkg||p.uri?'':'hidden'}><div class="formrow"><label for="purposeAppSearch">앱 아이콘에서 찾기</label><input class="field" id="purposeAppSearch" type="search" placeholder="앱 이름으로 검색" autocomplete="off"><div id="purposeAppPreview" class="purpose-app-preview"></div><div id="purposeAppResults" class="purpose-app-results"></div><p class="small muted" id="purposeAppCount">앱 목록 준비 중</p><label for="purposeApp" class="small muted">전체 앱 목록에서 선택</label><select class="field" id="purposeApp" disabled><option value="${esc(p.pkg)}">${esc(p.pkg?`기존 연결 · ${p.pkg}`:'목록 준비 중')}</option></select></div><div class="formrow"><label for="purposeUri">앱 동작 주소 · 선택</label><input class="field" id="purposeUri" value="${esc(p.uri)}" placeholder="앱이 지원하는 딥링크"><button class="textbtn" data-act="testPurposeLink">연결 시험 ${icon('arrow')}</button></div></div>${!direct?`<div class="formrow"><label for="purposeScope">표시할 화면</label><select class="field" id="purposeScope"><option value="phone" ${p.scope==='phone'?'selected':''}>휴대폰 시작</option><option value="app" ${p.scope==='app'?'selected':''}>모든 관리 앱</option>${p.scope!=='phone'&&p.scope!=='app'?`<option value="${esc(p.scope)}" selected>선택한 앱</option>`:''}</select></div>`:''}<div class="sheet-actions"><button class="primary" id="savePurpose" data-act="savePurpose" data-id="${esc(id||'')}" data-scope="${esc(p.scope)}" data-direct="${direct}" data-aimless="${p.aimless?1:0}">${direct?'시작하기':'저장'} ${icon('check')}</button>${id&&!direct?`<button class="iconbtn danger" data-act="deletePurpose" data-id="${esc(id)}" aria-label="목적 삭제">${icon('trash')}</button>`:''}</div>`);
+ const save=$('#purposeSave');if(save)save.onchange=()=>{$('#savePurpose').innerHTML=(save.checked?'저장하고 시작':'시작하기')+' '+icon('check');};
  const link=$('#purposeLink');link.onchange=()=>{const enabled=link.checked;$('#purposeConnection').hidden=!enabled;if(enabled)safe(()=>populatePurposeApps(p.pkg,p.scope));};
  if(!direct||link.checked)safe(()=>populatePurposeApps(p.pkg,p.scope));
  if($('#purposeAppSearch'))$('#purposeAppSearch').oninput=renderPurposeAppResults;
@@ -587,15 +622,16 @@ function layoutStart(){
  // Home's anchored title and internal preset scroller are sized by CSS flex, never by item count.
  if($('.preset-scroll'))return;
  const page=$('.start-page');if(!page)return;
- const area=page.querySelector('.start-purposes'),utility=page.querySelector('.utility-space');if(!area)return;
+ const area=page.querySelector('.start-purposes'),utility=page.querySelector('.utility-space');if(!area||area.closest('[hidden]'))return;
  const grid=area.querySelector('.reason-grid');if(!grid)return;
  const items=[...grid.querySelectorAll('.purpose-item')],more=grid.querySelector('.more-reasons');
  // Measure actual type and controls, including system font scaling and wrapped labels.
  items.forEach(el=>el.hidden=false);if(more)more.hidden=true;
  if(utility){utility.style.height='';utility.style.flex='';}
  const decision=page.querySelector('.app-decision'),css=getComputedStyle(page),gap=parseFloat(css.rowGap)||0;
- let available=page.clientHeight-parseFloat(css.paddingTop)-parseFloat(css.paddingBottom)-gap*(page.children.length-1);
- for(const child of page.children)if(child!==area&&child!==utility&&child!==decision)available-=child.getBoundingClientRect().height;
+ const visibleChildren=[...page.children].filter(child=>!child.hidden);
+ let available=page.clientHeight-parseFloat(css.paddingTop)-parseFloat(css.paddingBottom)-gap*(visibleChildren.length-1);
+ for(const child of visibleChildren)if(child!==area&&child!==utility&&child!==decision)available-=child.getBoundingClientRect().height;
  const decisionHeight=available;
  if(decision){decision.style.maxHeight='';const c=getComputedStyle(decision);available-=(parseFloat(c.rowGap)||0)*(decision.children.length-1);for(const child of decision.children)if(child!==area)available-=child.getBoundingClientRect().height;}
  const frame=getComputedStyle(area),intro=area.querySelector('.purpose-intro');
@@ -654,11 +690,11 @@ async function searchDictionary(word){releasePhoneNavigation('dictionary');
  }finally{dictionarySearching=false;}
 }
 async function lookup(){const word=$('#word')?.value.trim();if(!word)throw Error('찾을 단어를 입력해 주세요.');if(!state.dictionary){await dictionaryChoice(word);return;}await searchDictionary(word);}
-async function action(name,el){const gateEntry=state?.role==='APP_GATE'?nativeNavigation:null;switch(name){case 'finishPurposeEditing':await api('finishPurposeEditing');break;case 'viewDiagnostics':await viewUnlockDiagnostics();break;case 'saveDiagnostics':await api('saveDiagnostics');break;case 'deleteDiagnostics':sheet(`${sheetHead('진단 기록 삭제')}<p>기기에 보관한 잠금 해제 진단 기록을 모두 삭제할까요?</p><div class="sheet-actions"><button class="primary" data-act="confirmDeleteDiagnostics">모두 삭제</button><button class="secondary" data-act="closeSheet">취소</button></div>`);break;case 'confirmDeleteDiagnostics':await api('clearDiagnostics');closeSheet();await refresh(true);toast('진단 기록을 삭제했습니다.');break;case 'back':back();break;case 'closeSheet':if(state?.purposeEditor)managePurposes('app');else closeSheet();break;case 'exit':await flushMemo();await api('exit');break;case 'dismiss':await flushMemo();if(gateEntry!==null&&gateEntry!==nativeNavigation)return;await api('dismiss',gateEntry===null?{}:{gateNavigation:gateEntry});break;
+async function action(name,el){if(screen==='gateIdle')return;const gateEntry=state?.role==='APP_GATE'?nativeNavigation:null;switch(name){case 'finishPurposeEditing':await api('finishPurposeEditing');break;case 'viewDiagnostics':await viewUnlockDiagnostics();break;case 'saveDiagnostics':await api('saveDiagnostics');break;case 'deleteDiagnostics':sheet(`${sheetHead('진단 기록 삭제')}<p>기기에 보관한 잠금 해제 진단 기록을 모두 삭제할까요?</p><div class="sheet-actions"><button class="primary" data-act="confirmDeleteDiagnostics">모두 삭제</button><button class="secondary" data-act="closeSheet">취소</button></div>`);break;case 'confirmDeleteDiagnostics':await api('clearDiagnostics');closeSheet();await refresh(true);toast('진단 기록을 삭제했습니다.');break;case 'back':back();break;case 'closeSheet':if(state?.purposeEditor)managePurposes('app');else closeSheet();break;case 'exit':await flushMemo();await api('exit');break;case 'dismiss':await flushMemo();if(gateEntry!==null&&gateEntry!==nativeNavigation)return;await api('dismiss',gateEntry===null?{}:{gateNavigation:gateEntry});break;
  case 'direct':await purposeSheet(null,true);break;case 'addPurpose':await purposeSheet();break;case 'managePurposes':managePurposes(screen==='app'?'app':screen==='home'||screen==='unlock'?'phone':purposeScope);break;
 
  case 'morePurposes':sheet(`${sheetHead('사용 목적')}${purposeGrid(screen==='app',true)}`);break;
- case 'savePurpose':{if(el.disabled)return;const entry=nativeNavigation,targetPkg=state?.gate?.pkg,appEntry=state?.role==='APP_GATE';el.disabled=true;try{if($('#purposeLink').checked&&$('#purposeApp').disabled)throw Error('앱 목록을 불러오는 중입니다.');if($('#purposeLink').checked&&!$('#purposeApp').value&&!$('#purposeUri').value.trim())throw Error('연결할 앱이나 동작 주소를 선택해 주세요.');const p={label:$('#purposeLabel').value,pkg:$('#purposeLink').checked?$('#purposeApp').value:'',uri:$('#purposeLink').checked?$('#purposeUri').value:'',scope:$('#purposeScope')?.value||el.dataset.scope,aimless:el.dataset.aimless==='1'};if(el.dataset.id)p.id=el.dataset.id;const saved=await api('purpose',appEntry?{...p,gateNavigation:entry}:p);if(appEntry&&(entry!==nativeNavigation||targetPkg!==state?.gate?.pkg))return;closeSheet();const next=await api('state');if(appEntry&&entry!==nativeNavigation)return;state=next;if(el.dataset.direct==='true'){await choosePurpose(saved.id);render();}else {render();if(screen==='settings')managePurposes();}}finally{if(el.isConnected)el.disabled=false;}break;}
+ case 'savePurpose':{if(el.disabled)return;const entry=nativeNavigation,targetPkg=state?.gate?.pkg,appEntry=state?.role==='APP_GATE';el.disabled=true;try{if($('#purposeLink').checked&&$('#purposeApp').disabled)throw Error('앱 목록을 불러오는 중입니다.');if($('#purposeLink').checked&&!$('#purposeApp').value&&!$('#purposeUri').value.trim())throw Error('연결할 앱이나 동작 주소를 선택해 주세요.');const p={label:$('#purposeLabel').value,pkg:$('#purposeLink').checked?$('#purposeApp').value:'',uri:$('#purposeLink').checked?$('#purposeUri').value:'',scope:$('#purposeScope')?.value||el.dataset.scope,aimless:el.dataset.aimless==='1'};if(el.dataset.id)p.id=el.dataset.id;if(el.dataset.direct==='true'&&!$('#purposeSave').checked){await choosePurpose({...p,transient:true});break;}const saved=await api('purpose',appEntry?{...p,gateNavigation:entry}:p);if(appEntry&&(entry!==nativeNavigation||targetPkg!==state?.gate?.pkg))return;closeSheet();const next=await api('state');if(appEntry&&entry!==nativeNavigation)return;state=next;if(el.dataset.direct==='true'){await choosePurpose(saved.id);if(appEntry)presentGate(screen,state,nativeNavigation);else render();}else {render();if(screen==='settings')managePurposes();}}finally{if(el.isConnected)el.disabled=false;}break;}
  case 'deletePurpose':await api('removePurpose',{id:el.dataset.id});closeSheet();await refresh(true);break;
  case 'testPurposeLink':await api('linkTest',{pkg:$('#purposeApp').value,uri:$('#purposeUri').value});break;
  case 'grant':await choosePurpose(selected);break;case 'extend':await api('extend',{minutes});break;case 'stop':await api('stop');break;
@@ -688,7 +724,6 @@ function bind(root=$('#app')){
  root.querySelectorAll('[data-min]').forEach(el=>el.onclick=()=>{
   minutes=Number(el.dataset.min);document.querySelectorAll('[data-min]').forEach(button=>{const chosen=Number(button.dataset.min)===minutes;button.classList.toggle('selected',chosen);button.setAttribute('aria-pressed',chosen);});
   if($('#startApp'))$('#startApp').innerHTML=`${minutes}분 연장 ${icon('arrow')}`;
-  if(state?.role==='APP_GATE'){const template=document.createElement('template');template.innerHTML=gate();gateRegions=[...template.content.firstElementChild.children].map(node=>node.outerHTML);}
  });
  root.querySelectorAll('[data-note]').forEach(el=>el.onclick=()=>safe(async()=>{await flushMemo();noteId=el.dataset.note;render();remember();}));
  root.querySelectorAll('[data-note-step]').forEach(el=>el.onclick=()=>safe(async()=>{await flushMemo();const notes=state.notes;if(notes.length<2)return;const index=notes.findIndex(n=>n.id===noteId);noteId=notes[(index+Number(el.dataset.noteStep)+notes.length)%notes.length].id;render();remember();}));

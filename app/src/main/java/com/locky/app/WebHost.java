@@ -114,18 +114,22 @@ final class WebHost {
         if(changed&&!renderedScreen.isEmpty())resetVisualState("dom");
         if(tracing())hostTrace("dom changed="+changed+" revision="+revision);
         renderedNavigation=navigation;renderedRevision=revision;renderedScreen=screen;everRendered=true;loadFailed=false;cancelInitialWatch();requestVisualState();
+        if(frameReady&&frameAvailableCallback!=null)frameAvailableCallback.run();
     }
 
     boolean hasUsableFrame(){return frameReady||retainedFrame;}
     boolean currentGateReady(){return isOverlay&&!loadFailed&&frameReady&&renderedNavigation==navigationGeneration&&pendingScreen.equals(renderedScreen)&&!"gateIdle".equals(renderedScreen);}
     boolean gateNeedsInitialLoad(){return !ready||loadFailed;}
     void gateScreen(String name,JSONObject payload){
+        JSONObject previous=pendingGate;
+        boolean sameTarget=previous!=null&&name.equals(pendingScreen)&&previous.optJSONObject("gate")!=null&&payload.optJSONObject("gate")!=null
+            &&previous.optJSONObject("gate").optString("pkg").equals(payload.optJSONObject("gate").optString("pkg"));
+        boolean reuse=sameTarget&&frameReady&&!loadFailed&&pendingScreen.equals(renderedScreen)&&renderedNavigation==navigationGeneration;
         pendingGate=payload;gateTransition=payload.optLong("gateTransition",-1);preparedPurposeDay=payload.optString("purposeDate");pendingScreen=name;pendingChat="";++navigationGeneration;
-        // Invalidate input/old-app pixels, never the already loaded HTML/JS engine.
-        resetVisualState("gate-entry");
-        view.setAlpha(0f);
+        // New navigation always fences input. An unchanged same-app DOM acknowledgement
+        // may reuse its validated pixels; changed revisions still request their own frame.
+        if(!reuse){resetVisualState("gate-entry");view.setAlpha(0f);}
         if(loadingView!=null)loadingView.setVisibility(loadFailed?View.VISIBLE:View.GONE);
-        invalidateFrame();
         if(ready)dispatchScreen();else watchInitialLoad();
     }
     // Data-only entry refresh for a phone locked across midnight. No window, loading,
@@ -450,7 +454,7 @@ final class WebHost {
             for(var ref:hosts){WebHost peer=ref.get();if(peer!=null&&peer!=this)peer.refresh();}
         answer(id,out,null);
     }catch(Exception e){answer(id,null,ChatGPT.safeError(e));}}
-    JSONObject resolvePurpose(JSONObject a) throws Exception {if(a.has("label"))return store.purpose(a,a.optString("scope","phone"));JSONArray p=store.rows("SELECT * FROM purposes WHERE id=?",a.getString("id"));if(p.length()==0)throw new IllegalStateException("사용 목적을 다시 선택해 주세요.");return p.getJSONObject(0);}
+    JSONObject resolvePurpose(JSONObject a) throws Exception {if(a.optBoolean("transient",false))return Store.purposeData(a,a.optString("scope","phone"));if(a.has("label"))return store.purpose(a,a.optString("scope","phone"));JSONArray p=store.rows("SELECT * FROM purposes WHERE id=?",a.getString("id"));if(p.length()==0)throw new IllegalStateException("사용 목적을 다시 선택해 주세요.");return p.getJSONObject(0);}
     void saveSettings(JSONObject a) throws Exception {
         if(a.has("unlockDiagnostics"))UnlockDiagnostics.get(context).setEnabled(a.getBoolean("unlockDiagnostics"));
         var e=store.settings.edit();

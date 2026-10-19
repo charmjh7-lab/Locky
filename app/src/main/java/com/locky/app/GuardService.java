@@ -78,6 +78,7 @@ public final class GuardService extends AccessibilityService {
     void screenOff(){
         if(!interactive&&phoneStart!=null&&phoneStart.awaitingUnlock()){WebHost.trace("duplicate screen-off ignored");return;}
         UnlockDiagnostics.get(this);WebHost.beginUnlockTrace();
+        PhoneStartActivity phone=PhoneStartActivity.current();if(phone!=null)phone.clearExternalReturn();
         store.screenState(ScreenHistory.OFF);checkpoint();interactive=false;cancelLinkedLaunch();hideFloatingTimer();
         if(lockPending){store.event("dismiss","열지 않기","","",0);lockPending=false;}
         main.removeCallbacks(lockCompletion);
@@ -142,7 +143,7 @@ public final class GuardService extends AccessibilityService {
     }
     boolean keyguardLocked(){
         boolean locked=getSystemService(KeyguardManager.class).isKeyguardLocked();
-        if(observedKeyguard==null||observedKeyguard!=locked){observedKeyguard=locked;if(store!=null)store.screenState(locked?ScreenHistory.OFF:interactive?ScreenHistory.ON:ScreenHistory.OFF);WebHost.trace("keyguard observed locked="+locked);}
+        if(observedKeyguard==null||observedKeyguard!=locked){observedKeyguard=locked;if(locked){PhoneStartActivity phone=PhoneStartActivity.current();if(phone!=null)phone.clearExternalReturn();}if(store!=null)store.screenState(locked?ScreenHistory.OFF:interactive?ScreenHistory.ON:ScreenHistory.OFF);WebHost.trace("keyguard observed locked="+locked);}
         return locked;
     }
     boolean acceptGateInput(){return overlayVisible&&overlay!=null&&overlay.currentGateReady()&&exposure==Exposure.INTERACTIVE&&interactive&&!systemPaused&&!keyguardLocked()&&gatePkg.equals(foreground);}
@@ -213,16 +214,28 @@ public final class GuardService extends AccessibilityService {
         if(visible.pkg.isEmpty()){if(overlayVisible)pauseSystem("window-unavailable");return;} // Never expose stale app choices.
         String pkg=visible.pkg;
         if(pkg.contains("incallui")||pkg.equals("com.android.server.telecom")){if(overlayVisible)hideOverlay();pauseSystem();return;}
-        if(restorePhoneFromHome(visible,candidates))return;
+        if(restorePhoneFromForeground(visible,candidates,event==null||event.getPackageName()==null?"":event.getPackageName().toString(),
+            event!=null&&event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,event==null))return;
         switchForeground(pkg);
     }
-    boolean restorePhoneFromHome(ForegroundPolicy.Result visible,List<ForegroundPolicy.Window> candidates){
-        if(lockPending||!interactive||keyguardLocked()||overview||visible.paused||homeClass.isEmpty()
-            ||!isHomeClass(launcherClass)||!homePackage.equals(visible.pkg))return false;
-        boolean focusedHome=candidates.stream().anyMatch(w->w.type==AccessibilityWindowInfo.TYPE_APPLICATION&&w.pkg.equals(homePackage)&&w.focused&&w.active&&w.covering&&!w.pip);
-        homeObserved=focusedHome;
+    boolean restorePhoneFromForeground(ForegroundPolicy.Result visible,List<ForegroundPolicy.Window> candidates,String eventPkg,boolean stateEvent,boolean settled){
         PhoneStartActivity phone=PhoneStartActivity.current();
-        return focusedHome&&phone!=null&&phone.returnFromHome();
+        if(lockPending||!interactive||keyguardLocked()||overview||visible.paused||visible.pkg.isEmpty()
+            ||phone==null||!phone.purposePending()||phone.resumed||phone.cycle!=store.settings.getLong("phone-start-cycle",phone.cycle)
+            ||getPackageName().equals(visible.pkg)||phone.allowsDictionary(visible.pkg)||systemPackages.contains(visible.pkg)
+            ||visible.pkg.equals("android")||visible.pkg.contains("intentresolver")||visible.pkg.contains("incallui")||visible.pkg.equals("com.android.server.telecom"))return false;
+        boolean focused=candidates.stream().anyMatch(w->w.type==AccessibilityWindowInfo.TYPE_APPLICATION&&w.pkg.equals(visible.pkg)&&w.focused&&w.active&&w.covering&&!w.pip);
+        if(homePackage.equals(visible.pkg)){
+            if(homeClass.isEmpty()||!isHomeClass(launcherClass))return false;
+            homeObserved=focused;
+            return focused&&phone.returnFromForeground(false);
+        }
+        if(!focused)return false;
+        if(!ForegroundPolicy.confirmedEntry(candidates,visible,eventPkg,stateEvent)&&!settled){
+            foregroundUncertain=true; // Reuse the existing settled window observation, never an event sender alone.
+            return true;
+        }
+        return phone.returnFromForeground(true);
     }
     void pauseSystem(){pauseSystem("system");}
     void pauseSystem(String reason){
@@ -448,7 +461,7 @@ public final class GuardService extends AccessibilityService {
             if(flags!=overlayLayout.flags){overlayLayout.flags=flags;window.updateViewLayout(overlayWindow,overlayLayout);}
         }
         exposure=next;
-        if(input)overlay.resumeOverlay();else if(shown)overlay.prepareOverlay();else overlay.pause();
+        if(input)overlay.resumeOverlay();else overlay.prepareOverlay();
     }
     JSONObject startWindowStatus() throws JSONException {
         return UnlockDiagnostics.get(this).windowStatus().put("status","activity").put("actual","activity");

@@ -160,10 +160,15 @@ final class Store extends SQLiteOpenHelper {
         JSONArray rows=rows("SELECT * FROM purposes WHERE scope=? OR scope=? OR (scope='*' AND ?='phone') ORDER BY rowid",scope,scope.equals("phone")?"phone":"app",scope);Map<String,JSONObject> byId=new LinkedHashMap<>();for(int i=0;i<rows.length();i++)byId.put(rows.getJSONObject(i).getString("id"),rows.getJSONObject(i));
         JSONArray out=new JSONArray();for(String id:Rules.shuffle(new ArrayList<>(byId.keySet()),LocalDate.now().toString(),scope))out.put(byId.get(id));return out;
     }
-    synchronized JSONObject purpose(JSONObject input,String scope) throws JSONException {
+    static JSONObject purposeData(JSONObject input,String scope) throws JSONException {
         String label=input.optString("label").trim();if(label.isEmpty()||label.length()>100)throw new JSONException("목적을 1~100자로 입력해 주세요.");
         String id=input.optString("id",UUID.randomUUID().toString());boolean aimless=input.optBoolean("aimless",id.equals("aimless")||id.equals("app-aimless"));
-        ContentValues v=new ContentValues();v.put("id",id);v.put("label",label);v.put("pkg",input.optString("pkg"));v.put("uri",input.optString("uri"));v.put("scope",scope);v.put("aimless",aimless?1:0);put("purposes",v);return rows("SELECT * FROM purposes WHERE id=?",id).getJSONObject(0);
+        return new JSONObject().put("id",id).put("label",label).put("pkg",input.optString("pkg")).put("uri",input.optString("uri")).put("scope",scope).put("aimless",aimless?1:0);
+    }
+    synchronized JSONObject purpose(JSONObject input,String scope) throws JSONException {
+        JSONObject purpose=purposeData(input,scope);ContentValues values=new ContentValues();
+        for(String key:new String[]{"id","label","pkg","uri","scope"})values.put(key,purpose.getString(key));values.put("aimless",purpose.getInt("aimless"));
+        put("purposes",values);return rows("SELECT * FROM purposes WHERE id=?",purpose.getString("id")).getJSONObject(0);
     }
     private static JSONArray checkIds(JSONArray input,JSONArray previous) throws JSONException {
         JSONArray out=new JSONArray();Set<String> seen=new HashSet<>();
