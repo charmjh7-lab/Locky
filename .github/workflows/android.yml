@@ -3,7 +3,7 @@ name: Locky Android
 # 일반 push에서는 빌드 작업을 건너뛰며, 전체 검증은 수동 실행으로 유지합니다.
 on:
   push:
-    branches: [main, refactor/phone-start-activity-20261016]
+    branches: [main, refactor/phone-start-activity-20261016, refactor/app-gate-render-lifecycle-20261020]
   workflow_dispatch:
 permissions:
   contents: write
@@ -78,6 +78,7 @@ jobs:
         with:
           node-version: '22'
       - name: Phone start and quick chat interactions
+        if: ${{ github.ref_name != 'refactor/app-gate-render-lifecycle-20261020' }}
         run: |
           npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright
           export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="$(command -v google-chrome || command -v chromium)"
@@ -85,9 +86,19 @@ jobs:
           node scripts/app-gate-ui-test.cjs
           node scripts/phone-start-ui-test.cjs
           node scripts/quick-chat-ui-test.cjs
+      - name: APP_GATE browser interaction check
+        if: ${{ github.ref_name == 'refactor/app-gate-render-lifecycle-20261020' }}
+        run: |
+          npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright
+          export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="$(command -v google-chrome || command -v chromium)"
+          node scripts/app-gate-ui-test.cjs
       - name: Focused UI platform regressions, lint and signed release APK
+        if: ${{ github.ref_name != 'refactor/app-gate-render-lifecycle-20261020' }}
         run: |
           gradle :app:testDebugUnitTest --tests 'com.locky.app.NoteWidgetInteractionTest' --tests 'com.locky.app.NoteWidgetTest' --tests 'com.locky.app.ScreenHistoryTest' --tests 'com.locky.app.LinkedLaunchTest' --tests 'com.locky.app.PhoneStartActivityTest' --tests 'com.locky.app.SessionReturnTest' --tests 'com.locky.app.DictionaryReturnTest' --tests 'com.locky.app.OverlayRenderingTest' --tests 'com.locky.app.GateRestoreTest' --tests 'com.locky.app.PurposeIconsTest' --tests 'com.locky.app.ForegroundPolicyTest' --tests 'com.locky.app.UnlockDiagnosticsTest' --tests 'com.locky.app.RawExportTest' --tests 'com.locky.app.QuickQuestionTest' --tests 'com.locky.app.UiThemeTest' --tests 'com.locky.app.FloatingTimerInteractionTest' :app:lintDebug :app:assembleRelease --no-daemon
+      - name: APP_GATE lifecycle tests and signed release APK
+        if: ${{ github.ref_name == 'refactor/app-gate-render-lifecycle-20261020' }}
+        run: gradle :app:testDebugUnitTest --tests 'com.locky.app.GateRestoreTest' --tests 'com.locky.app.OverlayRenderingTest' :app:assembleRelease --no-daemon
       - name: Verify and publish directly installable APK
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -102,7 +113,9 @@ jobs:
           grep -q "name='com.locky.app'" distribution/package.txt
           (cd distribution && sha256sum Locky.apk > SHA256SUMS.txt)
           version_name=$(bash scripts/apk-version-name.sh distribution/Locky.apk)
-          if [ "$GITHUB_REF_NAME" = "refactor/phone-start-activity-20261016" ]; then
+          if [ "$GITHUB_REF_NAME" = "refactor/app-gate-render-lifecycle-20261020" ]; then
+            gh release create "app-gate-preview-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky ${version_name} · APP_GATE preview ${GITHUB_RUN_NUMBER}" --notes "APP_GATE lifecycle cleanup and focused tests." --prerelease --latest=false
+          elif [ "$GITHUB_REF_NAME" = "refactor/phone-start-activity-20261016" ]; then
             gh release create "phone-start-preview-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky ${version_name} · PhoneStart Activity preview ${GITHUB_RUN_NUMBER}" --notes-file scripts/phone-start-release-notes.md --prerelease --latest=false
           else
             gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky ${version_name} · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
