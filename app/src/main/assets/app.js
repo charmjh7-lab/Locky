@@ -63,6 +63,14 @@ function openChatById(id,navigation=null){chatId=id;return navigate('chat',navig
 // APP_GATE owns a single prepared document. Gate data comes with the native entry,
 // so navigation never waits behind memo/chat bridge work or displays the old app.
 let gatePurposeHTML=null;
+// A pointer/key begun on a previous gate cannot become a click on the new gate.
+let gateGestureNavigation=null;
+document.addEventListener('pointerdown',()=>{gateGestureNavigation=nativeNavigation;},true);
+document.addEventListener('keydown',()=>{gateGestureNavigation=nativeNavigation;},true);
+document.addEventListener('click',event=>{
+ if(state?.role==='APP_GATE'&&gateGestureNavigation!==null&&gateGestureNavigation!==nativeNavigation){event.preventDefault();event.stopImmediatePropagation();}
+ gateGestureNavigation=null;
+},true);
 function prepareGate(navigation=0){
  clearInterval(poll);poll=null;closeSheet();
  nativeNavigation=navigation;screen='gateIdle';state={role:'APP_GATE',overlay:true,gate:{},prefs:{start:0,end:0},notes:[],chats:[],accounts:[],models:[],connection:{},rules:[],allPurposes:[],purposeOrders:{}};
@@ -228,7 +236,7 @@ async function choosePurpose(id){
 }
 
 function timer(){let g=state.gate;return `<main class="page">${header(true,'남은 시간')}<h2>${esc(g.label||'사용 중인 관리 앱 없음')}</h2><div class="timer-ring"><div class="small">오늘 남은 시간</div><div id="dailyLeft" class="bigtime">${fmt(g.daily)}</div><div class="divider"></div><div class="small">이번 사용의 남은 시간</div><h2 id="sessionLeft">${fmt(g.session)}</h2><p class="small muted">이 화면을 보는 동안에는 잠시 멈춰요.</p></div><div class="gate-note"><span>이번 목적</span><strong>${esc(g.purpose||'선택한 목적 없음')}</strong></div><button class="secondary" data-act="exit">사용하던 앱으로 돌아가기</button>${!state.status.notifications?'<div class="notice"><button data-permission="notification">타이머 알림 허용하기</button></div>':''}</main>`;}
-function updateTimers(){if($('#dailyLeft'))$('#dailyLeft').textContent=fmt(state.gate.daily);if($('#sessionLeft'))$('#sessionLeft').textContent=fmt(state.gate.session);}
+function updateTimers(){let changed=false;for(const [selector,value] of [['#dailyLeft',fmt(state.gate.daily)],['#sessionLeft',fmt(state.gate.session)]]){const el=$(selector);if(el&&el.textContent!==value){el.textContent=value;changed=true;}}if(changed&&state?.role==='APP_GATE'){++domRevision;signalRendered();}}
 function liveTimerSettings(){
  const t=state.status.liveTimer;if(!t)return '';
  let message;

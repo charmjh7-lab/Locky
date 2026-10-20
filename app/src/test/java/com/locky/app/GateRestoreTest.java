@@ -27,23 +27,25 @@ public class GateRestoreTest {
         g.screenOff();assertNull(g.overlay);assertEquals(0,adds);assertFalse(g.overlayVisible);
         try{g.showGate("unlock","");fail();}catch(IllegalArgumentException expected){}
     }
-    @Test public void prewarmCreatesNoWindowAndWarmEntriesDoNotShowLoadingOrAcceptOldInput() throws Exception {
-        g.prepareAppGate();assertNull(g.overlayWindow);assertEquals(0,adds);assertFalse(g.overlayVisible);
+    @Test public void prewarmAttachesOnceAndWarmEntriesHideUntilCurrentDataArrives() throws Exception {
+        g.prepareAppGate();assertNotNull(g.overlayWindow);assertEquals(1,adds);assertFalse(g.overlayVisible);
+        g.prepareAppGate();assertEquals(1,adds);assertEquals(android.view.View.GONE,g.overlayWindow.getVisibility());
+        assertNotEquals(0,g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
         WebHost host=g.overlay;Object web=host.view;host.ready=true;host.everRendered=true;host.renderedScreen="gateIdle";
         g.showGate("app","video");assertEquals(android.view.View.GONE,host.loadingView.getVisibility());assertFalse(g.acceptGateInput());
-        assertEquals(android.view.View.VISIBLE,g.overlayWindow.getVisibility());
-        assertEquals(0,g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+        assertEquals(android.view.View.GONE,g.overlayWindow.getVisibility());
+        assertNotEquals(0,g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
         assertTrue(g.overlayWindow.dispatchTouchEvent(android.view.MotionEvent.obtain(0,0,android.view.MotionEvent.ACTION_DOWN,1,1,0)));
         long old=host.navigationGeneration;host.rendered(host.view,"app",old,2);host.frameReady=true;g.revealOverlay();assertTrue(g.acceptGateInput());
-        g.foreground="social";g.showGate("app","social");assertFalse(g.acceptGateInput());assertFalse(host.frameReady);assertEquals(android.view.View.GONE,host.loadingView.getVisibility());
-        assertEquals(android.view.View.VISIBLE,g.overlayWindow.getVisibility());assertEquals(0,g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+        g.foreground="social";g.showGate("app","social");assertFalse(g.acceptGateInput());assertFalse(host.currentGateDataApplied());assertEquals(android.view.View.GONE,host.loadingView.getVisibility());
+        assertEquals(android.view.View.GONE,g.overlayWindow.getVisibility());assertNotEquals(0,g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
         assertNotEquals(host.navigationGeneration,host.renderedNavigation);
-        host.rendered(host.view,"app",old,3);assertFalse(host.frameReady);assertSame(web,host.view);assertEquals(1,adds);assertEquals("social",g.gatePayload().getJSONObject("gate").getString("pkg"));
+        host.rendered(host.view,"app",old,3);assertFalse(host.currentGateDataApplied());assertSame(web,host.view);assertEquals(1,adds);assertEquals("social",g.gatePayload().getJSONObject("gate").getString("pkg"));
     }
-    @Test public void coldEntryDrawsWithoutLoadingAndSystemSuspensionRemainsPassive(){
+    @Test public void coldEntryStaysHiddenUntilDataAndSystemSuspensionRemainsPassive(){
         g.showGate("app","video");assertFalse(g.overlay.ready);assertEquals(GuardService.Exposure.WAITING,g.exposure);
-        assertEquals(android.view.View.VISIBLE,g.overlayWindow.getVisibility());assertEquals(android.view.View.VISIBLE,g.overlay.view.getVisibility());
-        assertEquals(android.view.View.GONE,g.overlay.loadingView.getVisibility());assertEquals(0,g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+        assertEquals(android.view.View.GONE,g.overlayWindow.getVisibility());assertEquals(android.view.View.VISIBLE,g.overlay.view.getVisibility());
+        assertEquals(android.view.View.GONE,g.overlay.loadingView.getVisibility());assertNotEquals(0,g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
         g.pauseSystem();assertEquals(GuardService.Exposure.SUSPENDED,g.exposure);assertEquals(android.view.View.GONE,g.overlayWindow.getVisibility());
         assertNotEquals(0,g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
     }
@@ -69,6 +71,7 @@ public class GateRestoreTest {
     }
     @Test public void errorExitRemainsUsableWithoutAcceptingGateActions(){
         g.showGate("app","video");g.overlay.showGateError();assertTrue(g.acceptGateErrorInput());assertFalse(g.acceptGateInput());
+        assertEquals(android.view.View.VISIBLE,g.overlayWindow.getVisibility());assertTrue(g.canDrawGateWindow());
         g.foreground="social";assertFalse(g.acceptGateErrorInput());
     }
     void actualWindow(String pkg){
@@ -117,5 +120,53 @@ public class GateRestoreTest {
             assertEquals(1,g.store.rows("SELECT * FROM events WHERE kind='app'").getJSONObject(0).getInt("aimless"));
         }finally{LockyApp.app.work.shutdownNow();LockyApp.app=null;}
     }
+
+    @Test public void dataExposesWindowButOnlyValidatedFrameCanDrawAndAcceptInput(){
+        g.showGate("app","video");WebHost h=g.overlay;h.ready=true;
+        assertFalse(g.canDrawGateWindow());assertEquals(android.view.View.GONE,g.overlayWindow.getVisibility());
+        h.rendered(h.view,"app",h.navigationGeneration,1);
+        assertEquals(android.view.View.VISIBLE,g.overlayWindow.getVisibility());assertFalse(g.canDrawGateWindow());assertFalse(g.acceptGateInput());
+        h.frameReady=true;g.revealOverlay();assertTrue(g.canDrawGateWindow());assertTrue(g.acceptGateInput());
+        g.hideOverlay();assertEquals(android.view.View.GONE,g.overlayWindow.getVisibility());assertTrue(h.frameReady);assertTrue(h.renderingActive);
+        g.showGate("app","video");assertFalse(g.acceptGateInput());assertEquals(1,adds);
+        h.rendered(h.view,"app",h.navigationGeneration,1);assertTrue(g.acceptGateInput());
+    }
+    @Test public void failedAttachRetriesTheSameWindowAndHostOnce(){
+        final int[] attempts={0};g.window=(WindowManager)Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{WindowManager.class},(p,m,a)->{
+            if(m.getName().equals("addView")&&attempts[0]++==0)throw new IllegalArgumentException("test");return null;
+        });
+        g.prepareAppGate();Object host=g.overlay,window=g.overlayWindow;assertFalse(g.overlayAttached);
+        g.prepareAppGate();g.prepareAppGate();assertTrue(g.overlayAttached);assertEquals(2,attempts[0]);assertSame(host,g.overlay);assertSame(window,g.overlayWindow);
+    }
+    @Test public void appGateDiagnosticsAreBoundedAndIndependentOfScreenOff() throws Exception {
+        UnlockDiagnostics d=UnlockDiagnostics.get(g);d.clear();d.setEnabled(true);
+        for(int i=0;i<12;i++){g.hideOverlay();g.showGate("app","video");}
+        assertEquals(8,d.status().getInt("appGates"));assertEquals(0,d.status().getInt("cycles"));
+        assertTrue(d.text().contains("showGate hostReuse=true windowReuse=true"));
+        assertTrue(d.text().contains("data apply requested"));assertFalse(d.text().contains("video"));
+        d.gateRecord(g.gateTransition-1,"wrong-token-event");assertFalse(d.text().contains("wrong-token-event"));
+        d.flush();UnlockDiagnostics restored=new UnlockDiagnostics(g.getApplicationContext());assertEquals(8,restored.status().getInt("appGates"));
+        d.setEnabled(false);d.clear();
+    }
+
+    @Test public void touchStartedOnPreviousGateCannotFinishOnNewGate(){
+        g.showGate("app","video");ready();final int[] clicks={0};
+        // Synchronous touch target: the proxy WindowManager deliberately has no
+        // ViewRoot for Button's posted performClick. Exercise real dispatch/cancel.
+        android.view.View target=new android.view.View(g){boolean started;
+            @Override public boolean onTouchEvent(android.view.MotionEvent event){
+                if(event.getActionMasked()==android.view.MotionEvent.ACTION_DOWN)started=true;
+                if(event.getActionMasked()==android.view.MotionEvent.ACTION_CANCEL)started=false;
+                if(event.getActionMasked()==android.view.MotionEvent.ACTION_UP){if(started)clicks[0]++;started=false;}
+                return true;
+            }
+        };
+        g.overlayWindow.addView(target,new android.widget.FrameLayout.LayoutParams(100,100));
+        g.overlayWindow.measure(android.view.View.MeasureSpec.makeMeasureSpec(390,1073741824),android.view.View.MeasureSpec.makeMeasureSpec(780,1073741824));g.overlayWindow.layout(0,0,390,780);
+        motion(android.view.MotionEvent.ACTION_DOWN);
+        g.foreground="social";g.showGate("app","social");ready();motion(android.view.MotionEvent.ACTION_UP);assertEquals(0,clicks[0]);
+        motion(android.view.MotionEvent.ACTION_DOWN);motion(android.view.MotionEvent.ACTION_UP);assertEquals(1,clicks[0]);
+    }
+    void motion(int action){android.view.MotionEvent event=android.view.MotionEvent.obtain(0,1,action,20,20,0);g.overlayWindow.dispatchTouchEvent(event);event.recycle();}
 
 }

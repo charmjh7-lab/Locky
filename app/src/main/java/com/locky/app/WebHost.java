@@ -33,7 +33,7 @@ final class WebHost {
     String renderedScreen="",preparedPurposeDay="";long navigationGeneration,renderedNavigation=-1,renderedRevision=-1,visualGeneration,visualPending=-1,visualCompleted=-1;
     // frameReady: drawable DOM revision, not a display fence. presentationActive: requested
     // presentation, not proof of composition. didDraw is an observation, never an exposure gate.
-    boolean retainedFrame; // Valid pixels survive a DOM revision, never document loss or detach.
+    boolean retainedFrame; // Prior prepared revision; never proof of preserved compositor pixels.
     boolean frameReady,presentationActive,everRendered,loadFailed,renderingActive;int initialRetries;
     long observedDrawGeneration=-1,commitRequestedGeneration=-1;Boolean insetKeyboard;
     private Runnable initialWatch,visualWatch;int visualRetryCount;
@@ -43,7 +43,10 @@ final class WebHost {
     static void beginUnlockTrace(){if(UnlockDiagnostics.live!=null)UnlockDiagnostics.live.begin();if(tracing()){traceBudget=120;traceUntil=SystemClock.uptimeMillis()+30_000;++traceCycle;trace("screen-off");}}
     static void resumeUnlockTrace(){if(UnlockDiagnostics.live!=null)UnlockDiagnostics.live.resumeCapture();if(tracing()){traceUntil=SystemClock.uptimeMillis()+30_000;traceBudget=Math.max(traceBudget,80);}}
     static void trace(String event){if(UnlockDiagnostics.live!=null)UnlockDiagnostics.live.record(event);if(traceBudget>0&&SystemClock.uptimeMillis()<=traceUntil){--traceBudget;android.util.Log.d("LockyUnlock","cycle="+traceCycle+" "+SystemClock.uptimeMillis()+" "+event);}}
-    void hostTrace(String event){trace("web="+role.name()+" "+event);}
+    void hostTrace(String event){
+        trace("web="+role.name()+" "+event);
+        if(isOverlay&&UnlockDiagnostics.live!=null)UnlockDiagnostics.live.gateRecord(gateTransition,event);
+    }
     WebHost(Context c,Role owner){UnlockDiagnostics.get(c);context=c;store=Store.get(c);role=owner;boolean overlay=owner==Role.APP_GATE;isOverlay=overlay;if(overlay)pendingScreen="gateIdle";presentationActive=!overlay;root=new android.widget.FrameLayout(c);root.setBackgroundColor(UiTheme.background(c));hosts.add(new WeakReference<>(this));
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root,(v,insets)->{
             androidx.core.graphics.Insets bars=insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()|androidx.core.view.WindowInsetsCompat.Type.displayCutout());
@@ -60,7 +63,8 @@ final class WebHost {
                 hostTrace("view attach observed");
                 androidx.core.view.ViewCompat.requestApplyInsets(v);
                 main.post(()->{if(closed||!root.isAttachedToWindow())return;applyTheme();
-                    if(root.getVisibility()==View.VISIBLE){resumeEngine();redraw();if(role!=Role.PHONE_START)requestVisualState();}});
+                    if(role==Role.APP_GATE){prepareOverlay();if(root.isShown())requestVisualState();}
+                    else if(root.getVisibility()==View.VISIBLE){resumeEngine();redraw();if(role!=Role.PHONE_START)requestVisualState();}});
             }
             public void onViewDetachedFromWindow(View v){hostTrace("view detach observed");renderingActive=false;resetVisualState("detach");}
         });
@@ -101,34 +105,38 @@ final class WebHost {
     void showLoading(){if(role==Role.PHONE_START){cancelInitialWatch();return;}cancelInitialWatch();resetVisualState("document");renderedNavigation=-1;renderedRevision=-1;renderedScreen="";if(loadingView!=null)loadingView.setVisibility(View.GONE);}
     boolean gateErrorVisible(){return isOverlay&&loadingView!=null&&loadingView.getVisibility()==View.VISIBLE;}
     void showGateError(){
+        hostTrace("document error; recovery screen requested");
         loadFailed=true;resetVisualState("error");
         if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);
         if(frameAvailableCallback!=null)frameAvailableCallback.run();
     }
     void rendered(WebView source,String screen,long navigation,long revision){
-        if(closed||source!=view||!ready||navigation!=navigationGeneration||revision<0||revision<renderedRevision)return;
+        if(closed||source!=view||!ready||navigation!=navigationGeneration||revision<0||revision<renderedRevision){if(isOverlay)hostTrace("stale DOM acknowledgement ignored navigation="+navigation);return;}
         if(isOverlay&&!pendingScreen.equals(screen))return;
         if(!isOverlay)pendingScreen=screen;
         if(role==Role.PHONE_START){renderedRevision=revision;renderedScreen=screen;everRendered=true;loadFailed=false;cancelInitialWatch();return;}
         boolean changed=revision!=renderedRevision||!screen.equals(renderedScreen);
         if(changed&&!renderedScreen.isEmpty())resetVisualState("dom");
-        if(tracing())hostTrace("dom changed="+changed+" revision="+revision);
-        renderedNavigation=navigation;renderedRevision=revision;renderedScreen=screen;everRendered=true;loadFailed=false;cancelInitialWatch();requestVisualState();
-        if(frameReady&&frameAvailableCallback!=null)frameAvailableCallback.run();
+        hostTrace("data applied navigation="+navigation+" changed="+changed+" revision="+revision);
+        renderedNavigation=navigation;renderedRevision=revision;renderedScreen=screen;everRendered=true;loadFailed=false;cancelInitialWatch();
+        // Data acknowledgement can expose the window. A frame callback is only needed
+        // for a changed revision; neither condition depends on hidden onDraw.
+        if(isOverlay&&frameAvailableCallback!=null)frameAvailableCallback.run();
+        requestVisualState();
+        if(!isOverlay&&frameReady&&frameAvailableCallback!=null)frameAvailableCallback.run();
     }
 
     boolean hasUsableFrame(){return frameReady||retainedFrame;}
     boolean currentGateReady(){return isOverlay&&!loadFailed&&frameReady&&renderedNavigation==navigationGeneration&&pendingScreen.equals(renderedScreen)&&!"gateIdle".equals(renderedScreen);}
+    boolean currentGateDataApplied(){return isOverlay&&!loadFailed&&renderedNavigation==navigationGeneration
+        &&pendingScreen.equals(renderedScreen)&&!"gateIdle".equals(renderedScreen);}
     boolean gateNeedsInitialLoad(){return !ready||loadFailed;}
     void gateScreen(String name,JSONObject payload){
-        JSONObject previous=pendingGate;
-        boolean sameTarget=previous!=null&&name.equals(pendingScreen)&&previous.optJSONObject("gate")!=null&&payload.optJSONObject("gate")!=null
-            &&previous.optJSONObject("gate").optString("pkg").equals(payload.optJSONObject("gate").optString("pkg"));
-        boolean reuse=sameTarget&&frameReady&&!loadFailed&&pendingScreen.equals(renderedScreen)&&renderedNavigation==navigationGeneration;
         pendingGate=payload;gateTransition=payload.optLong("gateTransition",-1);preparedPurposeDay=payload.optString("purposeDate");pendingScreen=name;pendingChat="";++navigationGeneration;
-        // New navigation always fences input. An unchanged same-app DOM acknowledgement
-        // may reuse its validated pixels; changed revisions still request their own frame.
-        if(!reuse){resetVisualState("gate-entry");view.setAlpha(0f);}
+        // Navigation fences data/input, not the pixels of an unchanged DOM. A prior
+        // in-flight callback cannot finish this navigation, even for the same revision.
+        cancelVisualWatch();if(!frameReady)++visualGeneration;visualPending=-1;visualRetryCount=0;
+        hostTrace("data apply requested navigation="+navigationGeneration);
         if(loadingView!=null)loadingView.setVisibility(loadFailed?View.VISIBLE:View.GONE);
         if(ready)dispatchScreen();else watchInitialLoad();
     }
@@ -156,7 +164,7 @@ final class WebHost {
     private void resumeRendering(){
         if(closed||view==null)return;
         boolean exposing=!presentationActive;
-        if(exposing){presentationActive=true;visualCompleted=-1;paintedScreen="";}
+        if(exposing)presentationActive=true;
         boolean resumed=resumeEngine();
         if(resumed)redraw(); // A genuinely paused surface still needs the white-screen safeguard.
         if(frameReady){
@@ -170,19 +178,19 @@ final class WebHost {
     }
     void pause(){
         if(role==Role.PHONE_START){if(view!=null&&renderingActive){view.onPause();renderingActive=false;}return;}
-        boolean invalidate=presentationActive||renderingActive||frameReady||visualPending!=-1;
         presentationActive=false;
+        if(isOverlay){cancelVisualWatch();if(!frameReady)visualPending=-1;return;}
+        boolean invalidate=renderingActive||frameReady||visualPending!=-1;
         if(invalidate)resetVisualState("pause");
         if(view!=null&&renderingActive){hostTrace("engine pause requested");view.onPause();renderingActive=false;}
     }
     void prepareOverlay(){
         if(closed||!isOverlay||view==null)return;
-        presentationActive=false;paintedScreen="";
-        if(resumeEngine())redraw();
-        // Keeping an attached prepared view hidden is not a Chromium pause/resume cycle.
-        if(frameReady)return;
-        if(ready&&pendingScreen.equals(renderedScreen))requestVisualState();else watchInitialLoad();
+        // Prewarm the engine once. Hiding the window never pauses it or invalidates DOM.
+        resumeEngine();
+        if(!ready)watchInitialLoad();
     }
+    void cancelVisualWatch(){if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}}
     void requestVisualState(){
         if(role==Role.PHONE_START)return;
         if(closed||!ready||loadFailed||view==null||!view.isAttachedToWindow()||!root.isShown()
@@ -190,14 +198,18 @@ final class WebHost {
             ||!pendingScreen.equals(renderedScreen)||frameReady||visualPending==visualGeneration)return;
         // Keep preparing the attached document, including while its dictionary Activity is paused.
         WebView candidate=view;String screen=pendingScreen;long generation=visualGeneration,navigation=navigationGeneration;
-        visualPending=generation;hostTrace("visual callback requested generation="+generation);
+        cancelVisualWatch();visualPending=generation;hostTrace("visual callback requested generation="+generation+" navigation="+navigation);
         // A delayed callback requests another visible draw, never readiness by timeout.
         visualWatch=()->{
             visualWatch=null;
             if(closed||candidate!=view||generation!=visualGeneration||navigation!=navigationGeneration
                 ||frameReady||visualPending!=generation||!root.isShown()
                 ||!screen.equals(pendingScreen))return;
-            visualPending=-1;redraw();
+            hostTrace("visual callback delayed navigation="+navigation);
+            // One recovery draw per revision. Keep the original callback valid: a
+            // timeout never blesses stale pixels or reloads a healthy document.
+            if(isOverlay&&visualRetryCount++>=1)return;
+            visualPending=-1;if(isOverlay)invalidateFrame();else redraw();
             if(!isOverlay&&visualRetryCount++>0){
                 frameReady=true;retainedFrame=true;candidate.setVisibility(View.VISIBLE);invalidateFrame();
                 if(frameAvailableCallback!=null)frameAvailableCallback.run();
@@ -207,14 +219,14 @@ final class WebHost {
         candidate.postVisualStateCallback(generation,new WebView.VisualStateCallback(){@Override public void onComplete(long id){
             hostTrace("visual callback observed generation="+id+" current="+visualGeneration);
             if(closed||candidate!=view||generation!=visualGeneration||navigation!=navigationGeneration
-                ||!screen.equals(pendingScreen))return;
+                ||!screen.equals(pendingScreen)){hostTrace("stale visual callback ignored navigation="+navigation);return;}
             if(!root.isShown()){visualPending=-1;return;}
             if(frameReady)return;
             if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}
             visualPending=-1;frameReady=true;retainedFrame=true;if(tracing())hostTrace("visual-ready observed generation="+generation);
             // Chromium guarantees that a subsequent draw can contain this DOM revision.
             // Neither this callback nor onDraw is a fence for the system compositor.
-            candidate.setVisibility(View.VISIBLE);if(isOverlay)candidate.setAlpha(1f);if(loadingView!=null)loadingView.setVisibility(View.GONE);invalidateFrame();if(frameAvailableCallback!=null)frameAvailableCallback.run();
+            candidate.setVisibility(View.VISIBLE);if(loadingView!=null)loadingView.setVisibility(View.GONE);invalidateFrame();if(frameAvailableCallback!=null)frameAvailableCallback.run();
         }});
         // DOM layout belongs to Chromium. An attached view with unchanged bounds only
         // needs a draw here; attach/resume and watchdog recovery still request layout.
@@ -232,9 +244,9 @@ final class WebHost {
             });
         }
         if(!closed&&source==view&&tracing()&&observedDrawGeneration!=visualGeneration){observedDrawGeneration=visualGeneration;hostTrace("onDraw observed generation="+visualGeneration+" presentationActive="+presentationActive+" frameReady="+frameReady);}
-        if(closed||source!=view||!presentationActive||!frameReady||!root.isShown()||visualCompleted==visualGeneration)return;
+        if(closed||source!=view||!frameReady||!root.isShown()||visualCompleted==visualGeneration)return;
         long generation=visualGeneration;String screen=renderedScreen;
-        main.post(()->{if(!closed&&source==view&&presentationActive&&frameReady&&generation==visualGeneration&&visualCompleted!=generation&&root.isShown()){
+        main.post(()->{if(!closed&&source==view&&frameReady&&generation==visualGeneration&&visualCompleted!=generation&&root.isShown()){
             visualCompleted=generation;paintedScreen=screen;if(tracing())hostTrace("view-draw observed generation="+generation);
 
         }});
@@ -259,6 +271,7 @@ final class WebHost {
     }
     void retryInitialLoad(){
         if(closed||view==null)return;
+        hostTrace("document retry requested failed="+loadFailed);
         if(everRendered&&!loadFailed){redraw();requestVisualState();return;}
         if(ready&&!loadFailed){view.evaluateJavascript("nativeRestore()",null);return;}
         if(initialRetries++>0)return;
@@ -271,7 +284,7 @@ final class WebHost {
         view=new WebView(context){
             @Override protected void onDraw(Canvas canvas){
                 // Keep Chromium visible/rasterizing; never submit the previous app's pixels.
-                if(isOverlay&&renderedNavigation!=navigationGeneration)return;
+                if(isOverlay&&!currentGateDataApplied())return;
                 super.onDraw(canvas);didDraw(this);
             }
             @Override protected void onWindowVisibilityChanged(int visibility){
@@ -329,6 +342,7 @@ final class WebHost {
             if(closed||!ready||candidate!=view||navigation!=navigationGeneration)return;
             String navJs="notes".equals(name)&&!pendingNote.isEmpty()?"openNoteById("+JSONObject.quote(pendingNote)+","+navigation+")":"chat".equals(name)&&!chat.isEmpty()?"openChatById("+JSONObject.quote(chat)+","+navigation+")":"navigate("+JSONObject.quote(name)+","+navigation+")";
             if(role==Role.APP_GATE)navJs=gateData==null?"prepareGate("+navigation+")":"presentGate("+JSONObject.quote(name)+","+gateData+","+navigation+")";
+            if(role==Role.APP_GATE&&gateData!=null&&!everRendered)navJs="prepareGate("+navigation+");"+navJs;
             if(!purposeEditorPkg.isEmpty()&&"settings".equals(name))navJs="openPurposeManager("+JSONObject.quote(purposeEditorPkg)+","+navigation+")";
             if(name.startsWith("brief|"))navJs="openBriefRoute("+JSONObject.quote(name)+","+navigation+")";
             if(isOverlay){

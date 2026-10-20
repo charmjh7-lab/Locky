@@ -54,14 +54,13 @@ public class OverlayRenderingTest {
         host.rendered(view,"app",previous,1);assertEquals(1,view.frames.size());
         host.rendered(view,"app",host.navigationGeneration,1);assertEquals(2,view.frames.size());
     }
-    @Test public void hiddenCallbacksCannotSuppressTheNextResume(){
-        rendered();host.pause();view.complete(0);assertFalse(host.frameReady);assertEquals("",host.paintedScreen);
-        host.resumeOverlay();assertEquals(2,view.frames.size());view.complete(1);assertTrue(host.frameReady);
-        WebView stale=new WebView(view.getContext());host.rendered(stale,"app",host.navigationGeneration,1);assertEquals(2,view.frames.size());stale.destroy();
+    @Test public void ordinaryHideRetainsEngineAndValidatedFrame(){
+        rendered();view.complete(0);host.pause();
+        assertTrue(host.frameReady);assertFalse(host.presentationActive);assertEquals(0,view.pauses);
+        host.resumeOverlay();assertEquals(1,view.frames.size());assertTrue(host.currentGateReady());
     }
-    @Test public void preparationDoesNotCountAsPresentationAndResumePreservesDocument(){
-        rendered();host.prepareOverlay();assertFalse(host.presentationActive);view.complete(0);
-        host.didDraw(view);Shadows.shadowOf(Looper.getMainLooper()).idle();assertEquals("",host.paintedScreen);
+    @Test public void preparationDoesNotChangePresentationOrWaitForDrawing(){
+        rendered();host.prepareOverlay();assertTrue(host.presentationActive);view.complete(0);
         view.scripts.clear();host.resumeOverlay();assertSame(view,host.view);assertTrue(view.scripts.isEmpty());assertEquals(0,view.loads);assertEquals(1,view.frames.size());
         host.didDraw(view);Shadows.shadowOf(Looper.getMainLooper()).idle();assertEquals("app",host.paintedScreen);
     }
@@ -69,7 +68,7 @@ public class OverlayRenderingTest {
         rendered();Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(4));
         assertSame(view,host.view);assertEquals(0,view.loads);
         assertFalse(host.frameReady);assertFalse(host.currentGateReady());assertEquals(View.VISIBLE,view.getVisibility());
-        assertEquals(View.GONE,host.loadingView.getVisibility());assertTrue(view.frames.size()>2);
+        assertEquals(View.GONE,host.loadingView.getVisibility());assertEquals(2,view.frames.size());
         view.complete(0);assertTrue(host.frameReady);
         int callbacks=view.frames.size();host.resumeOverlay();assertEquals(callbacks,view.frames.size());assertEquals(1,view.resumes);
     }
@@ -85,11 +84,10 @@ public class OverlayRenderingTest {
         assertEquals(resumes,view.resumes);assertEquals(timers,view.timers);assertEquals(layouts,view.layouts);
         assertEquals(invalidations,view.invalidations);assertEquals(1,view.frames.size());assertTrue(view.scripts.isEmpty());assertEquals(0,view.loads);
     }
-    @Test public void genuinePauseStillResumesAndRequestsANewFrameWithoutReloading(){
-        rendered();view.complete(0);host.pause();host.pause();
-        assertEquals(1,view.pauses);assertFalse(host.frameReady);assertFalse(host.hasPresentedDocument());host.resumeOverlay();
-        assertEquals(2,view.resumes);assertEquals(2,view.frames.size());assertEquals(0,view.loads);
-        view.complete(1);assertTrue(host.frameReady);
+    @Test public void actualDetachInvalidatesFrameWithoutReloadingDocument(){
+        rendered();view.complete(0);host.resetVisualState("detach");
+        assertFalse(host.frameReady);host.resumeOverlay();assertEquals(2,view.frames.size());
+        view.complete(1);assertTrue(host.frameReady);assertEquals(0,view.loads);
     }
     @Test public void changedDomOnTheSameScreenNeedsItsOwnFrameRatherThanReusingTheOldReadyFlag(){
         rendered();view.complete(0);long visual=host.visualGeneration,navigation=host.navigationGeneration;int layouts=view.layouts;
@@ -102,13 +100,13 @@ public class OverlayRenderingTest {
         rendered();host.rendered(view,"app",host.navigationGeneration,0);
         assertTrue(host.frameReady);assertEquals(generation,host.visualGeneration);assertEquals(1,view.frames.size());
     }
-    @Test public void retainedPixelsSurviveWarmValidationButNeverADocumentDetachOrRealPause(){
+    @Test public void retainedFrameSurvivesOrdinaryHideButNeverDocumentLossOrDetach(){
         rendered();assertFalse(host.hasUsableFrame());view.complete(0);assertTrue(host.hasUsableFrame());
         host.prepareOverlay();host.rendered(view,"app",host.navigationGeneration,2);
         assertFalse(host.frameReady);assertTrue(host.hasUsableFrame());
         host.resetVisualState("detach");assertFalse(host.hasUsableFrame());
         host.requestVisualState();view.complete(view.frames.size()-1);assertTrue(host.hasUsableFrame());
-        host.pause();assertFalse(host.hasUsableFrame());
+        host.pause();assertTrue(host.hasUsableFrame());
         host.resumeOverlay();view.complete(view.frames.size()-1);assertTrue(host.hasUsableFrame());
         host.screen("app");assertFalse(host.hasUsableFrame());assertEquals(View.VISIBLE,view.getVisibility());
     }
@@ -154,7 +152,32 @@ public class OverlayRenderingTest {
         host.rendered(view,"app",old,1);assertFalse(host.currentGateReady());
         host.rendered(view,"app",host.navigationGeneration,1);assertTrue(host.currentGateReady());assertEquals(frames,view.frames.size());assertEquals(1f,view.getAlpha(),0);
         host.gateScreen("app",new org.json.JSONObject().put("gate",new org.json.JSONObject().put("pkg","social")));
-        assertFalse(host.frameReady);assertFalse(host.hasUsableFrame());assertEquals(0f,view.getAlpha(),0);
+        assertTrue(host.frameReady);assertFalse(host.currentGateDataApplied());assertFalse(host.currentGateReady());assertEquals(1f,view.getAlpha(),0);
+        host.rendered(view,"app",host.navigationGeneration,2);assertFalse(host.frameReady);
+        view.complete(view.frames.size()-1);assertTrue(host.currentGateReady());
+    }
+
+    @Test public void hiddenDataAcknowledgementDoesNotNeedHiddenOnDraw(){
+        host.root.setVisibility(View.GONE);rendered();
+        assertTrue(host.currentGateDataApplied());assertFalse(host.currentGateReady());assertEquals(0,view.frames.size());
+        host.root.setVisibility(View.VISIBLE);host.resumeOverlay();assertEquals(1,view.frames.size());
+        view.complete(0);assertTrue(host.currentGateReady());assertEquals("",host.paintedScreen);
+    }
+    @Test public void rapidEntriesRejectEveryOldCallbackEvenWhenAppReturns() throws Exception {
+        host.gateScreen("app",new org.json.JSONObject());rendered();long first=host.navigationGeneration;
+        host.gateScreen("app",new org.json.JSONObject());host.rendered(view,"app",host.navigationGeneration,2);
+        host.gateScreen("app",new org.json.JSONObject());host.rendered(view,"app",host.navigationGeneration,3);
+        view.complete(0);view.complete(1);assertFalse(host.currentGateReady());
+        host.rendered(view,"app",first,4);assertEquals(3,host.renderedRevision);
+        view.complete(2);assertTrue(host.currentGateReady());
+    }
+
+    @Test public void actualRendererDeathRecreatesOnlyTheDeadWebView(){
+        Activity owner=(Activity)view.getContext();host.close();host=new WebHost(owner,WebHost.Role.APP_GATE);owner.setContentView(host.root);
+        WebView dead=host.view;assertTrue(dead.getWebViewClient().onRenderProcessGone(dead,null));
+        assertTrue(host.gateErrorVisible());assertFalse(host.currentGateReady());
+        Shadows.shadowOf(Looper.getMainLooper()).idle();assertNotSame(dead,host.view);
+        host.rendered(dead,"app",host.navigationGeneration,99);assertFalse(host.currentGateReady());
     }
 
 }
