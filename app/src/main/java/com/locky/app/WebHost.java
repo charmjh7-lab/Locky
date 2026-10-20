@@ -29,14 +29,13 @@ final class WebHost {
     private final BroadcastReceiver packageChanges=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent intent){purposeIcons.invalidate();if(role!=Role.APP_GATE)evaluate("refresh(true)");}};
 
     static final List<WeakReference<WebHost>> hosts=new CopyOnWriteArrayList<>();
-    final android.widget.FrameLayout root;WebView view;final Context context;final Store store;final Handler main=new Handler(Looper.getMainLooper());volatile String pendingScreen="home",paintedScreen="",pendingChat="",pendingNote="";boolean ready=false,closed=false;
+    final android.widget.FrameLayout root;WebView view;final Context context;final Store store;final Handler main=new Handler(Looper.getMainLooper());volatile String pendingScreen="home",pendingChat="",pendingNote="";boolean ready=false,closed=false;
     // DOM completion, Chromium frame preparation and Android drawing are separate states.
-    String renderedScreen="",preparedPurposeDay="";long navigationGeneration,renderedNavigation=-1,renderedRevision=-1,visualGeneration,visualPending=-1,visualCompleted=-1;
-    // frameReady: prepared entry (MAIN: drawable revision), not a display fence. presentationActive: requested
-    // presentation, not proof of composition. didDraw is an observation, never an exposure gate.
-    boolean retainedFrame; // Prior prepared revision; never proof of preserved compositor pixels.
+    String renderedScreen="",preparedPurposeDay="";long navigationGeneration,renderedNavigation=-1,renderedRevision=-1,visualGeneration,visualPending=-1;
+    // frameReady marks the current navigation as prepared, not a compositor fence.
+    // presentationActive is a display request, not proof of pixels on screen.
     boolean frameReady,presentationActive,everRendered,loadFailed,visualFailed,renderingActive;int initialRetries;
-    long observedDrawGeneration=-1,commitRequestedGeneration=-1;Boolean insetKeyboard;
+    Boolean insetKeyboard;
     private Runnable initialWatch,visualWatch;int visualRetryCount;
     // Bounded Logcat plus opt-in private recording. Never log user content or package names.
     private static int traceBudget,traceCycle;private static long traceUntil;
@@ -102,7 +101,7 @@ final class WebHost {
         if(view!=null){view.getSettings().setTextZoom(Math.round(context.getResources().getConfiguration().fontScale*100));view.setBackgroundColor(UiTheme.background(context));if(Build.VERSION.SDK_INT>=29)view.setForceDarkAllowed(false);}
         if(ready)evaluate("themeChanged("+UiTheme.dark(context)+");viewportChanged()");
     }
-    void resetVisualState(String reason){if(role==Role.PHONE_START)return;if(!"dom".equals(reason))retainedFrame=false;if(tracing())hostTrace("frameReady="+frameReady+"->false reason="+reason+" generation="+(visualGeneration+1));if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}++visualGeneration;visualPending=-1;visualCompleted=-1;frameReady=false;paintedScreen="";visualRetryCount=0;}
+    void resetVisualState(String reason){if(role==Role.PHONE_START)return;if(tracing())hostTrace("frameReady="+frameReady+"->false reason="+reason+" generation="+(visualGeneration+1));if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}++visualGeneration;visualPending=-1;frameReady=false;visualRetryCount=0;}
     void showLoading(){if(role==Role.PHONE_START){cancelInitialWatch();return;}cancelInitialWatch();resetVisualState("document");renderedNavigation=-1;renderedRevision=-1;renderedScreen="";if(!isOverlay&&loadingView!=null)loadingView.setVisibility(View.GONE);}
     boolean gateErrorVisible(){return isOverlay&&(loadFailed||visualFailed);}
     void showGateError(){
@@ -125,11 +124,10 @@ final class WebHost {
         if(changed&&!renderedScreen.isEmpty()&&!liveUpdate)resetVisualState("dom");
         hostTrace("data applied navigation="+navigation+" changed="+changed+" revision="+revision);
         renderedNavigation=navigation;renderedRevision=revision;renderedScreen=screen;everRendered=true;loadFailed=false;cancelInitialWatch();
-        requestVisualState();
+        if(!frameReady)requestVisualState();
         if(!isOverlay&&frameReady&&frameAvailableCallback!=null)frameAvailableCallback.run();
     }
 
-    boolean hasUsableFrame(){return frameReady||retainedFrame;}
     boolean currentGateReady(){return isOverlay&&!loadFailed&&!visualFailed&&frameReady&&renderedNavigation==navigationGeneration&&pendingScreen.equals(renderedScreen)&&!"gateIdle".equals(renderedScreen);}
     boolean currentGateDataApplied(){return isOverlay&&!loadFailed&&!visualFailed&&renderedNavigation==navigationGeneration
         &&pendingScreen.equals(renderedScreen)&&!"gateIdle".equals(renderedScreen);}
@@ -241,7 +239,7 @@ final class WebHost {
             }
             visualPending=-1;redraw();
             if(visualRetryCount++>0){
-                frameReady=true;retainedFrame=true;candidate.setVisibility(View.VISIBLE);invalidateFrame();
+                frameReady=true;candidate.setVisibility(View.VISIBLE);invalidateFrame();
                 if(frameAvailableCallback!=null)frameAvailableCallback.run();
             }else requestVisualState();
         };
@@ -254,7 +252,7 @@ final class WebHost {
             if(frameReady)return;
             if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}
             if(isOverlay&&visualRetryCount>0)hostTrace("visual recovery succeeded navigation="+navigation);
-            visualPending=-1;visualRetryCount=0;frameReady=true;retainedFrame=true;if(tracing())hostTrace("visual-ready observed generation="+generation);
+            visualPending=-1;visualRetryCount=0;frameReady=true;if(tracing())hostTrace("visual-ready observed generation="+generation);
             // Chromium guarantees that a subsequent draw can contain this DOM revision.
             // Neither this callback nor onDraw is a fence for the system compositor.
             // GuardService applies VISIBLE synchronously inside this callback, as required
@@ -266,25 +264,6 @@ final class WebHost {
         // DOM layout belongs to Chromium. An attached view with unchanged bounds only
         // needs a draw here; attach/resume and watchdog recovery still request layout.
         invalidateFrame();
-    }
-    void didDraw(WebView source){
-        if(role==Role.PHONE_START)return;
-        // Diagnostic only: HWUI submission is stronger evidence than onDraw, but
-        // still does not establish SurfaceFlinger/OEM display composition.
-        if(!closed&&source==view&&tracing()&&Build.VERSION.SDK_INT>=29&&source.isHardwareAccelerated()
-            &&commitRequestedGeneration!=visualGeneration){
-            long generation=visualGeneration;commitRequestedGeneration=generation;
-            source.getViewTreeObserver().registerFrameCommitCallback(()->{
-                if(!closed&&source==view)hostTrace("frame-commit observed generation="+generation+" current="+visualGeneration+" display=unconfirmed");
-            });
-        }
-        if(!closed&&source==view&&tracing()&&observedDrawGeneration!=visualGeneration){observedDrawGeneration=visualGeneration;hostTrace("onDraw observed generation="+visualGeneration+" presentationActive="+presentationActive+" frameReady="+frameReady);}
-        if(closed||source!=view||!frameReady||!root.isShown()||visualCompleted==visualGeneration)return;
-        long generation=visualGeneration;String screen=renderedScreen;
-        main.post(()->{if(!closed&&source==view&&frameReady&&generation==visualGeneration&&visualCompleted!=generation&&root.isShown()){
-            visualCompleted=generation;paintedScreen=screen;if(tracing())hostTrace("view-draw observed generation="+generation);
-
-        }});
     }
     private void cancelInitialWatch(){if(initialWatch!=null){main.removeCallbacks(initialWatch);initialWatch=null;}}
     private void watchInitialLoad(){
@@ -327,9 +306,6 @@ final class WebHost {
         if(closed)return;
         renderingActive=false;insetKeyboard=null;loadFailed=false;visualFailed=false;if(isOverlay){notifiedGateExposure="";resetVisualState("create");}
         view=new WebView(context){
-            @Override protected void onDraw(Canvas canvas){
-                super.onDraw(canvas);didDraw(this);
-            }
             @Override protected void onWindowVisibilityChanged(int visibility){
                 super.onWindowVisibilityChanged(visibility);
                 hostTrace("window visibility observed="+visibility+" attached="+isAttachedToWindow()+" accelerated="+isHardwareAccelerated());
