@@ -147,7 +147,7 @@ public final class GuardService extends AccessibilityService {
         if(observedKeyguard==null||observedKeyguard!=locked){observedKeyguard=locked;if(locked){PhoneStartActivity phone=PhoneStartActivity.current();if(phone!=null)phone.clearExternalReturn();}if(store!=null)store.screenState(locked?ScreenHistory.OFF:interactive?ScreenHistory.ON:ScreenHistory.OFF);WebHost.trace("keyguard observed locked="+locked);}
         return locked;
     }
-    boolean acceptGateInput(){return overlayVisible&&overlay!=null&&overlay.currentGateReady()&&exposure==Exposure.INTERACTIVE&&interactive&&!systemPaused&&!keyguardLocked()&&gatePkg.equals(foreground);}
+    boolean acceptGateInput(){return overlay!=null&&overlay.currentGateReady()&&exposure==Exposure.INTERACTIVE&&currentGateEntry(overlay,overlay.gateTransition);}
     boolean acceptGateInput(long token,String pkg){
         if(token!=gateTransition||!pkg.equals(gatePkg)||!acceptGateInput())return false;
         // Revalidate actual windows at the action boundary, before saving or granting.
@@ -395,7 +395,7 @@ public final class GuardService extends AccessibilityService {
             overlayAttached=overlayWindow.isAttachedToWindow();
             if(overlayAttached)return;
             // A parent can already belong to WindowManager while attach is in flight.
-            // Never register it again, including while GONE.
+            // Never register it again, including while attachment is pending.
             if(overlayWindow.getParent()!=null||overlayAttachPending){scheduleOverlayAttachRetry();return;}
         }
         if(overlayAttachFailed||overlayAttachRetry!=null)return;
@@ -424,14 +424,16 @@ public final class GuardService extends AccessibilityService {
                 @Override public void onViewDetachedFromWindow(View v){
                     overlayAttached=false;overlayAttachPending=false;
                     gateTrace("window detached");
+                    overlay.resetVisualState("window-detach");
+                    applyExposure(!overlayVisible?Exposure.HIDDEN:exposure==Exposure.INTERACTIVE?Exposure.WAITING:exposure);
                     if(overlayVisible)scheduleOverlayAttachRetry();
                 }
             });
             overlayLayout=new WindowManager.LayoutParams(-1,-1,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_SECURE|WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
-                    |WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE|WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,PixelFormat.OPAQUE);
+                    |WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE|WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,PixelFormat.TRANSLUCENT);
             overlayLayout.gravity=Gravity.TOP|Gravity.START;overlayLayout.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;overlayLayout.setTitle("Locky app gate");
-            overlayWindow.setVisibility(View.GONE);
+            overlayWindow.setBackgroundColor(android.graphics.Color.TRANSPARENT);
             overlayWindow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
         }
         try{overlayAttachPending=true;window.addView(overlayWindow,overlayLayout);
@@ -458,7 +460,8 @@ public final class GuardService extends AccessibilityService {
             if(overlayAttachRetries>=2){
                 overlayAttachFailed=true;overlayAttachPending=false;
                 gateTrace("window recovery failed attached=false parent="+(overlayWindow.getParent()!=null));
-                overlay.showGateError(true);return;
+                // A disconnected window is not a failed WebView frame.
+                applyExposure(exposure);return;
             }
             ++overlayAttachRetries;
             gateTrace("window recovery retry="+overlayAttachRetries+" parent="+(overlayWindow.getParent()!=null));
@@ -504,7 +507,7 @@ public final class GuardService extends AccessibilityService {
         prepareAppGate();
         overlayVisible=true;
         // Conceal previous content before a new navigation is sent to JavaScript.
-        if(!same)applyExposure(Exposure.HIDDEN);
+        if(!same)applyExposure(Exposure.WAITING);
         if(!same){try{overlay.gateScreen(type,gatePayload());}catch(JSONException error){hideOverlay();throw new IllegalStateException("앱 사용 정보를 준비하지 못했습니다.",error);}}
         if(same)overlay.ensurePurposeDay();
         revealOverlay();
@@ -515,30 +518,39 @@ public final class GuardService extends AccessibilityService {
         if(overlay==null||overlayWindow==null)return;
         overlayAttached=overlayWindow.isAttachedToWindow();
         if(!overlayAttached)prepareAppGateWindow();
-        Exposure next=!overlayVisible?Exposure.HIDDEN:(!interactive||keyguardLocked()||systemPaused||!gatePkg.equals(foreground))?Exposure.SUSPENDED:
-            overlay.currentGateReady()?Exposure.INTERACTIVE:Exposure.WAITING;
+        Exposure next=!overlayVisible?Exposure.HIDDEN:(!interactive||lockPending||keyguardLocked()||systemPaused||!gatePkg.equals(foreground))?Exposure.SUSPENDED:
+            overlayAttached&&currentGateEntry(overlay,overlay.gateTransition)&&overlay.currentGateReady()?Exposure.INTERACTIVE:Exposure.WAITING;
         applyExposure(next);
     }
-    boolean acceptGateErrorInput(){return overlayVisible&&overlay!=null&&overlay.gateErrorVisible()&&exposure==Exposure.WAITING
-        &&interactive&&!systemPaused&&!keyguardLocked()&&gatePkg.equals(foreground);}
+    boolean currentGateEntry(WebHost host,long transition){
+        return overlay==host&&!host.closed&&overlayAttached&&overlayVisible&&transition==gateTransition&&!lockPending
+            &&interactive&&!systemPaused&&!keyguardLocked()&&gatePkg.equals(foreground)
+            &&store.managed(System.currentTimeMillis())&&policyRule(gatePkg)!=null;
+    }
+    boolean acceptGateErrorInput(){return overlay!=null&&overlay.gateErrorVisible()&&exposure==Exposure.WAITING
+        &&currentGateEntry(overlay,overlay.gateTransition);}
     void applyExposure(Exposure next){
         if(overlay==null||overlayWindow==null)return;
         boolean input=next==Exposure.INTERACTIVE;
-        boolean error=next==Exposure.WAITING&&overlay.gateErrorVisible();
-        boolean shown=input||next==Exposure.WAITING&&(overlay.currentGateDataApplied()||error);
-        boolean wasShown=overlayWindow.getVisibility()==View.VISIBLE;
-        if(wasShown!=shown){gateTrace("window display requested shown="+shown+" data="+overlay.currentGateDataApplied());overlayWindow.setVisibility(shown?View.VISIBLE:View.GONE);}
-        overlay.presentationActive=shown;
-        if(!shown)overlay.suspendVisualRequest();
+        boolean waiting=next==Exposure.WAITING;
+        boolean error=waiting&&overlay.gateErrorVisible();
+        // The attached transparent hierarchy keeps Chromium eligible for visual callbacks.
+        // Only the current prepared WebView (or native recovery view) covers the app.
+        overlayWindow.setVisibility(View.VISIBLE);
+        overlay.root.setVisibility(View.VISIBLE);
+        overlay.view.setVisibility(input?View.VISIBLE:View.INVISIBLE);
+        overlay.loadingView.setVisibility(error?View.VISIBLE:View.GONE);
+        overlay.presentationActive=input||waiting;
+        if(!overlay.presentationActive)overlay.suspendVisualRequest();
         if(next==Exposure.HIDDEN||next==Exposure.SUSPENDED)cancelOverlayAttachRetry();
-        overlayWindow.setImportantForAccessibility(input||shown&&overlay.gateErrorVisible()?View.IMPORTANT_FOR_ACCESSIBILITY_AUTO:View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+        overlayWindow.setImportantForAccessibility(input||error?View.IMPORTANT_FOR_ACCESSIBILITY_AUTO:View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
         if(overlayLayout!=null){
             int passive=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
             int flags=input?overlayLayout.flags&~passive:overlayLayout.flags|passive;
-            if(shown)flags&=~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+            if(waiting)flags&=~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
             if(flags!=overlayLayout.flags||overlayLayoutDirty){
                 overlayLayout.flags=flags;overlayLayoutDirty=true;
-                if(overlayWindow.isAttachedToWindow())try{window.updateViewLayout(overlayWindow,overlayLayout);overlayLayoutDirty=false;}
+                if(overlayAttached&&overlayWindow.isAttachedToWindow())try{window.updateViewLayout(overlayWindow,overlayLayout);overlayLayoutDirty=false;}
                 catch(RuntimeException layoutError){
                     overlayAttached=overlayWindow.isAttachedToWindow();
                     UnlockDiagnostics.get(this).failure("app-gate-layout",layoutError);
@@ -549,7 +561,8 @@ public final class GuardService extends AccessibilityService {
         }
         if(input&&exposure!=Exposure.INTERACTIVE)gateTrace("input allowed navigation="+overlay.navigationGeneration);
         exposure=next;
-        if(shown)overlay.resumeOverlay();else overlay.prepareOverlay();
+        overlay.prepareOverlay();
+        if(input||waiting)overlay.requestVisualState();
     }
     JSONObject startWindowStatus() throws JSONException {
         return UnlockDiagnostics.get(this).windowStatus().put("status","activity").put("actual","activity");

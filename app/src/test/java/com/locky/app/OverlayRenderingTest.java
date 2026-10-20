@@ -21,7 +21,7 @@ public class OverlayRenderingTest {
     static class FrameView extends WebView {
         final List<VisualStateCallback> frames=new ArrayList<>();final List<Long> ids=new ArrayList<>();
         final List<String> scripts=new ArrayList<>();final List<ValueCallback<String>> preparations=new ArrayList<>();int loads,resumes,pauses,layouts,timers,invalidations;
-        FrameView(Activity c){super(c);}
+        FrameView(android.content.Context c){super(c);}
         @Override public void postVisualStateCallback(long id,VisualStateCallback callback){ids.add(id);frames.add(callback);}
         @Override public void evaluateJavascript(String script,ValueCallback<String> callback){scripts.add(script);if(script.startsWith("prepareStart(")){preparations.add(callback);return;}if(callback!=null)callback.onReceiveValue("null");}
         @Override public void loadUrl(String url){loads++;}
@@ -39,18 +39,22 @@ public class OverlayRenderingTest {
         // Robolectric 4.16.1 RoboWebSettings does not store offscreenPreRaster.
         // Its getter always returns false; hardware rasterization needs device evidence.
         host.root.removeView(host.view);host.view.destroy();view=new FrameView(a);host.view=view;host.root.addView(view,0,new android.widget.FrameLayout.LayoutParams(-1,-1));a.setContentView(host.root);
+        view.setVisibility(View.INVISIBLE);
+        // Isolated WebHost tests use the same synchronous exposure handoff as the service.
+        host.frameAvailableCallback=()->{view.setVisibility(host.currentGateReady()?View.VISIBLE:View.INVISIBLE);host.loadingView.setVisibility(host.gateErrorVisible()?View.VISIBLE:View.GONE);};
         host.pendingScreen="app";host.ready=true;host.resumeOverlay();
     }
     @After public void cleanup(){host.close();host.store.close();Store.instance=null;}
+    void entry(String name,org.json.JSONObject payload){view.setVisibility(View.INVISIBLE);host.gateScreen(name,payload);}
     void rendered(){host.rendered(view,"app",host.navigationGeneration,1);}
     @Test public void javascriptAndVisualCallbacksDoNotClaimAndroidHasDrawn(){
-        rendered();assertEquals(1,view.frames.size());assertEquals(View.VISIBLE,view.getVisibility());
+        rendered();assertEquals(1,view.frames.size());assertEquals(View.INVISIBLE,view.getVisibility());
         view.complete(0);assertTrue(host.frameReady);assertEquals(View.VISIBLE,view.getVisibility());assertEquals(View.GONE,host.loadingView.getVisibility());assertEquals("",host.paintedScreen);
         host.didDraw(view);Shadows.shadowOf(Looper.getMainLooper()).idle();assertEquals("app",host.paintedScreen);
     }
     @Test public void staleFrameAndSameScreenJavascriptCannotCompleteNewNavigation(){
-        long previous=host.navigationGeneration;rendered();host.screen("app");view.complete(0);
-        assertFalse(host.frameReady);assertEquals(View.VISIBLE,view.getVisibility());
+        long previous=host.navigationGeneration;rendered();entry("app",new org.json.JSONObject());view.complete(0);
+        assertFalse(host.frameReady);assertEquals(View.INVISIBLE,view.getVisibility());
         host.rendered(view,"app",previous,1);assertEquals(1,view.frames.size());
         host.rendered(view,"app",host.navigationGeneration,1);assertEquals(2,view.frames.size());
     }
@@ -78,7 +82,7 @@ public class OverlayRenderingTest {
     }
     @Test public void nextManagedAppCanPrepareAfterVisualFailure() throws Exception {
         rendered();Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(3));assertTrue(host.gateErrorVisible());
-        host.gateScreen("app",new org.json.JSONObject());host.rendered(view,"app",host.navigationGeneration,2);
+        entry("app",new org.json.JSONObject());host.rendered(view,"app",host.navigationGeneration,2);
         assertFalse(host.gateErrorVisible());assertFalse(host.currentGateReady());assertEquals(3,view.frames.size());
         view.complete(1);assertFalse(host.currentGateReady());view.complete(2);assertTrue(host.currentGateReady());assertEquals(0,view.loads);
     }
@@ -107,11 +111,13 @@ public class OverlayRenderingTest {
         assertFalse(host.frameReady);host.resumeOverlay();assertEquals(2,view.frames.size());
         view.complete(1);assertTrue(host.frameReady);assertEquals(0,view.loads);
     }
-    @Test public void changedDomOnTheSameScreenNeedsItsOwnFrameRatherThanReusingTheOldReadyFlag(){
+    @Test public void timerAndPurposeRevisionsKeepThePreparedEntryVisibleAndInteractive(){
         rendered();view.complete(0);long visual=host.visualGeneration,navigation=host.navigationGeneration;int layouts=view.layouts;
-        host.rendered(view,"app",navigation,2);assertFalse(host.frameReady);assertTrue(host.hasPresentedDocument());assertTrue(host.visualGeneration>visual);assertEquals(navigation,host.navigationGeneration);
-        assertEquals(2,view.frames.size());view.complete(0);assertFalse(host.frameReady);
-        view.complete(1);assertTrue(host.frameReady);assertEquals(layouts,view.layouts);assertSame(view,host.view);assertEquals(0,view.loads);
+        for(int revision=2;revision<6;revision++){
+            host.rendered(view,"app",navigation,revision);
+            assertTrue(host.currentGateReady());assertTrue(host.hasPresentedDocument());assertEquals(View.VISIBLE,view.getVisibility());
+        }
+        assertEquals(visual,host.visualGeneration);assertEquals(1,view.frames.size());assertEquals(layouts,view.layouts);assertEquals(0,view.loads);
     }
     @Test public void duplicateRestoreAndOlderRevisionCannotInvalidateAValidFrame(){
         rendered();view.complete(0);long generation=host.visualGeneration;
@@ -121,16 +127,16 @@ public class OverlayRenderingTest {
     @Test public void retainedFrameSurvivesOrdinaryHideButNeverDocumentLossOrDetach(){
         rendered();assertFalse(host.hasUsableFrame());view.complete(0);assertTrue(host.hasUsableFrame());
         host.prepareOverlay();host.rendered(view,"app",host.navigationGeneration,2);
-        assertFalse(host.frameReady);assertTrue(host.hasUsableFrame());
+        assertTrue(host.frameReady);assertTrue(host.hasUsableFrame());
         host.resetVisualState("detach");assertFalse(host.hasUsableFrame());
         host.requestVisualState();view.complete(view.frames.size()-1);assertTrue(host.hasUsableFrame());
         host.pause();assertTrue(host.hasUsableFrame());
         host.resumeOverlay();view.complete(view.frames.size()-1);assertTrue(host.hasUsableFrame());
-        host.screen("app");assertFalse(host.hasUsableFrame());assertEquals(View.VISIBLE,view.getVisibility());
+        entry("app",new org.json.JSONObject());assertFalse(host.hasUsableFrame());assertEquals(View.INVISIBLE,view.getVisibility());
     }
     @Test public void warmEntryCannotValidateOldSameScreenBeforeItsOwnDomAcknowledgement() throws Exception {
         rendered();view.complete(0);int frames=view.frames.size();long old=host.navigationGeneration;
-        host.gateScreen("app",new org.json.JSONObject());host.prepareOverlay();host.requestVisualState();
+        entry("app",new org.json.JSONObject());host.prepareOverlay();host.requestVisualState();
         assertEquals(frames,view.frames.size());assertFalse(host.currentGateReady());assertEquals(0,view.loads);
         host.rendered(view,"app",old,2);assertEquals(frames,view.frames.size());
         host.rendered(view,"app",host.navigationGeneration,2);assertEquals(frames+1,view.frames.size());
@@ -162,17 +168,15 @@ public class OverlayRenderingTest {
         androidx.core.view.ViewCompat.dispatchApplyWindowInsets(host.root,ime);Shadows.shadowOf(Looper.getMainLooper()).idle();
         assertEquals(count+1,view.scripts.stream().filter(s->s.startsWith("insetsChanged")).count());assertEquals(300,host.root.getPaddingBottom());
     }
-    @Test public void unchangedSameAppEntryReusesFrameOnlyAfterNewNavigationAcknowledgement() throws Exception {
+    @Test public void newEntryWithUnchangedDomStillRequiresItsOwnVisualCallback() throws Exception {
         org.json.JSONObject payload=new org.json.JSONObject().put("gate",new org.json.JSONObject().put("pkg","video"));
-        host.gateScreen("app",payload);host.rendered(view,"app",host.navigationGeneration,1);view.complete(view.frames.size()-1);
-        assertTrue(host.currentGateReady());long visual=host.visualGeneration,old=host.navigationGeneration;int frames=view.frames.size();
-        host.gateScreen("app",payload);assertEquals(visual,host.visualGeneration);assertTrue(host.frameReady);assertFalse(host.currentGateReady());
+        entry("app",payload);host.rendered(view,"app",host.navigationGeneration,1);view.complete(view.frames.size()-1);
+        long old=host.navigationGeneration;int frames=view.frames.size();
+        entry("app",payload);assertFalse(host.frameReady);assertEquals(View.INVISIBLE,view.getVisibility());
         host.rendered(view,"app",old,1);assertFalse(host.currentGateReady());
-        host.rendered(view,"app",host.navigationGeneration,1);assertTrue(host.currentGateReady());assertEquals(frames,view.frames.size());assertEquals(1f,view.getAlpha(),0);
-        host.gateScreen("app",new org.json.JSONObject().put("gate",new org.json.JSONObject().put("pkg","social")));
-        assertTrue(host.frameReady);assertFalse(host.currentGateDataApplied());assertFalse(host.currentGateReady());assertEquals(1f,view.getAlpha(),0);
-        host.rendered(view,"app",host.navigationGeneration,2);assertFalse(host.frameReady);
-        view.complete(view.frames.size()-1);assertTrue(host.currentGateReady());
+        host.rendered(view,"app",host.navigationGeneration,1);assertFalse(host.currentGateReady());assertEquals(frames+1,view.frames.size());
+        view.complete(frames-1);assertFalse(host.currentGateReady());
+        view.complete(frames);assertTrue(host.currentGateReady());assertEquals(View.VISIBLE,view.getVisibility());assertEquals(1f,view.getAlpha(),0);
     }
 
     @Test public void hiddenDataAcknowledgementDoesNotNeedHiddenOnDraw(){
@@ -182,9 +186,9 @@ public class OverlayRenderingTest {
         view.complete(0);assertTrue(host.currentGateReady());assertEquals("",host.paintedScreen);
     }
     @Test public void rapidEntriesRejectEveryOldCallbackEvenWhenAppReturns() throws Exception {
-        host.gateScreen("app",new org.json.JSONObject());rendered();long first=host.navigationGeneration;
-        host.gateScreen("app",new org.json.JSONObject());host.rendered(view,"app",host.navigationGeneration,2);
-        host.gateScreen("app",new org.json.JSONObject());host.rendered(view,"app",host.navigationGeneration,3);
+        entry("app",new org.json.JSONObject());rendered();long first=host.navigationGeneration;
+        entry("app",new org.json.JSONObject());host.rendered(view,"app",host.navigationGeneration,2);
+        entry("app",new org.json.JSONObject());host.rendered(view,"app",host.navigationGeneration,3);
         view.complete(0);view.complete(1);assertFalse(host.currentGateReady());
         host.rendered(view,"app",first,4);assertEquals(3,host.renderedRevision);
         view.complete(2);assertTrue(host.currentGateReady());
