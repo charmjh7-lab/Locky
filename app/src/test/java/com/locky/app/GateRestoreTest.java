@@ -176,6 +176,21 @@ public class GateRestoreTest {
         g.screenOff();v.complete(1);assertFalse(g.overlayVisible);assertEquals(GuardService.Exposure.HIDDEN,g.exposure);
         assertEquals(android.view.View.INVISIBLE,v.getVisibility());assertNotEquals(0,g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
     }
+    @Test public void exposureNotificationsAreDeduplicatedAndCarryCurrentEntryWithoutRenavigation() throws Exception {
+        GuardService.live=g;g.showGate("app","video");OverlayRenderingTest.FrameView v=captureFrames();WebHost h=g.overlay;
+        h.rendered(v,"app",h.navigationGeneration,1);v.complete(0);Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+        long navigation=h.navigationGeneration,visual=h.visualGeneration;
+        org.json.JSONObject data=h.state();assertEquals(navigation,data.getLong("gateNavigation"));assertEquals(g.gateTransition,data.getLong("gateTransition"));assertTrue(data.getBoolean("gateActive"));
+        v.scripts.clear();g.revealOverlay();g.revealOverlay();Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+        assertEquals(0,v.scripts.stream().filter(js->js.startsWith("gateExposureChanged(")).count());
+        g.pauseSystem();Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+        assertEquals(1,v.scripts.stream().filter(js->js.startsWith("gateExposureChanged(\"SUSPENDED\"")).count());
+        g.systemPaused=false;g.revealOverlay();Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+        assertEquals(1,v.scripts.stream().filter(js->js.startsWith("gateExposureChanged(\"INTERACTIVE\"")).count());
+        assertEquals(navigation,h.navigationGeneration);assertEquals(visual,h.visualGeneration);assertEquals(1,v.frames.size());
+        g.hideOverlay();Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();assertFalse(h.state().getBoolean("gateActive"));
+        assertEquals(1,v.scripts.stream().filter(js->js.startsWith("gateExposureChanged(\"HIDDEN\"")).count());
+    }
     @Test public void failedAttachRetriesTheSameWindowAndHostOnce(){
         final int[] attempts={0};WindowManager actual=g.getSystemService(WindowManager.class);
         g.window=(WindowManager)Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{WindowManager.class},(p,m,a)->{

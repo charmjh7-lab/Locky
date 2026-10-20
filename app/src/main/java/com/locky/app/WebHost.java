@@ -21,6 +21,7 @@ final class WebHost {
     final Role role;
     private JSONObject pendingGate;
     long gateTransition=-1;
+    String notifiedGateExposure="";long notifiedGateNavigation=-1,notifiedGateTransition=-1;
     final View loadingView;final boolean isOverlay;
     Runnable frameAvailableCallback;
     final PurposeIcons purposeIcons=new PurposeIcons();
@@ -140,6 +141,15 @@ final class WebHost {
         hostTrace("data apply requested navigation="+navigationGeneration);
         if(loadFailed){retryInitialLoad();return;}
         if(ready)dispatchScreen();else watchInitialLoad();
+    }
+    // This only informs JavaScript; GuardService remains the exposure/input owner.
+    void notifyGateExposure(GuardService.Exposure exposure){
+        if(!isOverlay||closed||!ready||pendingGate==null)return;
+        String name=exposure.name();long navigation=navigationGeneration,transition=gateTransition;
+        if(name.equals(notifiedGateExposure)&&navigation==notifiedGateNavigation&&transition==notifiedGateTransition)return;
+        notifiedGateExposure=name;notifiedGateNavigation=navigation;notifiedGateTransition=transition;
+        JSONObject data=pendingGate.optJSONObject("gate");String pkg=data==null?"":data.optString("pkg");
+        evaluate("gateExposureChanged("+JSONObject.quote(name)+","+navigation+","+transition+","+JSONObject.quote(pkg)+")");
     }
     // Data-only entry refresh for a phone locked across midnight. No window, loading,
     // readiness gate or WebView lifecycle changes; a visible page never runs this on a timer.
@@ -315,7 +325,7 @@ final class WebHost {
     }
     void createView(){
         if(closed)return;
-        renderingActive=false;insetKeyboard=null;loadFailed=false;visualFailed=false;if(isOverlay)resetVisualState("create");
+        renderingActive=false;insetKeyboard=null;loadFailed=false;visualFailed=false;if(isOverlay){notifiedGateExposure="";resetVisualState("create");}
         view=new WebView(context){
             @Override protected void onDraw(Canvas canvas){
                 super.onDraw(canvas);didDraw(this);
@@ -384,16 +394,21 @@ final class WebHost {
                 candidate.evaluateJavascript("(function(){try{"+navJs+";return true;}catch(e){return false;}})()",result->{
                     if(!closed&&candidate==view&&navigation==navigationGeneration&&"false".equals(result))showGateError();
                 });
+                if(context instanceof GuardService)notifyGateExposure(((GuardService)context).exposure);
             }else candidate.evaluateJavascript(navJs,null);
         };
         if(isOverlay&&Looper.myLooper()==Looper.getMainLooper())dispatch.run();else main.post(dispatch);
     }
     void evaluate(String js){WebView candidate=view;main.post(()->{if(!closed&&ready&&candidate==view)candidate.evaluateJavascript(js,null);});}
     void close(){if(role!=Role.APP_GATE)try{context.unregisterReceiver(packageChanges);}catch(IllegalArgumentException ignored){}closed=true;ready=false;resetVisualState("close");main.removeCallbacksAndMessages(null);root.removeView(view);view.removeJavascriptInterface("Native");view.destroy();hosts.removeIf(r->r.get()==null||r.get()==this);}
-    void refresh(){evaluate("refresh()");}
+    void refresh(){evaluate(isOverlay?"refresh(true)":"refresh()");}
     static void refreshAll(){for(var r:hosts){WebHost h=r.get();if(h!=null)h.refresh();}}
     static JSONObject dictionaryLaunched(){try{return new JSONObject().put("launched",true);}catch(JSONException e){throw new IllegalStateException(e);}}
-    void answer(String id,Object value,String error){evaluate("receive("+JSONObject.quote(id)+","+(value==null?"null":value.toString())+","+(error==null?"null":JSONObject.quote(error))+")");}
+    void answer(WebView source,String id,Object value,String error){
+        String js="receive("+JSONObject.quote(id)+","+(value==null?"null":value.toString())+","+(error==null?"null":JSONObject.quote(error))+")";
+        if(!isOverlay){evaluate(js);return;}
+        main.post(()->{if(!closed&&ready&&source==view)source.evaluateJavascript(js,null);});
+    }
     static void refreshGeneralHosts(){for(var r:hosts){WebHost h=r.get();if(h!=null&&h.role!=Role.APP_GATE)h.refresh();}}
     final class Bridge {
         final WebView source;
@@ -402,17 +417,18 @@ final class WebHost {
         @JavascriptInterface public boolean darkTheme(){return UiTheme.dark(context);}
         @JavascriptInterface public void request(String id,String action,String raw){
             if(closed||source!=view)return;
-            if(!action.matches("[A-Za-z]+")||raw.length()>1000000){answer(id,null,"요청을 처리할 수 없습니다.");return;}
+            if(!action.matches("[A-Za-z]+")||raw.length()>1000000){answer(source,id,null,"요청을 처리할 수 없습니다.");return;}
             if("releaseNavigation".equals(action)){main.post(()->{if(role==Role.PHONE_START){try{JSONObject input=new JSONObject(raw);PhoneStartActivity phone=(PhoneStartActivity)context;if(input.optLong("cycle",-1)==phone.cycle)phone.releaseNavigation(input.optString("reason","tool"));}catch(JSONException ignored){}}});return;}
             if("editorFocus".equals(action)){main.post(()->{try{GuardService g=GuardService.live;validateGateAction(new JSONObject(raw),g);if(isOverlay&&g!=null)g.requestEditorInput();}catch(Exception ignored){}});return;}
             if("rendered".equals(action)){main.post(()->{try{JSONObject frame=new JSONObject(raw);rendered(source,frame.optString("screen"),frame.optLong("navigation",-1),frame.optLong("revision",-1));}catch(JSONException ignored){}});return;}
             if("present".equals(action)){main.post(()->{try{JSONObject frame=new JSONObject(raw);presented(source,frame.optString("screen"),frame.optLong("previous",-1),frame.optLong("navigation",-1),frame.optString("chat"));}catch(JSONException ignored){}});return;}
-            if((isOverlay&&Set.of("purpose","removePurpose").contains(action))||Set.of("choose","finishPurposeEditing","grant","extend","stop","utility","open","permission","dictionary","linkTest","signin","cancelLogin","exit","dismiss").contains(action))main.post(()->handle(id,action,raw));
-            else if(Set.of("brief","copyDay","saveDay").contains(action))LockyApp.app.backgroundWork.execute(()->handle(id,action,raw));
-            else LockyApp.app.work.execute(()->handle(id,action,raw));
+            if((isOverlay&&Set.of("purpose","removePurpose").contains(action))||Set.of("choose","finishPurposeEditing","grant","extend","stop","utility","open","permission","dictionary","linkTest","signin","cancelLogin","exit","dismiss").contains(action))main.post(()->handle(source,id,action,raw));
+            else if(Set.of("brief","copyDay","saveDay").contains(action))LockyApp.app.backgroundWork.execute(()->handle(source,id,action,raw));
+            else LockyApp.app.work.execute(()->handle(source,id,action,raw));
         }
     }
-    void handle(String id,String action,String raw){try {
+    void handle(String id,String action,String raw){handle(view,id,action,raw);}
+    void handle(WebView source,String id,String action,String raw){if(closed||isOverlay&&source!=view)return;try {
         JSONObject a=new JSONObject(raw);Object out=new JSONObject();GuardService g=GuardService.live;
         if(isOverlay&&Set.of("grant","extend","stop","dismiss","choose","purpose","removePurpose","linkTest","open").contains(action))validateGateAction(a,g);
         switch(action){
@@ -425,7 +441,7 @@ final class WebHost {
                 String filename="Locky-unlock-"+java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))+".txt";
                 main.post(()->((MainActivity)context).saveDiagnosticsToDocument(filename,token));break;
             }
-            case "tick":if(isOverlay){out=new JSONObject().put("gate",g==null?new JSONObject():g.state()).put("free",!store.managed(System.currentTimeMillis()));break;}out=new JSONObject().put("gate",g==null?new JSONObject():g.state()).put("free",!store.managed(System.currentTimeMillis())).put("busy",LockyApp.app.chat.busy.get()).put("activeChat",LockyApp.app.chat.active).put("chatError",LockyApp.app.chat.error).put("connection",LockyApp.app.auth.connection());break;
+            case "tick":if(isOverlay){out=gateResponseIdentity(new JSONObject(),g).put("gate",g==null?new JSONObject():g.state()).put("free",!store.managed(System.currentTimeMillis()));break;}out=new JSONObject().put("gate",g==null?new JSONObject():g.state()).put("free",!store.managed(System.currentTimeMillis())).put("busy",LockyApp.app.chat.busy.get()).put("activeChat",LockyApp.app.chat.active).put("chatError",LockyApp.app.chat.error).put("connection",LockyApp.app.auth.connection());break;
             case "finishPurposeEditing":if(context instanceof MainActivity)((MainActivity)context).finishPurposeEditing();break;
             case "apps":out=apps();break;
             case "usageApps":out=usageApps();break;
@@ -470,8 +486,8 @@ final class WebHost {
                 main.post(()->{try{
                     android.content.ClipboardManager clipboard=context.getSystemService(android.content.ClipboardManager.class);
                     clipboard.setPrimaryClip(ClipData.newPlainText("Locky 하루 기록",exportText));
-                    answer(id,new JSONObject().put("ok",true),null);
-                }catch(Exception e){answer(id,null,ChatGPT.safeError(e));}});
+                    answer(source,id,new JSONObject().put("ok",true),null);
+                }catch(Exception e){answer(source,id,null,ChatGPT.safeError(e));}});
                 return;
             }
             case "saveDay":{
@@ -500,8 +516,8 @@ final class WebHost {
         // notify the other document. Start pages apply only changed regions.
         if(Set.of("purpose","removePurpose","saveNote","deleteNote").contains(action))
             for(var ref:hosts){WebHost peer=ref.get();if(peer!=null&&peer!=this)peer.refresh();}
-        answer(id,out,null);
-    }catch(Exception e){answer(id,null,ChatGPT.safeError(e));}}
+        answer(source,id,out,null);
+    }catch(Exception e){answer(source,id,null,ChatGPT.safeError(e));}}
     JSONObject resolvePurpose(JSONObject a) throws Exception {if(a.optBoolean("transient",false))return Store.purposeData(a,a.optString("scope","phone"));if(a.has("label"))return store.purpose(a,a.optString("scope","phone"));JSONArray p=store.rows("SELECT * FROM purposes WHERE id=?",a.getString("id"));if(p.length()==0)throw new IllegalStateException("사용 목적을 다시 선택해 주세요.");return p.getJSONObject(0);}
     void saveSettings(JSONObject a) throws Exception {
         if(a.has("unlockDiagnostics"))UnlockDiagnostics.get(context).setEnabled(a.getBoolean("unlockDiagnostics"));
@@ -520,7 +536,8 @@ final class WebHost {
     }
     private void validateGateAction(JSONObject action,GuardService guard){
         if(role==Role.APP_GATE&&(guard==null||guard.overlay!=this
-            ||action.optLong("gateNavigation",-1)!=navigationGeneration||!guard.acceptGateInput(gateTransition,guard.gatePkg)))
+            ||action.optLong("gateNavigation",-1)!=navigationGeneration
+            ||action.has("gateTransition")&&action.optLong("gateTransition",-1)!=gateTransition||!guard.acceptGateInput(gateTransition,guard.gatePkg)))
             throw new IllegalStateException("앱 화면이 바뀌었습니다. 현재 목적을 다시 선택해 주세요.");
     }
     private JSONObject resolveGatePurpose(JSONObject input,GuardService guard) throws Exception {
@@ -540,11 +557,17 @@ final class WebHost {
         for(int i=0;i<purposes.length();i++)scopes.add(purposes.getJSONObject(i).getString("scope"));for(int i=0;i<rules.length();i++)scopes.add(rules.getJSONObject(i).getString("pkg"));
         JSONObject orders=new JSONObject();for(String scope:scopes)orders.put(scope,store.purposes(scope));return orders;
     }
+    JSONObject gateResponseIdentity(JSONObject data,GuardService guard) throws JSONException {
+        long transition=guard==null?-1:guard.gateTransition;
+        return data.put("gateNavigation",navigationGeneration).put("gateTransition",transition)
+            .put("gateActive",guard!=null&&guard.overlay==this&&guard.overlayVisible&&transition==gateTransition)
+            .put("gateExposure",guard==null?"HIDDEN":guard.exposure.name());
+    }
     JSONObject state() throws Exception {
         if(isOverlay){
             GuardService guard=GuardService.live;String scope=guard==null||guard.gatePkg.isEmpty()?"app":guard.gatePkg;
             JSONArray purposes=store.purposes(scope);JSONObject rule=guard==null?store.rule(scope):guard.policyRule(scope);
-            return new JSONObject().put("role",role.name()).put("overlay",true).put("purposeEditor",purposeEditorPkg)
+            return gateResponseIdentity(new JSONObject(),guard).put("role",role.name()).put("overlay",true).put("purposeEditor",purposeEditorPkg)
                 .put("gate",guard==null?new JSONObject():guard.state()).put("prefs",store.preferences()).put("free",!store.managed(System.currentTimeMillis()))
                 .put("scope",scope).put("purposeDate",java.time.LocalDate.now().toString()).put("purposes",purposes).put("purposeOrders",new JSONObject().put(scope,purposes))
                 .put("allPurposes",store.rows("SELECT * FROM purposes ORDER BY rowid")).put("rules",rule==null?new JSONArray():new JSONArray().put(rule))

@@ -480,7 +480,7 @@ public final class GuardService extends AccessibilityService {
     }
     JSONObject gatePayload() throws JSONException {
         String scope=gatePkg.isEmpty()?"app":gatePkg;JSONObject rule=policyRule(gatePkg);
-        return new JSONObject().put("gateTransition",gateTransition).put("gate",state()).put("prefs",store.preferences()).put("free",!store.managed(System.currentTimeMillis()))
+        return new JSONObject().put("gateTransition",gateTransition).put("gateExposure","WAITING").put("gate",state()).put("prefs",store.preferences()).put("free",!store.managed(System.currentTimeMillis()))
             .put("purposeDate",java.time.LocalDate.now().toString()).put("scope",scope).put("purposes",store.purposes(scope))
             .put("allPurposes",store.rows("SELECT * FROM purposes ORDER BY rowid")).put("rules",rule==null?new JSONArray():new JSONArray().put(rule));
     }
@@ -561,6 +561,7 @@ public final class GuardService extends AccessibilityService {
         }
         if(input&&exposure!=Exposure.INTERACTIVE)gateTrace("input allowed navigation="+overlay.navigationGeneration);
         exposure=next;
+        overlay.notifyGateExposure(next);
         overlay.prepareOverlay();
         if(input||waiting)overlay.requestVisualState();
     }

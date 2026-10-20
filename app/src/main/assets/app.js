@@ -29,10 +29,10 @@ let nativeKeyboard=false,purposeScope='phone',restored=false,briefSeq=0,settings
 let purposeStarting=false,briefData=null;const briefSort={apps:'desc',events:'asc',timeline:'asc'};
 Object.assign(shapes,{sortDown:'M4 5h12 M4 10h8 M4 15h4 M19 4v16 M15 16l4 4 4-4',sortUp:'M4 5h4 M4 10h8 M4 15h12 M19 20V4 M15 8l4-4 4 4'});
 const gated=['app','renew','blocked'],starts=['home','unlock',...gated];
-function api(action,args={}){if(state?.role==='APP_GATE'&&['grant','extend','stop','dismiss','choose','purpose','removePurpose','linkTest','open'].includes(action))args={gateNavigation:nativeNavigation,...args};return new Promise((resolve,reject)=>{const id=String(++seq),timeout=setTimeout(()=>{requests.delete(id);reject(Error('응답을 기다리는 중이에요. 다시 시도해 주세요.'));},25000);requests.set(id,{resolve,reject,timeout});Native.request(id,action,JSON.stringify(args));});}
+function api(action,args={}){if(state?.role==='APP_GATE'&&['state','tick','grant','extend','stop','dismiss','choose','purpose','removePurpose','linkTest','open'].includes(action))args={gateNavigation:nativeNavigation,gateTransition:state.gateTransition,...args};return new Promise((resolve,reject)=>{const id=String(++seq),timeout=setTimeout(()=>{requests.delete(id);reject(Error('응답을 기다리는 중이에요. 다시 시도해 주세요.'));},25000);requests.set(id,{resolve,reject,timeout});Native.request(id,action,JSON.stringify(args));});}
 function receive(id,value,error){const r=requests.get(id);if(!r)return;clearTimeout(r.timeout);requests.delete(id);error?r.reject(Error(error)):r.resolve(value);}
 function toast(text){$('#toast').textContent=text;$('#toast').style.display='block';clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').style.display='none',3500);}
-async function safe(fn){try{return await fn();}catch(e){toast(e.message);}}
+async function safe(fn){const entry=gateSnapshot();try{return await fn();}catch(e){if(!entry||currentGate(entry))toast(e.message);}}
 function fmt(ms){let s=Math.ceil(Math.max(0,ms)/1000);return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;}
 function mins(ms){return Math.round(ms/60000);}
 function time(m){return `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;}
@@ -41,12 +41,12 @@ function dateTime(t,timeZone=undefined){return new Date(t).toLocaleTimeString('k
 function header(back=false,title='Locky',showStatus=true){return `<div class="top">${back?`<button class="iconbtn" data-act="back" aria-label="뒤로">${icon('back')}</button>`:''}<strong>${esc(title)}</strong>${showStatus?`<span class="pill">${state?.free?'자유 시간':'집중 시간'}</span>`:''}</div>`;}
 function compactHost(){return state?.role==='PHONE_START'||state?.overlay;}
 function nav(){if(compactHost()||['chat',...gated,'unlock'].includes(screen))return '';return `<div class="bottom"><nav class="nav" aria-label="주 메뉴">${[['home','home','시작'],['chats','chat','대화'],['brief','chart','브리핑'],['settings','settings','설정']].map(([s,i,l])=>`<button data-nav="${s}" class="${screen===s?'active':''}">${icon(i)}<span>${l}</span></button>`).join('')}</nav></div>`;}
-function startPolling(){clearInterval(poll);poll=null;if(['chat','chats','brief','timer',...gated].includes(screen)&&document.visibilityState!=='hidden')poll=setInterval(()=>refresh(),screen==='brief'?30000:1000);}
+function startPolling(){clearInterval(poll);poll=null;if(state?.role==='APP_GATE'&&(gateExposure!=='INTERACTIVE'||!gateAlive))return;if(['chat','chats','brief','timer',...gated].includes(screen)&&document.visibilityState!=='hidden')poll=setInterval(()=>refresh(),screen==='brief'?30000:1000);}
 function remember(){if(!state)return;if(state.role==='PHONE_START'){safe(()=>api('remember',{screen,chat:chatId,note:noteId,chatReturn,chatsReturn,quickQuestion:$('#quickQuestion')?.value??quickQuestionDraft,word:$('#word')?.value??dictionaryWordDraft,chatDraft:$('#chatInput')?.value??state.phoneSession?.chatDraft??''}));return;}if(!state.overlay&&!gated.includes(screen)&&screen!=='unlock')safe(()=>api('remember',{screen,chat:chatId,note:noteId,chatReturn,chatsReturn,briefTarget:screen==='brief'?{...(briefTarget||{}),date:briefData?.kind!=='focus'?briefData?.date:undefined,days:briefDays}:undefined}));}
 let phoneDraftTimer=null;
 document.addEventListener('input',()=>{if(state?.role==='PHONE_START'){clearTimeout(phoneDraftTimer);phoneDraftTimer=setTimeout(remember,200);}});
-async function navigate(s,navigation=null,keepBrief=false){if(state?.role==='PHONE_START'&&!['unlock','notes','chats','chat'].includes(s)){await api('open',{screen:s});return;}if(s==='brief'&&navigation===null&&!keepBrief&&screen!=='brief'){briefTarget=null;briefDays=1;briefOffset=0;}const local=navigation===null;if(local)navigation=nativeNavigation;if(['home','unlock','app'].includes(s))purposeEntry=null;if(s==='chats'&&starts.includes(screen))chatsReturn=screen;if(s==='chat'&&screen==='chats')chatReturn='chats';if(settingsTimer&&screen==='settings'){clearTimeout(settingsTimer);settingsTimer=null;await safe(saveReminders);}await flushMemo();if(navigation<nativeNavigation)return;const retainedNavigation=renderedRoute===s&&navigation!==nativeNavigation;nativeNavigation=navigation;if(local&&state?.overlay&&['chat','chats','unlock'].includes(s)&&s!==screen)presentScreen(s);closeSheet();screen=s;selected='';minutes=5;document.body.classList.toggle('start-screen',starts.includes(screen));window.scrollTo(0,0);const revision=domRevision;await refresh(true);if(retainedNavigation&&navigation===nativeNavigation&&renderedRoute===s&&revision===domRevision)signalRendered();startPolling();remember();if(state&&['notes','chat','chats'].includes(s))safe(()=>api('utility',{name:s==='notes'?'메모':'ChatGPT'}));}
-async function refresh(force=false){if(screen==='gateIdle')return;if(refreshing){if(force)refreshAgain=true;return;}refreshing=true;try{
+async function navigate(s,navigation=null,keepBrief=false){if(state?.role==='APP_GATE'&&!gated.includes(s)&&s!=='gateIdle'){const entry=gateSnapshot();await flushMemo();if(currentGate(entry))await api('open',{screen:s,...(s==='chat'?{chat:chatId}:{})});return;}if(state?.role==='PHONE_START'&&!['unlock','notes','chats','chat'].includes(s)){await api('open',{screen:s});return;}if(s==='brief'&&navigation===null&&!keepBrief&&screen!=='brief'){briefTarget=null;briefDays=1;briefOffset=0;}const local=navigation===null;if(local)navigation=nativeNavigation;if(['home','unlock','app'].includes(s))purposeEntry=null;if(s==='chats'&&starts.includes(screen))chatsReturn=screen;if(s==='chat'&&screen==='chats')chatReturn='chats';if(settingsTimer&&screen==='settings'){clearTimeout(settingsTimer);settingsTimer=null;await safe(saveReminders);}await flushMemo();if(navigation<nativeNavigation)return;const retainedNavigation=renderedRoute===s&&navigation!==nativeNavigation;nativeNavigation=navigation;if(local&&state?.overlay&&['chat','chats','unlock'].includes(s)&&s!==screen)presentScreen(s);closeSheet();screen=s;selected='';minutes=5;document.body.classList.toggle('start-screen',starts.includes(screen));window.scrollTo(0,0);const revision=domRevision;await refresh(true);if(retainedNavigation&&navigation===nativeNavigation&&renderedRoute===s&&revision===domRevision)signalRendered();startPolling();remember();if(state&&['notes','chat','chats'].includes(s))safe(()=>api('utility',{name:s==='notes'?'메모':'ChatGPT'}));}
+async function refresh(force=false){if(screen==='gateIdle')return;if(state?.role==='APP_GATE')return refreshGate(force);if(refreshing){if(force)refreshAgain=true;return;}refreshing=true;try{
  const entry=nativeNavigation,appEntry=state?.role==='APP_GATE',tick=!force&&state&&['chat','timer',...gated].includes(screen);
  const next=await api(tick?'tick':'state');if(appEntry&&entry!==nativeNavigation)return;
  if(tick)Object.assign(state,next);else state=next;
@@ -62,7 +62,57 @@ async function openNoteById(id,navigation=null){await flushMemo();noteId=id;awai
 function openChatById(id,navigation=null){chatId=id;return navigate('chat',navigation);}
 // APP_GATE owns a single prepared document. Gate data comes with the native entry,
 // so navigation never waits behind memo/chat bridge work or displays the old app.
-let gatePurposeHTML=null;
+let gatePurposeHTML=null,gateExposure='HIDDEN',gateAlive=false,gateWorkEpoch=0,gateRefresh=null,lastGateRendered='';
+let purposeStartOperation=null;
+function gateSnapshot(){return state?.role==='APP_GATE'?{navigation:nativeNavigation,transition:state.gateTransition,pkg:state.gate?.pkg,screen,epoch:gateWorkEpoch}:null;}
+function currentGate(entry,response=null){
+ if(!entry||!gateAlive||state?.role!=='APP_GATE'||entry.navigation!==nativeNavigation||entry.transition!==state.gateTransition||entry.pkg!==state.gate?.pkg||entry.screen!==screen||entry.epoch!==gateWorkEpoch)return false;
+ return !response||(response.gateActive===true&&response.gateNavigation===entry.navigation&&response.gateTransition===entry.transition&&response.gate?.pkg===entry.pkg);
+}
+function gateExposureChanged(exposure,navigation,transition,pkg){
+ if(state?.role!=='APP_GATE'||navigation!==nativeNavigation||transition!==state.gateTransition||pkg!==state.gate?.pkg||exposure===gateExposure)return;
+ gateExposure=exposure;++gateWorkEpoch;gateRefresh=null;
+ if(exposure==='HIDDEN'){gateAlive=false;closeSheet();}
+ startPolling();
+ if(exposure==='INTERACTIVE'&&gateAlive)safe(()=>refreshGate(true));
+}
+function refreshGate(force=false){
+ const entry=gateSnapshot();
+ if(!currentGate(entry)||gateExposure!=='INTERACTIVE'||document.visibilityState==='hidden')return Promise.resolve(false);
+ if(gateRefresh){if(force)gateRefresh.force=true;return gateRefresh.promise;}
+ const request={entry,force,promise:null};gateRefresh=request;
+ request.promise=(async()=>{
+  do {
+   const full=request.force;request.force=false;
+   const next=await api(full?'state':'tick');
+   if(!currentGate(entry,next)||gateExposure!=='INTERACTIVE')return false;
+   if(full)presentGate(screen,next,entry.navigation);
+   else {state.gate=next.gate;state.free=next.free;updateTimers();}
+  }while(request.force&&currentGate(entry));
+  return true;
+ })().catch(error=>{if(currentGate(entry))toast(error.message);return false;}).finally(()=>{if(gateRefresh===request)gateRefresh=null;});
+ return request.promise;
+}
+async function saveGatePurpose(el){
+ const entry=gateSnapshot(),editor=$('#sheet .sheet'),direct=el.dataset.direct==='true';el.disabled=true;
+ try {
+  if($('#purposeLink').checked&&$('#purposeApp').disabled)throw Error('앱 목록을 불러오는 중입니다.');
+  if($('#purposeLink').checked&&!$('#purposeApp').value&&!$('#purposeUri').value.trim())throw Error('연결할 앱이나 동작 주소를 선택해 주세요.');
+  const p={label:$('#purposeLabel').value,pkg:$('#purposeLink').checked?$('#purposeApp').value:'',uri:$('#purposeLink').checked?$('#purposeUri').value:'',scope:$('#purposeScope')?.value||el.dataset.scope,aimless:el.dataset.aimless==='1'};
+  if(el.dataset.id)p.id=el.dataset.id;
+  if(direct&&!$('#purposeSave').checked){await choosePurpose({...p,transient:true});return;}
+  const saved=await api('purpose',p);if(!currentGate(entry))return;
+  if(!await refreshGate(true)||!currentGate(entry))return;
+  if($('#sheet .sheet')!==editor)return;
+  if(direct)await choosePurpose(saved.id);else closeSheet();
+ }finally{if(el.isConnected)el.disabled=false;}
+}
+async function removeGatePurpose(id,manager=false){
+ const entry=gateSnapshot(),editor=$('#sheet .sheet');
+ await api('removePurpose',{id});if(!currentGate(entry))return;
+ if(!await refreshGate(true)||!currentGate(entry)||$('#sheet .sheet')!==editor)return;
+ if(manager)managePurposes();else closeSheet();
+}
 // A pointer/key begun on a previous gate cannot become a click on the new gate.
 let gateGestureNavigation=null;
 document.addEventListener('pointerdown',()=>{gateGestureNavigation=nativeNavigation;},true);
@@ -73,16 +123,15 @@ document.addEventListener('click',event=>{
 },true);
 function prepareGate(navigation=0){
  clearInterval(poll);poll=null;closeSheet();
- nativeNavigation=navigation;screen='gateIdle';state={role:'APP_GATE',overlay:true,gate:{},prefs:{start:0,end:0},notes:[],chats:[],accounts:[],models:[],connection:{},rules:[],allPurposes:[],purposeOrders:{}};
- purposeEntry=null;gatePurposeHTML=null;
- const template=document.createElement('template');template.innerHTML=gate();const main=$('.gate-page');
- const changed=main?patchGateNode(main,template.content.firstElementChild):($('#app').replaceChildren(template.content),true);
- if(changed){bind();++domRevision;}
- $('.gate-page').inert=true;document.body.classList.add('start-screen');renderedRoute=screen;signalRendered();
+ nativeNavigation=navigation;screen='gateIdle';state={role:'APP_GATE',overlay:true,gateTransition:-1,gate:{},prefs:{start:0,end:0},notes:[],chats:[],accounts:[],models:[],connection:{},rules:[],allPurposes:[],purposeOrders:{}};
+ gateAlive=false;gateExposure='HIDDEN';++gateWorkEpoch;gateRefresh=null;purposeEntry=null;
+ let main=$('.gate-page');
+ if(!main){$('#app').innerHTML=gate();main=$('.gate-page');bind(main);gatePurposeHTML=null;++domRevision;}
+ main.inert=true;document.body.classList.add('start-screen');renderedRoute=screen;signalRendered(true);
 }
 // Patch attributes/text in place. Only changed list membership creates/removes nodes.
 function patchGateNode(old,next){
- if(old.nodeType!==next.nodeType||old.nodeName!==next.nodeName){old.replaceWith(next.cloneNode(true));return true;}
+ if(old.nodeType!==next.nodeType||old.nodeName!==next.nodeName){const replacement=next.cloneNode(true);old.replaceWith(replacement);bindGateNode(replacement);return true;}
  if(old.nodeType===Node.TEXT_NODE){if(old.data===next.data)return false;old.data=next.data;return true;}
  let changed=false;
  for(const attr of [...old.attributes])if(!next.hasAttribute(attr.name)){old.removeAttribute(attr.name);changed=true;}
@@ -92,20 +141,27 @@ function patchGateNode(old,next){
  for(let i=0;i<next.childNodes.length;i++){
   const wanted=next.childNodes[i],id=key(wanted);let node=id?existing.get(id):old.childNodes[i];
   if(node&&id!==key(node))node=null;
-  if(!node){node=wanted.cloneNode(true);old.insertBefore(node,old.childNodes[i]||null);changed=true;}
+  if(!node){node=wanted.cloneNode(true);old.insertBefore(node,old.childNodes[i]||null);bindGateNode(node);changed=true;}
   else {if(old.childNodes[i]!==node){old.insertBefore(node,old.childNodes[i]||null);changed=true;}changed=patchGateNode(node,wanted)||changed;}
  }
  while(old.childNodes.length>next.childNodes.length){old.lastChild.remove();changed=true;}
  return changed;
 }
+function bindGateNode(node){
+ if(node.nodeType!==Node.ELEMENT_NODE)return;
+ bind(node);
+ if(node.matches('[data-purpose]'))node.onclick=()=>safe(()=>choosePurpose(node.dataset.purpose));
+ else if(node.matches('[data-act]'))node.onclick=()=>safe(()=>action(node.dataset.act,node));
+}
 function presentGate(name,payload,navigation){
  if(navigation<nativeNavigation)return;
  const same=screen===name&&state?.gate?.pkg===payload.gate.pkg;
- const transition=!same||navigation!==nativeNavigation;nativeNavigation=navigation;
- if(transition){closeSheet();selected='';minutes=5;purposeEntry=null;}
+ const transition=!same||navigation!==nativeNavigation||state?.gateTransition!==payload.gateTransition;
+ if(!transition&&!gateAlive)return;nativeNavigation=navigation;
+ if(transition){closeSheet();selected='';minutes=5;purposeEntry=null;purposeStarting=false;purposeStartOperation=null;gateAlive=true;gateExposure=payload.gateExposure||'WAITING';++gateWorkEpoch;gateRefresh=null;}
  state={...state,...payload,role:'APP_GATE',overlay:true,purposeOrders:{[payload.scope]:payload.purposes}};
- screen=name;let main=$('.gate-page'),changed=false;
- if(!main){$('#app').innerHTML=gate();main=$('.gate-page');bind();gatePurposeHTML=null;changed=true;}
+ screen=name;let main=$('.gate-page'),changed=false,layout=transition;
+ if(!main){$('#app').innerHTML=gate();main=$('.gate-page');bind(main);gatePurposeHTML=null;changed=true;layout=true;}
  const g=state.gate,locked=name==='blocked',renew=name==='renew',policyBlock=state.rules.find(r=>r.pkg===g.pkg)?.mode==='locked';
  const text=(selector,value,first=false)=>{const el=main.querySelector(selector),node=first?el.firstChild:el;if((first?node.data:node.textContent)!==value){if(first)node.data=value;else node.textContent=value;changed=true;}};
  const hidden=(selector,value)=>{const el=main.querySelector(selector);if(el.hidden!==value){el.hidden=value;changed=true;}};
@@ -121,16 +177,18 @@ function presentGate(name,payload,navigation){
  hidden('#startApp',!renew);if(renew)text('#startApp',`${minutes}분 연장 `,true);
  if(!locked&&!renew){
   const html=purposeGrid(true);
-  if(html!==gatePurposeHTML){const template=document.createElement('template');template.innerHTML=html;const grid=main.querySelector('.app-decision .reason-grid');if(patchGateNode(grid,template.content.firstElementChild)){bind(main.querySelector('.app-decision .start-purposes'));changed=true;}gatePurposeHTML=html;}
+  if(html!==gatePurposeHTML){const template=document.createElement('template');template.innerHTML=html;const grid=main.querySelector('.app-decision .reason-grid');if(patchGateNode(grid,template.content.firstElementChild)){changed=true;layout=true;}gatePurposeHTML=html;}
  }
- main.inert=false;document.body.classList.add('start-screen');
- if(changed){viewportChanged();++domRevision;}
- renderedRoute=screen;signalRendered();startPolling();
+ if(main.inert){main.inert=false;changed=true;}if(!document.body.classList.contains('start-screen'))document.body.classList.add('start-screen');
+ if(transition)main.querySelectorAll('[data-purpose],[data-min],[data-act=direct]').forEach(el=>el.disabled=false);
+ if(changed)++domRevision;if(layout)viewportChanged();
+ const needsAck=transition||changed||renderedRoute!==screen;renderedRoute=screen;if(needsAck)signalRendered();
+ if(transition)startPolling();
 }
 function presentScreen(name){const previous=nativeNavigation++;Native.request('0','present',JSON.stringify({screen:name,previous,navigation:nativeNavigation,chat:chatId}));}
-function signalRendered(){Native.request('0','rendered',JSON.stringify({screen,navigation:nativeNavigation,revision:domRevision}));}
-function nativeRestore(){if($('#app')?.childElementCount)signalRendered();else return refresh(true);}
-function render(){const previousPresetScroll=$('.preset-scroll')?.scrollTop||0;if($('#quickQuestion'))quickQuestionDraft=$('#quickQuestion').value;if($('#word'))dictionaryWordDraft=$('#word').value;let html='';switch(screen){case 'gateIdle':break;case 'unlock':case 'home':html=home();break;case 'setup':html=setup();break;case 'settings':html=settings();break;case 'apps':html=appsPage();break;case 'usageApps':html=usageAppsPage();break;case 'app':case 'renew':case 'blocked':html=gate();break;case 'timer':html=timer();break;case 'notes':html=notesPage();break;case 'chats':html=chats();break;case 'chat':html=chat();break;case 'brief':html=brief();break;case 'week':briefDays=7;screen='brief';html=brief();break;default:screen='home';html=home();}
+function signalRendered(force=false){if(state?.role==='APP_GATE'){const stamp=JSON.stringify([screen,nativeNavigation,state.gateTransition,domRevision]);if(!force&&lastGateRendered===stamp)return;lastGateRendered=stamp;}Native.request('0','rendered',JSON.stringify({screen,navigation:nativeNavigation,revision:domRevision}));}
+function nativeRestore(){if($('#app')?.childElementCount)signalRendered(true);else return refresh(true);}
+function render(){if(state?.role==='APP_GATE'&&gated.includes(screen)){presentGate(screen,state,nativeNavigation);return;}const previousPresetScroll=$('.preset-scroll')?.scrollTop||0;if($('#quickQuestion'))quickQuestionDraft=$('#quickQuestion').value;if($('#word'))dictionaryWordDraft=$('#word').value;let html='';switch(screen){case 'gateIdle':break;case 'unlock':case 'home':html=home();break;case 'setup':html=setup();break;case 'settings':html=settings();break;case 'apps':html=appsPage();break;case 'usageApps':html=usageAppsPage();break;case 'app':case 'renew':case 'blocked':html=gate();break;case 'timer':html=timer();break;case 'notes':html=notesPage();break;case 'chats':html=chats();break;case 'chat':html=chat();break;case 'brief':html=brief();break;case 'week':briefDays=7;screen='brief';html=brief();break;default:screen='home';html=home();}
  document.body.classList.toggle('start-screen',starts.includes(screen));$('#app').innerHTML=html+nav();if(gated.includes(screen))gatePurposeHTML=null;bind();if(state?.role==='PHONE_START'&&screen==='chat'&&$('#chatInput')&&state.phoneSession?.chat===chatId)$('#chatInput').value=state.phoneSession.chatDraft||'';if($('.preset-scroll'))$('.preset-scroll').scrollTop=previousPresetScroll;viewportChanged();if(screen==='chat'&&quickTurns.has(chatId))applyMessages(quickMessages(quickTurns.get(chatId)),true);renderedRoute=screen;if(['home','unlock'].includes(screen))startNoteSnapshot=noteSnapshot();++domRevision;signalRendered();}
 // Refresh data without discarding the prepared start document or its editors.
 function noteSnapshot(){const n=currentNote();return {note:{id:n.id,title:n.title,body:n.body,checks:n.checks||'[]',mode:n.mode},count:state.notes.length};}
@@ -211,7 +269,7 @@ function purposeLinkIcon(p,isApp){
 document.addEventListener('error',event=>{const img=event.target;if(img.matches?.('.linked-app-icon')){img.parentElement.classList.add('icon-failed');}},true);
 function purposeGrid(isApp,all=false){
  const ps=visiblePurposes(isApp);
- const items=ps.map(p=>`<div class="purpose-item"><button class="reason ${p.id===selected?'selected':''} ${p.aimless?'aimless':''} ${!isApp&&['PHONE_START','MAIN'].includes(state?.role)?'phone-purpose':''}" data-purpose="${esc(p.id)}"><span>${esc(p.label)}</span>${purposeLinkIcon(p,isApp)}</button></div>`).join('');
+ const items=ps.map(p=>`<div class="purpose-item"><button class="reason ${p.id===selected?'selected':''} ${p.aimless?'aimless':''} ${!isApp&&['PHONE_START','MAIN'].includes(state?.role)?'phone-purpose':''}" data-purpose="${esc(p.id)}" ${isApp&&purposeStarting?'disabled':''}><span>${esc(p.label)}</span>${purposeLinkIcon(p,isApp)}</button></div>`).join('');
  const direct=`<button class="reason direct" data-act="direct">${icon('plus')} 직접 적기</button>`;
  if(!isApp&&!all)return `<div class="reason-picker">${direct}<div class="preset-scroll" role="region" tabindex="0" aria-label="목적 프리셋 목록"><div class="reason-grid">${items}</div></div></div>`;
  return `<div class="reason-grid ${all?'all-reasons':''}">${direct}${items}${!all?`<button class="reason more-reasons" data-act="morePurposes" hidden>${icon('more')} 전체 ${ps.length}개 보기</button>`:''}</div>`;
@@ -229,10 +287,10 @@ function gate(){
 }
 async function choosePurpose(id){
  if(screen==='gateIdle')return;
- if(purposeStarting)return;purposeStarting=true;const target=screen,chosenMinutes=minutes,entry=nativeNavigation,targetPkg=state?.gate?.pkg,appEntry=state?.role==='APP_GATE';
+ if(purposeStarting)return;const operation={};purposeStartOperation=operation;purposeStarting=true;const target=screen,chosenMinutes=minutes,entry=gateSnapshot(),appEntry=state?.role==='APP_GATE';
  const controls=[...document.querySelectorAll('[data-purpose],[data-min],[data-act=direct]')];controls.forEach(el=>el.disabled=true);
- try{await flushMemo();if(appEntry&&(entry!==nativeNavigation||targetPkg!==state?.gate?.pkg))return;const purpose=typeof id==='object'?id:{id};await api(target==='app'?'grant':'choose',target==='app'?{...purpose,minutes:chosenMinutes,gateNavigation:entry}:purpose);if(appEntry&&entry!==nativeNavigation)return;closeSheet();}
- finally{purposeStarting=false;controls.forEach(el=>{if(el.isConnected)el.disabled=false;});}
+ try{await flushMemo();if(appEntry&&!currentGate(entry))return;const purpose=typeof id==='object'?id:{id};await api(target==='app'?'grant':'choose',target==='app'?{...purpose,minutes:chosenMinutes,gateNavigation:entry?.navigation??nativeNavigation}:purpose);if(appEntry&&!currentGate(entry))return;closeSheet();}
+ finally{if(purposeStartOperation===operation){purposeStarting=false;purposeStartOperation=null;controls.forEach(el=>{if(el.isConnected)el.disabled=false;});}}
 }
 
 function timer(){let g=state.gate;return `<main class="page">${header(true,'남은 시간')}<h2>${esc(g.label||'사용 중인 관리 앱 없음')}</h2><div class="timer-ring"><div class="small">오늘 남은 시간</div><div id="dailyLeft" class="bigtime">${fmt(g.daily)}</div><div class="divider"></div><div class="small">이번 사용의 남은 시간</div><h2 id="sessionLeft">${fmt(g.session)}</h2><p class="small muted">이 화면을 보는 동안에는 잠시 멈춰요.</p></div><div class="gate-note"><span>이번 목적</span><strong>${esc(g.purpose||'선택한 목적 없음')}</strong></div><button class="secondary" data-act="exit">사용하던 앱으로 돌아가기</button>${!state.status.notifications?'<div class="notice"><button data-permission="notification">타이머 알림 허용하기</button></div>':''}</main>`;}
@@ -658,7 +716,13 @@ function layoutStart(){
  if(decision)decision.style.maxHeight=Math.max(0,decisionHeight)+'px';
 }
 let startKeyboardScroll=null;
-function viewportChanged(reveal=false){requestAnimationFrame(()=>{
+let gateViewportFrame=null,gateViewportReveal=false;
+function viewportChanged(reveal=false){
+ if(state?.role!=='APP_GATE'){requestAnimationFrame(()=>applyViewport(reveal));return;}
+ gateViewportReveal=gateViewportReveal||reveal===true;if(gateViewportFrame!==null)return;
+ gateViewportFrame=requestAnimationFrame(()=>{gateViewportFrame=null;const reveal=gateViewportReveal;gateViewportReveal=false;applyViewport(reveal);});
+}
+function applyViewport(reveal=false){
  const v=window.visualViewport,h=v?.height||innerHeight,top=v?.offsetTop||0,active=document.activeElement;
  const editing=active?.matches('input,textarea,select');
  const keyboard=nativeKeyboard||innerHeight-h>100||(editing&&normalWidth===innerWidth&&normalHeight-h>100);
@@ -682,7 +746,7 @@ function viewportChanged(reveal=false){requestAnimationFrame(()=>{
      else if(bounds.top<top)window.scrollBy(0,bounds.top-top-12);
    }else active.scrollIntoView({block:'nearest',inline:'nearest'});
  }
- });}
+}
 async function saveReminders(){if(!$('#customReminders'))return;settingsTimer=null;const values=[...document.querySelectorAll('[data-reminder].selected')].map(el=>Number(el.dataset.reminder));const extra=$('#customReminders')?.value.trim()||'';if(extra){const parsed=extra.split(',').map(v=>Number(v.trim()));if(parsed.some(n=>!Number.isInteger(n)||n<1||n>180))throw Error('추가 알림은 1~180분으로 입력해 주세요.');values.push(...parsed);}await api('settings',{reminders:values});Object.assign(state.prefs,{reminders:values});}
 let dictionarySearching=false;
 async function searchDictionary(word){releasePhoneNavigation('dictionary');
@@ -698,12 +762,12 @@ async function searchDictionary(word){releasePhoneNavigation('dictionary');
  }finally{dictionarySearching=false;}
 }
 async function lookup(){const word=$('#word')?.value.trim();if(!word)throw Error('찾을 단어를 입력해 주세요.');if(!state.dictionary){await dictionaryChoice(word);return;}await searchDictionary(word);}
-async function action(name,el){if(screen==='gateIdle')return;const gateEntry=state?.role==='APP_GATE'?nativeNavigation:null;switch(name){case 'finishPurposeEditing':await api('finishPurposeEditing');break;case 'viewDiagnostics':await viewUnlockDiagnostics();break;case 'saveDiagnostics':await api('saveDiagnostics');break;case 'deleteDiagnostics':sheet(`${sheetHead('진단 기록 삭제')}<p>기기에 보관한 잠금 해제 진단 기록을 모두 삭제할까요?</p><div class="sheet-actions"><button class="primary" data-act="confirmDeleteDiagnostics">모두 삭제</button><button class="secondary" data-act="closeSheet">취소</button></div>`);break;case 'confirmDeleteDiagnostics':await api('clearDiagnostics');closeSheet();await refresh(true);toast('진단 기록을 삭제했습니다.');break;case 'back':back();break;case 'closeSheet':if(state?.purposeEditor)managePurposes('app');else closeSheet();break;case 'exit':await flushMemo();await api('exit');break;case 'dismiss':await flushMemo();if(gateEntry!==null&&gateEntry!==nativeNavigation)return;await api('dismiss',gateEntry===null?{}:{gateNavigation:gateEntry});break;
+async function action(name,el){if(screen==='gateIdle')return;const gateEntry=gateSnapshot();switch(name){case 'finishPurposeEditing':await api('finishPurposeEditing');break;case 'viewDiagnostics':await viewUnlockDiagnostics();break;case 'saveDiagnostics':await api('saveDiagnostics');break;case 'deleteDiagnostics':sheet(`${sheetHead('진단 기록 삭제')}<p>기기에 보관한 잠금 해제 진단 기록을 모두 삭제할까요?</p><div class="sheet-actions"><button class="primary" data-act="confirmDeleteDiagnostics">모두 삭제</button><button class="secondary" data-act="closeSheet">취소</button></div>`);break;case 'confirmDeleteDiagnostics':await api('clearDiagnostics');closeSheet();await refresh(true);toast('진단 기록을 삭제했습니다.');break;case 'back':back();break;case 'closeSheet':if(state?.purposeEditor)managePurposes('app');else closeSheet();break;case 'exit':await flushMemo();await api('exit');break;case 'dismiss':await flushMemo();if(gateEntry&&!currentGate(gateEntry))return;await api('dismiss',gateEntry?{gateNavigation:gateEntry.navigation}:{});break;
  case 'direct':await purposeSheet(null,true);break;case 'addPurpose':await purposeSheet();break;case 'managePurposes':managePurposes(screen==='app'?'app':screen==='home'||screen==='unlock'?'phone':purposeScope);break;
 
  case 'morePurposes':sheet(`${sheetHead('사용 목적')}${purposeGrid(screen==='app',true)}`);break;
- case 'savePurpose':{if(el.disabled)return;const entry=nativeNavigation,targetPkg=state?.gate?.pkg,appEntry=state?.role==='APP_GATE';el.disabled=true;try{if($('#purposeLink').checked&&$('#purposeApp').disabled)throw Error('앱 목록을 불러오는 중입니다.');if($('#purposeLink').checked&&!$('#purposeApp').value&&!$('#purposeUri').value.trim())throw Error('연결할 앱이나 동작 주소를 선택해 주세요.');const p={label:$('#purposeLabel').value,pkg:$('#purposeLink').checked?$('#purposeApp').value:'',uri:$('#purposeLink').checked?$('#purposeUri').value:'',scope:$('#purposeScope')?.value||el.dataset.scope,aimless:el.dataset.aimless==='1'};if(el.dataset.id)p.id=el.dataset.id;if(el.dataset.direct==='true'&&!$('#purposeSave').checked){await choosePurpose({...p,transient:true});break;}const saved=await api('purpose',appEntry?{...p,gateNavigation:entry}:p);if(appEntry&&(entry!==nativeNavigation||targetPkg!==state?.gate?.pkg))return;closeSheet();const next=await api('state');if(appEntry&&entry!==nativeNavigation)return;state=next;if(el.dataset.direct==='true'){await choosePurpose(saved.id);if(appEntry)presentGate(screen,state,nativeNavigation);else render();}else {render();if(screen==='settings')managePurposes();}}finally{if(el.isConnected)el.disabled=false;}break;}
- case 'deletePurpose':await api('removePurpose',{id:el.dataset.id});closeSheet();await refresh(true);break;
+ case 'savePurpose':{if(el.disabled)return;if(state?.role==='APP_GATE'){await saveGatePurpose(el);break;}const entry=nativeNavigation,targetPkg=state?.gate?.pkg,appEntry=state?.role==='APP_GATE';el.disabled=true;try{if($('#purposeLink').checked&&$('#purposeApp').disabled)throw Error('앱 목록을 불러오는 중입니다.');if($('#purposeLink').checked&&!$('#purposeApp').value&&!$('#purposeUri').value.trim())throw Error('연결할 앱이나 동작 주소를 선택해 주세요.');const p={label:$('#purposeLabel').value,pkg:$('#purposeLink').checked?$('#purposeApp').value:'',uri:$('#purposeLink').checked?$('#purposeUri').value:'',scope:$('#purposeScope')?.value||el.dataset.scope,aimless:el.dataset.aimless==='1'};if(el.dataset.id)p.id=el.dataset.id;if(el.dataset.direct==='true'&&!$('#purposeSave').checked){await choosePurpose({...p,transient:true});break;}const saved=await api('purpose',appEntry?{...p,gateNavigation:entry}:p);if(appEntry&&(entry!==nativeNavigation||targetPkg!==state?.gate?.pkg))return;closeSheet();const next=await api('state');if(appEntry&&entry!==nativeNavigation)return;state=next;if(el.dataset.direct==='true'){await choosePurpose(saved.id);if(appEntry)presentGate(screen,state,nativeNavigation);else render();}else {render();if(screen==='settings')managePurposes();}}finally{if(el.isConnected)el.disabled=false;}break;}
+ case 'deletePurpose':if(state?.role==='APP_GATE'){await removeGatePurpose(el.dataset.id);break;}await api('removePurpose',{id:el.dataset.id});closeSheet();await refresh(true);break;
  case 'testPurposeLink':await api('linkTest',{pkg:$('#purposeApp').value,uri:$('#purposeUri').value});break;
  case 'grant':await choosePurpose(selected);break;case 'extend':await api('extend',{minutes});break;case 'stop':await api('stop');break;
  case 'newNote':await flushMemo();sheet(`${sheetHead('새 메모')}<div class="split"><button class="secondary" data-newnote="text">${icon('note')} 글 메모</button><button class="secondary" data-newnote="check">${icon('check')} 체크 메모</button></div>`);break;
@@ -731,7 +795,8 @@ function bind(root=$('#app')){
  root.querySelectorAll('[data-purpose]').forEach(el=>el.onclick=()=>safe(()=>choosePurpose(el.dataset.purpose)));
  root.querySelectorAll('[data-min]').forEach(el=>el.onclick=()=>{
   minutes=Number(el.dataset.min);document.querySelectorAll('[data-min]').forEach(button=>{const chosen=Number(button.dataset.min)===minutes;button.classList.toggle('selected',chosen);button.setAttribute('aria-pressed',chosen);});
-  if($('#startApp'))$('#startApp').innerHTML=`${minutes}분 연장 ${icon('arrow')}`;
+  if($('#startApp')){if(state?.role==='APP_GATE')$('#startApp').firstChild.data=`${minutes}분 연장 `;else $('#startApp').innerHTML=`${minutes}분 연장 ${icon('arrow')}`;}
+  if(state?.role==='APP_GATE'){++domRevision;signalRendered();}
  });
  root.querySelectorAll('[data-note]').forEach(el=>el.onclick=()=>safe(async()=>{await flushMemo();noteId=el.dataset.note;render();remember();}));
  root.querySelectorAll('[data-note-step]').forEach(el=>el.onclick=()=>safe(async()=>{await flushMemo();const notes=state.notes;if(notes.length<2)return;const index=notes.findIndex(n=>n.id===noteId);noteId=notes[(index+Number(el.dataset.noteStep)+notes.length)%notes.length].id;render();remember();}));
@@ -739,7 +804,7 @@ function bind(root=$('#app')){
  root.querySelectorAll('[data-chat]').forEach(el=>el.onclick=()=>safe(async()=>{chatId=el.dataset.chat;await navigate('chat');}));
  root.querySelectorAll('[data-deletechat]').forEach(el=>el.onclick=()=>confirmSheet('대화 삭제','이 대화를 삭제할까요?','deleteChat',{id:el.dataset.deletechat}));
  root.querySelectorAll('[data-editpurpose]').forEach(el=>el.onclick=()=>safe(()=>purposeSheet(el.dataset.editpurpose)));
- root.querySelectorAll('[data-remove]').forEach(el=>el.onclick=()=>safe(async()=>{const editing=!!$('#sheet').innerHTML;await api('removePurpose',{id:el.dataset.remove});state=await api('state');render();if(editing)managePurposes();}));
+ root.querySelectorAll('[data-remove]').forEach(el=>el.onclick=()=>safe(async()=>{if(state?.role==='APP_GATE'){await removeGatePurpose(el.dataset.remove,true);return;}const editing=!!$('#sheet').innerHTML;await api('removePurpose',{id:el.dataset.remove});state=await api('state');render();if(editing)managePurposes();}));
  root.querySelectorAll('[data-switchscope]').forEach(el=>el.onclick=()=>{purposeScope=el.dataset.switchscope;managePurposes();});
  root.querySelectorAll('[data-rule]').forEach(el=>el.onclick=()=>safe(()=>ruleSheet(el.dataset.rule)));
  root.querySelectorAll('[data-manage]').forEach(el=>el.onchange=()=>safe(async()=>{await api('rule',{pkg:el.dataset.manage,mode:el.checked?'restore':'none'});state=await api('state');renderApps();}));

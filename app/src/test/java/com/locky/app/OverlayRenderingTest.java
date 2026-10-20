@@ -194,6 +194,12 @@ public class OverlayRenderingTest {
         view.complete(2);assertTrue(host.currentGateReady());
     }
 
+    @Test public void previousRendererResponseCannotResolveARequestInTheReplacementDocument(){
+        FrameView old=view;host.answer(old,"1",new org.json.JSONObject(),null);
+        host.root.removeView(old);view=new FrameView(old.getContext());host.view=view;host.root.addView(view);old.destroy();
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
+        assertFalse(view.scripts.stream().anyMatch(js->js.startsWith("receive(")));
+    }
     @Test public void actualRendererDeathRecreatesOnlyTheDeadWebView(){
         Activity owner=(Activity)view.getContext();host.close();host=new WebHost(owner,WebHost.Role.APP_GATE);owner.setContentView(host.root);
         WebView dead=host.view;assertTrue(dead.getWebViewClient().onRenderProcessGone(dead,null));
