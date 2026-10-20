@@ -64,13 +64,31 @@ public class OverlayRenderingTest {
         view.scripts.clear();host.resumeOverlay();assertSame(view,host.view);assertTrue(view.scripts.isEmpty());assertEquals(0,view.loads);assertEquals(1,view.frames.size());
         host.didDraw(view);Shadows.shadowOf(Looper.getMainLooper()).idle();assertEquals("app",host.paintedScreen);
     }
-    @Test public void stalledVisualCallbackRequestsDrawsButCannotApproveInputByElapsedTime(){
-        rendered();Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(4));
-        assertSame(view,host.view);assertEquals(0,view.loads);
-        assertFalse(host.frameReady);assertFalse(host.currentGateReady());assertEquals(View.VISIBLE,view.getVisibility());
-        assertEquals(View.GONE,host.loadingView.getVisibility());assertEquals(2,view.frames.size());
-        view.complete(0);assertTrue(host.frameReady);
-        int callbacks=view.frames.size();host.resumeOverlay();assertEquals(callbacks,view.frames.size());assertEquals(1,view.resumes);
+    @Test public void stalledVisualCallbackRetriesOnceThenShowsErrorWithoutReloading(){
+        rendered();Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1200));
+        assertEquals(2,view.frames.size());assertFalse(host.frameReady);assertFalse(host.gateErrorVisible());
+        view.complete(0);assertFalse(host.frameReady); // Original request was retired by recovery.
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1200));
+        assertSame(view,host.view);assertEquals(0,view.loads);assertFalse(host.currentGateReady());
+        assertTrue(host.gateErrorVisible());assertEquals(-1,host.visualPending);
+        view.complete(1);assertFalse(host.frameReady);assertTrue(host.gateErrorVisible());
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(4));assertEquals(2,view.frames.size());
+        host.retryInitialLoad();assertEquals(3,view.frames.size());assertFalse(host.gateErrorVisible());assertEquals(0,view.loads);
+        view.complete(2);assertTrue(host.currentGateReady());
+    }
+    @Test public void nextManagedAppCanPrepareAfterVisualFailure() throws Exception {
+        rendered();Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(3));assertTrue(host.gateErrorVisible());
+        host.gateScreen("app",new org.json.JSONObject());host.rendered(view,"app",host.navigationGeneration,2);
+        assertFalse(host.gateErrorVisible());assertFalse(host.currentGateReady());assertEquals(3,view.frames.size());
+        view.complete(1);assertFalse(host.currentGateReady());view.complete(2);assertTrue(host.currentGateReady());assertEquals(0,view.loads);
+    }
+    @Test public void hiddenCallbackAndWatchAreRetiredBeforeTheNextPresentation(){
+        rendered();host.root.setVisibility(View.GONE);view.complete(0);assertEquals(-1,host.visualPending);
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(4));assertFalse(host.gateErrorVisible());assertEquals(1,view.frames.size());
+        host.root.setVisibility(View.VISIBLE);host.resumeOverlay();assertEquals(2,view.frames.size());view.complete(1);assertTrue(host.currentGateReady());
+        host.resetVisualState("dom");host.requestVisualState();host.pause();
+        view.complete(2);assertFalse(host.frameReady);host.resumeOverlay();assertEquals(4,view.frames.size());view.complete(3);assertTrue(host.currentGateReady());
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(4));assertFalse(host.gateErrorVisible());
     }
     @Test public void failedInitialLoadCanRetryBeforeReadyButSuccessfulPageCannotReload(){
         host.ready=false;host.loadFailed=true;host.retryInitialLoad();assertSame(view,host.view);assertEquals(1,view.loads);assertFalse(host.ready);

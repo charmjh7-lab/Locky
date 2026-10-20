@@ -34,7 +34,7 @@ final class WebHost {
     // frameReady: drawable DOM revision, not a display fence. presentationActive: requested
     // presentation, not proof of composition. didDraw is an observation, never an exposure gate.
     boolean retainedFrame; // Prior prepared revision; never proof of preserved compositor pixels.
-    boolean frameReady,presentationActive,everRendered,loadFailed,renderingActive;int initialRetries;
+    boolean frameReady,presentationActive,everRendered,loadFailed,visualFailed,renderingActive;int initialRetries;
     long observedDrawGeneration=-1,commitRequestedGeneration=-1;Boolean insetKeyboard;
     private Runnable initialWatch,visualWatch;int visualRetryCount;
     // Bounded Logcat plus opt-in private recording. Never log user content or package names.
@@ -105,8 +105,11 @@ final class WebHost {
     void showLoading(){if(role==Role.PHONE_START){cancelInitialWatch();return;}cancelInitialWatch();resetVisualState("document");renderedNavigation=-1;renderedRevision=-1;renderedScreen="";if(loadingView!=null)loadingView.setVisibility(View.GONE);}
     boolean gateErrorVisible(){return isOverlay&&loadingView!=null&&loadingView.getVisibility()==View.VISIBLE;}
     void showGateError(){
-        hostTrace("document error; recovery screen requested");
-        loadFailed=true;resetVisualState("error");
+        showGateError(false);
+    }
+    void showGateError(boolean frameFailure){
+        hostTrace(frameFailure?"visual recovery failed; recovery screen requested":"document error; recovery screen requested");
+        cancelInitialWatch();loadFailed=loadFailed||!frameFailure;visualFailed=frameFailure&&!loadFailed;resetVisualState("error");
         if(loadingView!=null)loadingView.setVisibility(View.VISIBLE);
         if(frameAvailableCallback!=null)frameAvailableCallback.run();
     }
@@ -127,15 +130,16 @@ final class WebHost {
     }
 
     boolean hasUsableFrame(){return frameReady||retainedFrame;}
-    boolean currentGateReady(){return isOverlay&&!loadFailed&&frameReady&&renderedNavigation==navigationGeneration&&pendingScreen.equals(renderedScreen)&&!"gateIdle".equals(renderedScreen);}
-    boolean currentGateDataApplied(){return isOverlay&&!loadFailed&&renderedNavigation==navigationGeneration
+    boolean currentGateReady(){return isOverlay&&!loadFailed&&!visualFailed&&frameReady&&renderedNavigation==navigationGeneration&&pendingScreen.equals(renderedScreen)&&!"gateIdle".equals(renderedScreen);}
+    boolean currentGateDataApplied(){return isOverlay&&!loadFailed&&!visualFailed&&renderedNavigation==navigationGeneration
         &&pendingScreen.equals(renderedScreen)&&!"gateIdle".equals(renderedScreen);}
     boolean gateNeedsInitialLoad(){return !ready||loadFailed;}
     void gateScreen(String name,JSONObject payload){
+        if(visualFailed){visualFailed=false;resetVisualState("new-entry");}
         pendingGate=payload;gateTransition=payload.optLong("gateTransition",-1);preparedPurposeDay=payload.optString("purposeDate");pendingScreen=name;pendingChat="";++navigationGeneration;
         // Navigation fences data/input, not the pixels of an unchanged DOM. A prior
         // in-flight callback cannot finish this navigation, even for the same revision.
-        cancelVisualWatch();if(!frameReady)++visualGeneration;visualPending=-1;visualRetryCount=0;
+        suspendVisualRequest();visualRetryCount=0;
         hostTrace("data apply requested navigation="+navigationGeneration);
         if(loadingView!=null)loadingView.setVisibility(loadFailed?View.VISIBLE:View.GONE);
         if(ready)dispatchScreen();else watchInitialLoad();
@@ -179,7 +183,7 @@ final class WebHost {
     void pause(){
         if(role==Role.PHONE_START){if(view!=null&&renderingActive){view.onPause();renderingActive=false;}return;}
         presentationActive=false;
-        if(isOverlay){cancelVisualWatch();if(!frameReady)visualPending=-1;return;}
+        if(isOverlay){suspendVisualRequest();return;}
         boolean invalidate=renderingActive||frameReady||visualPending!=-1;
         if(invalidate)resetVisualState("pause");
         if(view!=null&&renderingActive){hostTrace("engine pause requested");view.onPause();renderingActive=false;}
@@ -191,9 +195,15 @@ final class WebHost {
         if(!ready)watchInitialLoad();
     }
     void cancelVisualWatch(){if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}}
+    void suspendVisualRequest(){
+        cancelVisualWatch();
+        // Invalidate outstanding callbacks as well as their watchdog, retaining a ready frame.
+        if(visualPending!=-1){++visualGeneration;visualPending=-1;}
+        visualRetryCount=0;
+    }
     void requestVisualState(){
         if(role==Role.PHONE_START)return;
-        if(closed||!ready||loadFailed||view==null||!view.isAttachedToWindow()||!root.isShown()
+        if(closed||!ready||loadFailed||visualFailed||view==null||!view.isAttachedToWindow()||!root.isShown()
             ||(isOverlay&&renderedNavigation!=navigationGeneration)
             ||!pendingScreen.equals(renderedScreen)||frameReady||visualPending==visualGeneration)return;
         // Keep preparing the attached document, including while its dictionary Activity is paused.
@@ -203,14 +213,19 @@ final class WebHost {
         visualWatch=()->{
             visualWatch=null;
             if(closed||candidate!=view||generation!=visualGeneration||navigation!=navigationGeneration
-                ||frameReady||visualPending!=generation||!root.isShown()
-                ||!screen.equals(pendingScreen))return;
+                ||frameReady||visualPending!=generation||!screen.equals(pendingScreen))return;
+            if(!root.isShown()){suspendVisualRequest();return;}
             hostTrace("visual callback delayed navigation="+navigation);
-            // One recovery draw per revision. Keep the original callback valid: a
-            // timeout never blesses stale pixels or reloads a healthy document.
-            if(isOverlay&&visualRetryCount++>=1)return;
-            visualPending=-1;if(isOverlay)invalidateFrame();else redraw();
-            if(!isOverlay&&visualRetryCount++>0){
+            if(isOverlay){
+                // Reuse a healthy attached document. Retry this navigation once, then
+                // expose the existing native error actions rather than waiting forever.
+                if(!ready||loadFailed||!candidate.isAttachedToWindow()||!currentGateDataApplied()
+                    ||visualRetryCount++>=1){showGateError(true);return;}
+                hostTrace("visual recovery retry navigation="+navigation);
+                ++visualGeneration;visualPending=-1;invalidateFrame();requestVisualState();return;
+            }
+            visualPending=-1;redraw();
+            if(visualRetryCount++>0){
                 frameReady=true;retainedFrame=true;candidate.setVisibility(View.VISIBLE);invalidateFrame();
                 if(frameAvailableCallback!=null)frameAvailableCallback.run();
             }else requestVisualState();
@@ -220,10 +235,11 @@ final class WebHost {
             hostTrace("visual callback observed generation="+id+" current="+visualGeneration);
             if(closed||candidate!=view||generation!=visualGeneration||navigation!=navigationGeneration
                 ||!screen.equals(pendingScreen)){hostTrace("stale visual callback ignored navigation="+navigation);return;}
-            if(!root.isShown()){visualPending=-1;return;}
+            if(!root.isShown()){suspendVisualRequest();return;}
             if(frameReady)return;
             if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}
-            visualPending=-1;frameReady=true;retainedFrame=true;if(tracing())hostTrace("visual-ready observed generation="+generation);
+            if(isOverlay&&visualRetryCount>0)hostTrace("visual recovery succeeded navigation="+navigation);
+            visualPending=-1;visualRetryCount=0;frameReady=true;retainedFrame=true;if(tracing())hostTrace("visual-ready observed generation="+generation);
             // Chromium guarantees that a subsequent draw can contain this DOM revision.
             // Neither this callback nor onDraw is a fence for the system compositor.
             candidate.setVisibility(View.VISIBLE);if(loadingView!=null)loadingView.setVisibility(View.GONE);invalidateFrame();if(frameAvailableCallback!=null)frameAvailableCallback.run();
@@ -272,6 +288,16 @@ final class WebHost {
     void retryInitialLoad(){
         if(closed||view==null)return;
         hostTrace("document retry requested failed="+loadFailed);
+        if(visualFailed){
+            // A frame timeout is not a broken HTML document.
+            visualFailed=false;resetVisualState("visual-retry");
+            if(loadingView!=null)loadingView.setVisibility(View.GONE);
+            hostTrace("visual recovery user retry navigation="+navigationGeneration);
+            if(frameAvailableCallback!=null)frameAvailableCallback.run();
+            invalidateFrame();
+            if(!ready)watchInitialLoad();else if(renderedNavigation!=navigationGeneration)dispatchScreen();else requestVisualState();
+            return;
+        }
         if(everRendered&&!loadFailed){redraw();requestVisualState();return;}
         if(ready&&!loadFailed){view.evaluateJavascript("nativeRestore()",null);return;}
         if(initialRetries++>0)return;
@@ -280,7 +306,7 @@ final class WebHost {
     }
     void createView(){
         if(closed)return;
-        renderingActive=false;insetKeyboard=null;loadFailed=false;
+        renderingActive=false;insetKeyboard=null;loadFailed=false;visualFailed=false;
         view=new WebView(context){
             @Override protected void onDraw(Canvas canvas){
                 // Keep Chromium visible/rasterizing; never submit the previous app's pixels.

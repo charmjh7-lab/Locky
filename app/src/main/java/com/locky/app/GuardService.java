@@ -60,7 +60,7 @@ public final class GuardService extends AccessibilityService {
     enum Exposure { HIDDEN, WAITING, INTERACTIVE, SUSPENDED }
     Exposure exposure=Exposure.HIDDEN;
     Boolean observedKeyguard;
-    boolean overlayAttached;long foregroundDetectedUptime,gateDetectedUptimeSeen;
+    boolean overlayAttached,overlayAttachPending,overlayAttachFailed,overlayLayoutDirty;int overlayAttachRetries;Runnable overlayAttachRetry;long foregroundDetectedUptime,gateDetectedUptimeSeen;
     WebHost overlay;long gateTransition;WindowManager window;WindowManager.LayoutParams overlayLayout;final Set<String> systemPackages=new HashSet<>();
     String homePackage="",homeClass="",launcherClass="";
     final Set<String> homeClasses=new HashSet<>();
@@ -391,7 +391,14 @@ public final class GuardService extends AccessibilityService {
     }
     void gateTrace(String event){UnlockDiagnostics.get(this).gateRecord(gateTransition,event);}
     void prepareAppGateWindow(){
-        if(overlayAttached||overlayWindow!=null&&overlayWindow.getParent()!=null){overlayAttached=true;return;}
+        if(overlayWindow!=null){
+            overlayAttached=overlayWindow.isAttachedToWindow();
+            if(overlayAttached)return;
+            // A parent can already belong to WindowManager while attach is in flight.
+            // Never register it again, including while GONE.
+            if(overlayWindow.getParent()!=null||overlayAttachPending){scheduleOverlayAttachRetry();return;}
+        }
+        if(overlayAttachFailed||overlayAttachRetry!=null)return;
         if(overlayWindow==null){
             overlayWindow=new android.widget.FrameLayout(this){
                 long touchTransition=-1,keyTransition=-1;
@@ -408,10 +415,18 @@ public final class GuardService extends AccessibilityService {
                 }
             };
             overlayWindow.addView(overlay.root,new android.widget.FrameLayout.LayoutParams(-1,-1));
-            // Cancel submission of a stale/empty first traversal, rather than drawing
-            // an opaque waiting background. The visible WebView's Chromium callback
-            // releases this fence; no hidden onDraw or HWUI commit is required.
-            overlayWindow.getViewTreeObserver().addOnPreDrawListener(this::canDrawGateWindow);
+            overlayWindow.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){
+                @Override public void onViewAttachedToWindow(View v){
+                    overlayAttached=true;overlayAttachPending=false;overlayAttachFailed=false;overlayLayoutDirty=true;
+                    cancelOverlayAttachRetry();overlayAttachRetries=0;
+                    gateTrace("window attached");main.post(GuardService.this::revealOverlay);
+                }
+                @Override public void onViewDetachedFromWindow(View v){
+                    overlayAttached=false;overlayAttachPending=false;
+                    gateTrace("window detached");
+                    if(overlayVisible)scheduleOverlayAttachRetry();
+                }
+            });
             overlayLayout=new WindowManager.LayoutParams(-1,-1,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_SECURE|WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
                     |WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE|WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,PixelFormat.OPAQUE);
@@ -419,14 +434,43 @@ public final class GuardService extends AccessibilityService {
             overlayWindow.setVisibility(View.GONE);
             overlayWindow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
         }
-        try{window.addView(overlayWindow,overlayLayout);overlayAttached=true;gateTrace("window attached");}
+        try{overlayAttachPending=true;window.addView(overlayWindow,overlayLayout);
+            overlayAttached=overlayWindow.isAttachedToWindow();
+            if(!overlayAttached)scheduleOverlayAttachRetry();
+        }
         catch(RuntimeException error){
             // A failed attach retains the same host/window for the next entry retry.
-            overlayAttached=overlayWindow.isAttachedToWindow()||overlayWindow.getParent()!=null;
+            overlayAttached=overlayWindow.isAttachedToWindow();overlayAttachPending=false;
             UnlockDiagnostics.get(this).failure("app-gate-attach",error);gateTrace("window attach failed "+error.getClass().getSimpleName());
+            if(!overlayAttached)scheduleOverlayAttachRetry();
         }
     }
-    boolean canDrawGateWindow(){return overlay!=null&&(overlay.gateErrorVisible()||overlay.currentGateReady());}
+    void cancelOverlayAttachRetry(){if(overlayAttachRetry!=null){main.removeCallbacks(overlayAttachRetry);overlayAttachRetry=null;}}
+    void scheduleOverlayAttachRetry(){
+        if(overlayAttachRetry!=null||overlayAttachFailed)return;
+        overlayAttachRetry=()->{
+            overlayAttachRetry=null;
+            if(overlayWindow==null||overlay==null)return;
+            overlayAttached=overlayWindow.isAttachedToWindow();
+            if(overlayAttached){overlayAttachPending=false;overlayAttachRetries=0;revealOverlay();return;}
+            // Confirm the last add on the next watch tick too: addView can return
+            // before Android dispatches attach, so success must not time out inline.
+            if(overlayAttachRetries>=2){
+                overlayAttachFailed=true;overlayAttachPending=false;
+                gateTrace("window recovery failed attached=false parent="+(overlayWindow.getParent()!=null));
+                overlay.showGateError(true);return;
+            }
+            ++overlayAttachRetries;
+            gateTrace("window recovery retry="+overlayAttachRetries+" parent="+(overlayWindow.getParent()!=null));
+            // A detached ViewRoot may still be clearing its parent. Do not remove/add
+            // concurrently; wait for the parent to be cleared by WindowManager.
+            if(overlayWindow.getParent()==null)overlayAttachPending=false;
+            prepareAppGateWindow();
+            if(overlayAttached){gateTrace("window recovery succeeded");revealOverlay();}
+            else scheduleOverlayAttachRetry();
+        };
+        main.postDelayed(overlayAttachRetry,1200);
+    }
     void openPurposeEditor(String pkg){
         Intent launch=MainActivity.launchIntent(this).putExtra("screen","settings").putExtra("appGateEditor",pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         startActivity(launch);switchForeground(getPackageName());
@@ -456,6 +500,7 @@ public final class GuardService extends AccessibilityService {
             }
         }
         if(!same){gateDetectedUptimeSeen=foregroundDetectedUptime;UnlockDiagnostics.get(this).beginGate(gateTransition,detected);gateTrace("showGate hostReuse="+(overlay!=null)+" windowReuse="+overlayAttached);}
+        if(!same){cancelOverlayAttachRetry();overlayAttachRetries=0;overlayAttachFailed=false;}
         prepareAppGate();
         overlayVisible=true;
         // Conceal previous content before a new navigation is sent to JavaScript.
@@ -467,7 +512,9 @@ public final class GuardService extends AccessibilityService {
         dailyRemaining(pkg);ensurePulse();
     }
     void revealOverlay(){
-        if(overlay==null||overlayWindow==null||!overlayAttached)return;
+        if(overlay==null||overlayWindow==null)return;
+        overlayAttached=overlayWindow.isAttachedToWindow();
+        if(!overlayAttached)prepareAppGateWindow();
         Exposure next=!overlayVisible?Exposure.HIDDEN:(!interactive||keyguardLocked()||systemPaused||!gatePkg.equals(foreground))?Exposure.SUSPENDED:
             overlay.currentGateReady()?Exposure.INTERACTIVE:Exposure.WAITING;
         applyExposure(next);
@@ -482,13 +529,23 @@ public final class GuardService extends AccessibilityService {
         boolean wasShown=overlayWindow.getVisibility()==View.VISIBLE;
         if(wasShown!=shown){gateTrace("window display requested shown="+shown+" data="+overlay.currentGateDataApplied());overlayWindow.setVisibility(shown?View.VISIBLE:View.GONE);}
         overlay.presentationActive=shown;
-        if(!shown){overlay.cancelVisualWatch();if(!overlay.frameReady)overlay.visualPending=-1;}
+        if(!shown)overlay.suspendVisualRequest();
+        if(next==Exposure.HIDDEN||next==Exposure.SUSPENDED)cancelOverlayAttachRetry();
         overlayWindow.setImportantForAccessibility(input||shown&&overlay.gateErrorVisible()?View.IMPORTANT_FOR_ACCESSIBILITY_AUTO:View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
         if(overlayLayout!=null){
             int passive=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
             int flags=input?overlayLayout.flags&~passive:overlayLayout.flags|passive;
             if(shown)flags&=~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-            if(flags!=overlayLayout.flags){overlayLayout.flags=flags;if(overlayAttached)window.updateViewLayout(overlayWindow,overlayLayout);}
+            if(flags!=overlayLayout.flags||overlayLayoutDirty){
+                overlayLayout.flags=flags;overlayLayoutDirty=true;
+                if(overlayWindow.isAttachedToWindow())try{window.updateViewLayout(overlayWindow,overlayLayout);overlayLayoutDirty=false;}
+                catch(RuntimeException layoutError){
+                    overlayAttached=overlayWindow.isAttachedToWindow();
+                    UnlockDiagnostics.get(this).failure("app-gate-layout",layoutError);
+                    gateTrace("window layout failed "+layoutError.getClass().getSimpleName());
+                    if(!overlayAttached)scheduleOverlayAttachRetry();
+                }
+            }
         }
         if(input&&exposure!=Exposure.INTERACTIVE)gateTrace("input allowed navigation="+overlay.navigationGeneration);
         exposure=next;
@@ -552,5 +609,5 @@ public final class GuardService extends AccessibilityService {
         main.postDelayed(lockCompletion,1500); // Failure recovery only; never delays exposure or locking.
     }
     @Override public void onInterrupt(){}
-    @Override public void onDestroy(){hideFloatingTimer();checkpoint();if(store!=null){store.observe("service-destroyed",interactive);store.screenState(ScreenHistory.UNKNOWN);}live=null;interactive=false;overlayVisible=false;main.removeCallbacksAndMessages(null);try{unregisterReceiver(screen);}catch(Exception ignored){}if(overlay!=null){try{if(overlayWindow!=null&&overlayAttached){window.removeViewImmediate(overlayWindow);overlayAttached=false;}}catch(IllegalArgumentException ignored){}overlay.close();}Notices.cancelTimer(this);super.onDestroy();}
+    @Override public void onDestroy(){hideFloatingTimer();checkpoint();if(store!=null){store.observe("service-destroyed",interactive);store.screenState(ScreenHistory.UNKNOWN);}live=null;interactive=false;overlayVisible=false;main.removeCallbacksAndMessages(null);try{unregisterReceiver(screen);}catch(Exception ignored){}if(overlay!=null){try{if(overlayWindow!=null&&(overlayWindow.isAttachedToWindow()||overlayWindow.getParent()!=null)){window.removeViewImmediate(overlayWindow);overlayAttached=false;overlayAttachPending=false;}}catch(IllegalArgumentException ignored){}overlay.close();}Notices.cancelTimer(this);super.onDestroy();}
 }

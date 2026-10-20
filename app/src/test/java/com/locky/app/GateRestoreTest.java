@@ -14,8 +14,8 @@ import static org.junit.Assert.*;
 @Config(application=Application.class,sdk=35)
 public class GateRestoreTest {
     GuardService g;int adds;
-    @Before public void setup(){Store.instance=null;g=Robolectric.buildService(GuardService.class).create().get();g.store=Store.get(g);g.interactive=true;g.foreground="video";g.segmentWall=System.currentTimeMillis();g.segmentElapsed=SystemClock.elapsedRealtime();g.window=(WindowManager)Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{WindowManager.class},(p,m,a)->{if(m.getName().equals("addView"))adds++;return null;});}
-    @After public void cleanup(){g.main.removeCallbacksAndMessages(null);if(g.overlay!=null)g.overlay.close();g.store.close();Store.instance=null;GuardService.live=null;}
+    @Before public void setup(){Store.instance=null;g=Robolectric.buildService(GuardService.class).create().get();g.store=Store.get(g);g.interactive=true;g.foreground="video";g.segmentWall=System.currentTimeMillis();g.segmentElapsed=SystemClock.elapsedRealtime();WindowManager actual=g.getSystemService(WindowManager.class);g.window=(WindowManager)Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{WindowManager.class},(p,m,a)->{if(m.getName().equals("addView"))adds++;try{return m.invoke(actual,a);}catch(java.lang.reflect.InvocationTargetException e){throw e.getCause();}});}
+    @After public void cleanup(){g.main.removeCallbacksAndMessages(null);if(g.overlayWindow!=null&&g.overlayWindow.getParent()!=null)g.window.removeViewImmediate(g.overlayWindow);g.main.removeCallbacksAndMessages(null);if(g.overlay!=null)g.overlay.close();g.store.close();Store.instance=null;GuardService.live=null;}
     @Test public void onlyManagedAppGatesUseTheSingleAccessibilityWindow(){
         g.showGate("app","video");Object web=g.overlay.view;long nav=g.overlay.navigationGeneration;
         g.showGate("app","video");assertEquals(1,adds);assertSame(web,g.overlay.view);assertEquals(nav,g.overlay.navigationGeneration);
@@ -71,7 +71,7 @@ public class GateRestoreTest {
     }
     @Test public void errorExitRemainsUsableWithoutAcceptingGateActions(){
         g.showGate("app","video");g.overlay.showGateError();assertTrue(g.acceptGateErrorInput());assertFalse(g.acceptGateInput());
-        assertEquals(android.view.View.VISIBLE,g.overlayWindow.getVisibility());assertTrue(g.canDrawGateWindow());
+        assertEquals(android.view.View.VISIBLE,g.overlayWindow.getVisibility());assertFalse(g.overlayWindow.getViewTreeObserver().dispatchOnPreDraw());
         g.foreground="social";assertFalse(g.acceptGateErrorInput());
     }
     void actualWindow(String pkg){
@@ -121,24 +121,52 @@ public class GateRestoreTest {
         }finally{LockyApp.app.work.shutdownNow();LockyApp.app=null;}
     }
 
-    @Test public void dataExposesWindowButOnlyValidatedFrameCanDrawAndAcceptInput(){
+    @Test public void dataExposesDrawableWindowButOnlyValidatedFrameCanAcceptInput(){
         g.showGate("app","video");WebHost h=g.overlay;h.ready=true;
-        assertFalse(g.canDrawGateWindow());assertEquals(android.view.View.GONE,g.overlayWindow.getVisibility());
+        assertFalse(g.overlayWindow.getViewTreeObserver().dispatchOnPreDraw());assertEquals(android.view.View.GONE,g.overlayWindow.getVisibility());
         h.rendered(h.view,"app",h.navigationGeneration,1);
-        assertEquals(android.view.View.VISIBLE,g.overlayWindow.getVisibility());assertFalse(g.canDrawGateWindow());assertFalse(g.acceptGateInput());
-        h.frameReady=true;g.revealOverlay();assertTrue(g.canDrawGateWindow());assertTrue(g.acceptGateInput());
+        assertEquals(android.view.View.VISIBLE,g.overlayWindow.getVisibility());assertFalse(g.overlayWindow.getViewTreeObserver().dispatchOnPreDraw());assertFalse(g.acceptGateInput());
+        assertEquals(0,g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+        // Data can arrive before the first attach traversal. Check the WindowManager
+        // attributes too, so cached flags cannot leave touches passing underneath.
+        WindowManager.LayoutParams actual=org.robolectric.util.ReflectionHelpers.getField(g.overlayWindow.getParent(),"mWindowAttributes");
+        assertEquals(0,actual.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+        assertNotEquals(0,actual.flags&WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+        h.frameReady=true;g.revealOverlay();assertFalse(g.overlayWindow.getViewTreeObserver().dispatchOnPreDraw());assertTrue(g.acceptGateInput());
         g.hideOverlay();assertEquals(android.view.View.GONE,g.overlayWindow.getVisibility());assertTrue(h.frameReady);assertTrue(h.renderingActive);
         g.showGate("app","video");assertFalse(g.acceptGateInput());assertEquals(1,adds);
         h.rendered(h.view,"app",h.navigationGeneration,1);assertTrue(g.acceptGateInput());
     }
     @Test public void failedAttachRetriesTheSameWindowAndHostOnce(){
-        final int[] attempts={0};g.window=(WindowManager)Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{WindowManager.class},(p,m,a)->{
-            if(m.getName().equals("addView")&&attempts[0]++==0)throw new IllegalArgumentException("test");return null;
+        final int[] attempts={0};WindowManager actual=g.getSystemService(WindowManager.class);
+        g.window=(WindowManager)Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{WindowManager.class},(p,m,a)->{
+            if(m.getName().equals("addView")&&attempts[0]++==0)throw new IllegalArgumentException("test");
+            try{return m.invoke(actual,a);}catch(java.lang.reflect.InvocationTargetException e){throw e.getCause();}
         });
         g.prepareAppGate();Object host=g.overlay,window=g.overlayWindow;assertFalse(g.overlayAttached);
-        g.prepareAppGate();g.prepareAppGate();assertTrue(g.overlayAttached);assertEquals(2,attempts[0]);assertSame(host,g.overlay);assertSame(window,g.overlayWindow);
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(1200));
+        g.prepareAppGate();assertTrue(g.overlayAttached);assertEquals(2,attempts[0]);assertSame(host,g.overlay);assertSame(window,g.overlayWindow);
+    }
+    @Test public void actualDetachRecoversSameHostWithoutDuplicateRegistration(){
+        g.showGate("app","video");Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();Object host=g.overlay,web=g.overlay.view,window=g.overlayWindow;
+        assertTrue(g.overlayAttached);g.window.removeViewImmediate(g.overlayWindow);assertFalse(g.overlayAttached);assertNull(g.overlayWindow.getParent());
+        g.revealOverlay();Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(1200));assertTrue(g.overlayAttached);assertEquals(2,adds);assertSame(window,g.overlayWindow);assertSame(host,g.overlay);assertSame(web,g.overlay.view);
+        g.prepareAppGate();g.overlayWindow.setVisibility(android.view.View.GONE);g.prepareAppGate();assertEquals(2,adds);assertTrue(g.overlayAttached);
+    }
+    @Test public void staleAttachedFlagCannotSkipRealWindowRegistration(){
+        g.prepareAppGate();g.window.removeViewImmediate(g.overlayWindow);g.overlayAttached=true;
+        g.prepareAppGate();Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(1200));assertTrue(g.overlayWindow.isAttachedToWindow());assertTrue(g.overlayAttached);assertEquals(2,adds);
+    }
+    @Test public void unclearedParentNeverCausesDuplicateAddAndFailureCanRetryOnNewEntry(){
+        g.prepareAppGate();g.window.removeViewImmediate(g.overlayWindow);
+        android.widget.FrameLayout stale=new android.widget.FrameLayout(g);stale.addView(g.overlayWindow);
+        g.showGate("app","video");Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(3700));
+        assertEquals(1,adds);assertFalse(g.overlayAttached);assertTrue(g.overlayAttachFailed);assertTrue(g.overlay.gateErrorVisible());
+        stale.removeView(g.overlayWindow);g.foreground="social";g.showGate("app","social");Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();assertTrue(g.overlayAttached);assertEquals(2,adds);assertFalse(g.overlayAttachFailed);assertFalse(g.overlay.gateErrorVisible());
     }
     @Test public void appGateDiagnosticsAreBoundedAndIndependentOfScreenOff() throws Exception {
+        g.prepareAppGate();Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
         UnlockDiagnostics d=UnlockDiagnostics.get(g);d.clear();d.setEnabled(true);
         for(int i=0;i<12;i++){g.hideOverlay();g.showGate("app","video");}
         assertEquals(8,d.status().getInt("appGates"));assertEquals(0,d.status().getInt("cycles"));
@@ -151,8 +179,8 @@ public class GateRestoreTest {
 
     @Test public void touchStartedOnPreviousGateCannotFinishOnNewGate(){
         g.showGate("app","video");ready();final int[] clicks={0};
-        // Synchronous touch target: the proxy WindowManager deliberately has no
-        // ViewRoot for Button's posted performClick. Exercise real dispatch/cancel.
+        // Synchronous touch target exercises dispatch/cancel independently of
+        // Button's posted performClick.
         android.view.View target=new android.view.View(g){boolean started;
             @Override public boolean onTouchEvent(android.view.MotionEvent event){
                 if(event.getActionMasked()==android.view.MotionEvent.ACTION_DOWN)started=true;
