@@ -536,10 +536,12 @@ public final class GuardService extends AccessibilityService {
         boolean error=waiting&&overlay.gateErrorVisible();
         // The attached transparent hierarchy keeps Chromium eligible for visual callbacks.
         // Only the current prepared WebView (or native recovery view) covers the app.
-        overlayWindow.setVisibility(View.VISIBLE);
-        overlay.root.setVisibility(View.VISIBLE);
-        overlay.view.setVisibility(input?View.VISIBLE:View.INVISIBLE);
-        overlay.loadingView.setVisibility(error?View.VISIBLE:View.GONE);
+        if(overlayWindow.getVisibility()!=View.VISIBLE)overlayWindow.setVisibility(View.VISIBLE);
+        if(overlay.root.getVisibility()!=View.VISIBLE)overlay.root.setVisibility(View.VISIBLE);
+        int webVisibility=input?View.VISIBLE:View.INVISIBLE;
+        if(overlay.view.getVisibility()!=webVisibility)overlay.view.setVisibility(webVisibility);
+        int errorVisibility=error?View.VISIBLE:View.GONE;
+        if(overlay.loadingView.getVisibility()!=errorVisibility)overlay.loadingView.setVisibility(errorVisibility);
         overlay.presentationActive=input||waiting;
         if(!overlay.presentationActive)overlay.suspendVisualRequest();
         if(next==Exposure.HIDDEN||next==Exposure.SUSPENDED)cancelOverlayAttachRetry();
@@ -563,7 +565,7 @@ public final class GuardService extends AccessibilityService {
         exposure=next;
         overlay.notifyGateExposure(next);
         overlay.prepareOverlay();
-        if(input||waiting)overlay.requestVisualState();
+        if(waiting&&!overlay.frameReady)overlay.requestVisualState();
     }
     JSONObject startWindowStatus() throws JSONException {
         return UnlockDiagnostics.get(this).windowStatus().put("status","activity").put("actual","activity");
