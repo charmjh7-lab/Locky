@@ -68,7 +68,6 @@ public final class GuardService extends AccessibilityService {
     final Runnable pulse=new Runnable(){public void run(){pulseScheduled=false;if(live!=GuardService.this)return;pulseCount++;checkpoint();enforce();ensurePulse();}};
     final BroadcastReceiver screen=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent i){
         String a=i.getAction();
-        if(Intent.ACTION_SCREEN_ON.equals(a)&&UnlockDiagnostics.live!=null)UnlockDiagnostics.live.resumeCapture();
         if(!Intent.ACTION_SCREEN_OFF.equals(a))WebHost.trace("broadcast observed="+(Intent.ACTION_SCREEN_ON.equals(a)?"screen-on":Intent.ACTION_USER_PRESENT.equals(a)?"user-present":"clock"));
         if(Intent.ACTION_SCREEN_OFF.equals(a))screenOff();
         else if(Intent.ACTION_USER_PRESENT.equals(a)||Intent.ACTION_SCREEN_ON.equals(a)){
@@ -78,7 +77,6 @@ public final class GuardService extends AccessibilityService {
     }};
     void screenOff(){
         if(!interactive&&phoneStart!=null&&phoneStart.awaitingUnlock()){WebHost.trace("duplicate screen-off ignored");return;}
-        UnlockDiagnostics.get(this);WebHost.beginUnlockTrace();
         PhoneStartActivity phone=PhoneStartActivity.current();if(phone!=null)phone.clearExternalReturn();
         store.screenState(ScreenHistory.OFF);checkpoint();interactive=false;cancelLinkedLaunch();hideFloatingTimer();
         if(lockPending){store.event("dismiss","열지 않기","","",0);lockPending=false;}
@@ -504,11 +502,17 @@ public final class GuardService extends AccessibilityService {
         }
         if(!same){gateDetectedUptimeSeen=foregroundDetectedUptime;UnlockDiagnostics.get(this).beginGate(gateTransition,detected);gateTrace("showGate hostReuse="+(overlay!=null)+" windowReuse="+overlayAttached);}
         if(!same){cancelOverlayAttachRetry();overlayAttachRetries=0;overlayAttachFailed=false;}
-        prepareAppGate();
+        // The service preattaches this window. Do not re-run prewarm on every app
+        // entry; only repair an actually absent/detached host/window.
+        if(overlay==null||overlayWindow==null||!overlayWindow.isAttachedToWindow())prepareAppGate();
         overlayVisible=true;
         // Conceal previous content before a new navigation is sent to JavaScript.
         if(!same)applyExposure(Exposure.WAITING);
-        if(!same){try{overlay.gateScreen(type,gatePayload());}catch(JSONException error){hideOverlay();throw new IllegalStateException("앱 사용 정보를 준비하지 못했습니다.",error);}}
+        if(!same){
+            gateTrace("gate payload requested");
+            try{JSONObject payload=gatePayload();gateTrace("gate payload ready");overlay.gateScreen(type,payload);}
+            catch(JSONException error){hideOverlay();throw new IllegalStateException("앱 사용 정보를 준비하지 못했습니다.",error);}
+        }
         if(same)overlay.ensurePurposeDay();
         revealOverlay();
         // First keyguard observation may have added screen evidence during reveal.
@@ -520,6 +524,7 @@ public final class GuardService extends AccessibilityService {
         if(!overlayAttached)prepareAppGateWindow();
         Exposure next=!overlayVisible?Exposure.HIDDEN:(!interactive||lockPending||keyguardLocked()||systemPaused||!gatePkg.equals(foreground))?Exposure.SUSPENDED:
             overlayAttached&&currentGateEntry(overlay,overlay.gateTransition)&&overlay.currentGateReady()?Exposure.INTERACTIVE:Exposure.WAITING;
+        if(next!=exposure)gateTrace("exposure "+exposure+" -> "+next+" attached="+overlayAttached+" dom="+overlay.currentGateDataApplied()+" frame="+overlay.frameReady);
         applyExposure(next);
     }
     boolean currentGateEntry(WebHost host,long transition){
@@ -564,14 +569,17 @@ public final class GuardService extends AccessibilityService {
         if(input&&exposure!=Exposure.INTERACTIVE)gateTrace("input allowed navigation="+overlay.navigationGeneration);
         exposure=next;
         overlay.notifyGateExposure(next);
-        overlay.prepareOverlay();
-        if(waiting&&!overlay.frameReady)overlay.requestVisualState();
+        // The retained engine is already running. Only the not-yet-rendered
+        // entry needs a wakeup and a visual request; hiding never pauses it.
+        if(waiting&&!overlay.frameReady){overlay.prepareOverlay();overlay.requestVisualState();}
     }
     JSONObject startWindowStatus() throws JSONException {
         return UnlockDiagnostics.get(this).windowStatus().put("status","activity").put("actual","activity");
     }
     void hideOverlay(){
         if(!overlayVisible)return;
+        gateTrace("gate hide exposure="+exposure);
+        UnlockDiagnostics.get(this).finishGate(gateTransition,exposure==Exposure.INTERACTIVE?"shown-and-hidden":"hidden-before-ready");
         checkpoint();overlayVisible=false;++gateTransition;gateDailyUntil=0;if(overlay!=null)applyExposure(Exposure.HIDDEN);
         segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();segmentUptime=SystemClock.uptimeMillis();utility="첫 화면";
     }
