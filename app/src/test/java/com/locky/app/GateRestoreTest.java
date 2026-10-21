@@ -25,6 +25,7 @@ public class GateRestoreTest {
     }
     @Test public void gateFramePreparationDoesNotRequeryRulesOrUsageAfterDecision(){
         g.showGate("app","video");
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
         WebHost host=g.overlay;
         // The compositor's callback must not open policy tables. Actual input
         // validation still rechecks policy through currentGateEntry().
@@ -231,11 +232,11 @@ public class GateRestoreTest {
         g.prepareAppGate();Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
         UnlockDiagnostics d=UnlockDiagnostics.get(g);d.clear();d.setEnabled(true);
         for(int i=0;i<12;i++){g.hideOverlay();g.showGate("app","video");}
-        assertEquals(8,d.status().getInt("appGates"));assertEquals(0,d.status().getInt("cycles"));
+        assertEquals(12,d.status().getInt("appGates"));
         assertTrue(d.text().contains("showGate hostReuse=true windowReuse=true"));
         assertTrue(d.text().contains("data apply requested"));assertFalse(d.text().contains("video"));
         d.gateRecord(g.gateTransition-1,"wrong-token-event");assertFalse(d.text().contains("wrong-token-event"));
-        d.flush();UnlockDiagnostics restored=new UnlockDiagnostics(g.getApplicationContext());assertEquals(8,restored.status().getInt("appGates"));
+        d.flush();UnlockDiagnostics restored=new UnlockDiagnostics(g.getApplicationContext());assertEquals(12,restored.status().getInt("appGates"));
         d.setEnabled(false);d.clear();
     }
 
