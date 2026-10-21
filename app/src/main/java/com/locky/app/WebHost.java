@@ -258,7 +258,7 @@ final class WebHost {
             // current frame to visible, recheck management and the actual app.
             if(!visualHierarchyAvailable()||!currentGateEntry(transition)
                 ||(isOverlay&&context instanceof GuardService
-                    &&!((GuardService)context).currentGateEntry(this,transition))){
+                    &&!((GuardService)context).currentGateEntry(WebHost.this,transition))){
                 suspendVisualRequest();return;
             }
             if(frameReady)return;
