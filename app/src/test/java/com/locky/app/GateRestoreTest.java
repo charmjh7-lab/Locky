@@ -23,6 +23,15 @@ public class GateRestoreTest {
         g.pauseSystem();assertTrue(g.overlayVisible);g.systemPaused=false;g.revealOverlay();assertSame(web,g.overlay.view);
         g.showGate("blocked","video");assertEquals(1,adds);assertSame(web,g.overlay.view);
     }
+    @Test public void gateFramePreparationDoesNotRequeryRulesOrUsageAfterDecision(){
+        g.showGate("app","video");
+        WebHost host=g.overlay;
+        // The compositor's callback must not open policy tables. Actual input
+        // validation still rechecks policy through currentGateEntry().
+        g.store.getWritableDatabase().execSQL("DROP TABLE rules");
+        assertTrue(g.canPrepareGateFrame(host,host.gateTransition));
+        assertTrue(host.currentGateEntry(host.gateTransition));
+    }
     @Test public void phoneScreenOffCreatesNoOverlayAndCannotBeSentThroughShowGate(){
         g.screenOff();assertNull(g.overlay);assertEquals(0,adds);assertFalse(g.overlayVisible);
         try{g.showGate("unlock","");fail();}catch(IllegalArgumentException expected){}
