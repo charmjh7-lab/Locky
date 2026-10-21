@@ -38,11 +38,11 @@ final class WebHost {
     Boolean insetKeyboard;
     private Runnable initialWatch,visualWatch;int visualRetryCount;
     // Bounded Logcat plus opt-in private recording. Never log user content or package names.
-    private static int traceBudget,traceCycle;private static long traceUntil;
+    
     static boolean tracing(){return BuildConfig.DEBUG||android.util.Log.isLoggable("LockyGate",android.util.Log.DEBUG);}
-    static void beginUnlockTrace(){if(UnlockDiagnostics.live!=null)UnlockDiagnostics.live.begin();if(tracing()){traceBudget=120;traceUntil=SystemClock.uptimeMillis()+30_000;++traceCycle;trace("screen-off");}}
-    static void resumeUnlockTrace(){if(UnlockDiagnostics.live!=null)UnlockDiagnostics.live.resumeCapture();if(tracing()){traceUntil=SystemClock.uptimeMillis()+30_000;traceBudget=Math.max(traceBudget,80);}}
-    static void trace(String event){if(UnlockDiagnostics.live!=null)UnlockDiagnostics.live.record(event);if(traceBudget>0&&SystemClock.uptimeMillis()<=traceUntil){--traceBudget;android.util.Log.d("LockyUnlock","cycle="+traceCycle+" "+SystemClock.uptimeMillis()+" "+event);}}
+    static void beginUnlockTrace(){} // Retired unlock recording.
+    static void resumeUnlockTrace(){} // Retired unlock recording.
+    static void trace(String event){if(tracing())android.util.Log.d("LockyGate",event);}
     void hostTrace(String event){
         trace("web="+role.name()+" "+event);
         if(isOverlay&&UnlockDiagnostics.live!=null)UnlockDiagnostics.live.gateRecord(gateTransition,event);
@@ -502,7 +502,7 @@ final class WebHost {
     }catch(Exception e){answer(source,id,null,ChatGPT.safeError(e));}}
     JSONObject resolvePurpose(JSONObject a) throws Exception {if(a.optBoolean("transient",false))return Store.purposeData(a,a.optString("scope","phone"));if(a.has("label"))return store.purpose(a,a.optString("scope","phone"));JSONArray p=store.rows("SELECT * FROM purposes WHERE id=?",a.getString("id"));if(p.length()==0)throw new IllegalStateException("사용 목적을 다시 선택해 주세요.");return p.getJSONObject(0);}
     void saveSettings(JSONObject a) throws Exception {
-        if(a.has("unlockDiagnostics"))UnlockDiagnostics.get(context).setEnabled(a.getBoolean("unlockDiagnostics"));
+        if(a.has("appGateDiagnostics"))UnlockDiagnostics.get(context).setEnabled(a.getBoolean("appGateDiagnostics"));
         var e=store.settings.edit();
         if(a.has("floatingTimer"))e.putBoolean("floatingTimer",a.getBoolean("floatingTimer"));
         if(a.has("themeMode")){String value=a.getString("themeMode");if(!Set.of("system","light","dark").contains(value))throw new IllegalArgumentException("화면 테마를 다시 선택해 주세요.");e.putString("theme-mode",value);}
