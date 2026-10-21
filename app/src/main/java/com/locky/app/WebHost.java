@@ -214,7 +214,7 @@ final class WebHost {
     }
     boolean currentGateEntry(long transition){
         return !isOverlay||presentationActive&&(!(context instanceof GuardService)
-            ||((GuardService)context).currentGateEntry(this,transition));
+            ||((GuardService)context).canPrepareGateFrame(this,transition));
     }
     boolean visualHierarchyAvailable(){
         return view!=null&&view.isAttachedToWindow()&&root.isAttachedToWindow()
