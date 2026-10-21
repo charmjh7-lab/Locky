@@ -81,7 +81,9 @@ final class UnlockDiagnostics {
                 .put("detectionToGateMs",Math.max(0,now-gateOrigin))
                 .put("events",new JSONArray().put(new JSONObject().put("elapsed",0).put("event","foreground detected")));
             gates.add(currentGate);
-            trim();schedule();
+            while(gates.size()>MAX_GATES)gates.remove(0);
+            // Bound the serialized size only on the disk thread, never during entry.
+            schedule();
         }catch(JSONException ignored){}
     }
     synchronized void gateRecord(long token,String event){
@@ -93,7 +95,7 @@ final class UnlockDiagnostics {
             if(rows.length()>=MAX_GATE_EVENTS){currentGate.put("dropped",currentGate.optInt("dropped")+1);return;}
             rows.put(new JSONObject().put("elapsed",Math.max(0,elapsed))
                 .put("event",event.substring(0,Math.min(240,event.length()))));
-            trim();schedule();
+            schedule();
         }catch(JSONException ignored){}
     }
     synchronized void finishGate(long token,String outcome){
