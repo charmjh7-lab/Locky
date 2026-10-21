@@ -527,10 +527,16 @@ public final class GuardService extends AccessibilityService {
         if(next!=exposure)gateTrace("exposure "+exposure+" -> "+next+" attached="+overlayAttached+" dom="+overlay.currentGateDataApplied()+" frame="+overlay.frameReady);
         applyExposure(next);
     }
-    boolean currentGateEntry(WebHost host,long transition){
+    // Rendering must never wait for a second policy/SQLite lookup. This checks
+    // the service-owned window and transition only; policy is revalidated on
+    // exposure and every actual user action.
+    boolean canPrepareGateFrame(WebHost host,long transition){
         return overlay==host&&!host.closed&&overlayAttached&&overlayVisible&&transition==gateTransition&&!lockPending
-            &&interactive&&!systemPaused&&!keyguardLocked()&&gatePkg.equals(foreground)
-            &&store.managed(System.currentTimeMillis())&&policyRule(gatePkg)!=null;
+            &&interactive&&!systemPaused&&!keyguardLocked()&&gatePkg.equals(foreground);
+    }
+    boolean currentGateEntry(WebHost host,long transition){
+        return canPrepareGateFrame(host,transition)&&store.managed(System.currentTimeMillis())
+            &&policyRule(gatePkg)!=null;
     }
     boolean acceptGateErrorInput(){return overlay!=null&&overlay.gateErrorVisible()&&exposure==Exposure.WAITING
         &&currentGateEntry(overlay,overlay.gateTransition);}
