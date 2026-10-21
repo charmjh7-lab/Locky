@@ -39,7 +39,7 @@ final class WebHost {
     private Runnable initialWatch,visualWatch;int visualRetryCount;
     // Bounded Logcat plus opt-in private recording. Never log user content or package names.
     private static int traceBudget,traceCycle;private static long traceUntil;
-    static boolean tracing(){return (UnlockDiagnostics.live!=null&&UnlockDiagnostics.live.enabled())||BuildConfig.DEBUG||android.util.Log.isLoggable("LockyUnlock",android.util.Log.DEBUG);}
+    static boolean tracing(){return BuildConfig.DEBUG||android.util.Log.isLoggable("LockyGate",android.util.Log.DEBUG);}
     static void beginUnlockTrace(){if(UnlockDiagnostics.live!=null)UnlockDiagnostics.live.begin();if(tracing()){traceBudget=120;traceUntil=SystemClock.uptimeMillis()+30_000;++traceCycle;trace("screen-off");}}
     static void resumeUnlockTrace(){if(UnlockDiagnostics.live!=null)UnlockDiagnostics.live.resumeCapture();if(tracing()){traceUntil=SystemClock.uptimeMillis()+30_000;traceBudget=Math.max(traceBudget,80);}}
     static void trace(String event){if(UnlockDiagnostics.live!=null)UnlockDiagnostics.live.record(event);if(traceBudget>0&&SystemClock.uptimeMillis()<=traceUntil){--traceBudget;android.util.Log.d("LockyUnlock","cycle="+traceCycle+" "+SystemClock.uptimeMillis()+" "+event);}}
@@ -124,7 +124,7 @@ final class WebHost {
         if(changed&&!renderedScreen.isEmpty()&&!liveUpdate)resetVisualState("dom");
         hostTrace("data applied navigation="+navigation+" changed="+changed+" revision="+revision);
         renderedNavigation=navigation;renderedRevision=revision;renderedScreen=screen;everRendered=true;loadFailed=false;cancelInitialWatch();
-        if(!frameReady)requestVisualState();
+        if(!frameReady){if(isOverlay)invalidateFrame();requestVisualState();}
         if(!isOverlay&&frameReady&&frameAvailableCallback!=null)frameAvailableCallback.run();
     }
 
@@ -136,9 +136,15 @@ final class WebHost {
         cancelInitialWatch();visualFailed=false;initialRetries=0;resetVisualState("new-entry");
         pendingGate=payload;gateTransition=payload.optLong("gateTransition",-1);preparedPurposeDay=payload.optString("purposeDate");pendingScreen=name;pendingChat="";++navigationGeneration;
         renderedNavigation=-1;renderedRevision=-1;
-        hostTrace("data apply requested navigation="+navigationGeneration);
+        hostTrace("data apply requested navigation="+navigationGeneration+" ready="+ready+" engine="+renderingActive+" attached="+view.isAttachedToWindow());
         if(loadFailed){retryInitialLoad();return;}
-        if(ready)dispatchScreen();else watchInitialLoad();
+        if(ready){
+            // A retained but long-idle Chromium surface still needs a draw request;
+            // never force a fresh WebView, loadUrl or a full Android layout here.
+            resumeEngine();
+            dispatchScreen();
+            invalidateFrame();
+        }else watchInitialLoad();
     }
     // This only informs JavaScript; GuardService remains the exposure/input owner.
     void notifyGateExposure(GuardService.Exposure exposure){
@@ -414,7 +420,7 @@ final class WebHost {
             case "saveDiagnostics":{
                 if(!(context instanceof MainActivity))throw new IllegalStateException("로키 앱의 설정에서 진단 기록을 내보내 주세요.");
                 String token=RawExport.stage(context,UnlockDiagnostics.get(context).text());
-                String filename="Locky-unlock-"+java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))+".txt";
+                String filename="Locky-app-gate-"+java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))+".txt";
                 main.post(()->((MainActivity)context).saveDiagnosticsToDocument(filename,token));break;
             }
             case "tick":if(isOverlay){out=gateResponseIdentity(new JSONObject(),g).put("gate",g==null?new JSONObject():g.state()).put("free",!store.managed(System.currentTimeMillis()));break;}out=new JSONObject().put("gate",g==null?new JSONObject():g.state()).put("free",!store.managed(System.currentTimeMillis())).put("busy",LockyApp.app.chat.busy.get()).put("activeChat",LockyApp.app.chat.active).put("chatError",LockyApp.app.chat.error).put("connection",LockyApp.app.auth.connection());break;
@@ -549,7 +555,7 @@ final class WebHost {
                 .put("allPurposes",store.rows("SELECT * FROM purposes ORDER BY rowid")).put("rules",rule==null?new JSONArray():new JSONArray().put(rule))
                 .put("notes",new JSONArray()).put("chats",new JSONArray()).put("models",new JSONArray()).put("accounts",new JSONArray()).put("connection",new JSONObject());
         }
-        JSONObject status=new JSONObject().put("accessibility",GuardService.live!=null).put("drawOverlays",Settings.canDrawOverlays(context)).put("startWindow",GuardService.live==null?UnlockDiagnostics.get(context).windowStatus().put("status","service-off"):GuardService.live.startWindowStatus()).put("unlockDiagnostics",UnlockDiagnostics.get(context).status()).put("usage",UsageReader.allowed(context)).put("notifications",context.getSystemService(NotificationManager.class).areNotificationsEnabled()).put("exact",Build.VERSION.SDK_INT<31||context.getSystemService(AlarmManager.class).canScheduleExactAlarms()).put("briefing",Notices.briefingStatus(context)).put("liveTimer",Notices.timerStatus(context));
+        JSONObject status=new JSONObject().put("accessibility",GuardService.live!=null).put("drawOverlays",Settings.canDrawOverlays(context)).put("startWindow",GuardService.live==null?UnlockDiagnostics.get(context).windowStatus().put("status","service-off"):GuardService.live.startWindowStatus()).put("appGateDiagnostics",UnlockDiagnostics.get(context).status()).put("usage",UsageReader.allowed(context)).put("notifications",context.getSystemService(NotificationManager.class).areNotificationsEnabled()).put("exact",Build.VERSION.SDK_INT<31||context.getSystemService(AlarmManager.class).canScheduleExactAlarms()).put("briefing",Notices.briefingStatus(context)).put("liveTimer",Notices.timerStatus(context));
         JSONArray phonePurposes=store.purposes("phone");
         return new JSONObject().put("purposeIcons",purposeIcons.forPurposes(context,phonePurposes,this::icon)).put("purposeEditor",purposeEditorPkg).put("savedBrief",new JSONObject(store.settings.getString("last-brief","{}"))).put("purposeDate",java.time.LocalDate.now().toString()).put("purposeOrders",purposeOrders()).put("chatReturn",role==Role.PHONE_START?phoneSession().optString("chatReturn","unlock"):store.settings.getString("chat-return","chats")).put("chatsReturn",role==Role.PHONE_START?phoneSession().optString("chatsReturn","unlock"):store.settings.getString("chats-return","home")).put("phoneCycle",role==Role.PHONE_START?((PhoneStartActivity)context).cycle:0).put("role",role.name()).put("phoneSession",role==Role.PHONE_START?phoneSession():new JSONObject()).put("overlay",false).put("prefs",store.preferences()).put("status",status).put("free",!store.managed(System.currentTimeMillis())).put("gate",GuardService.live==null?new JSONObject():GuardService.live.state()).put("purposes",phonePurposes).put("allPurposes",store.rows("SELECT * FROM purposes ORDER BY rowid")).put("notes",store.notes()).put("chats",store.rows("SELECT * FROM chats ORDER BY updated DESC")).put("rules",store.rows("SELECT * FROM rules ORDER BY label")).put("models",new JSONArray(store.settings.getString("models","[]"))).put("accounts",LockyApp.app.auth.accounts()).put("connection",LockyApp.app.auth.connection()).put("busy",LockyApp.app.chat.busy.get()).put("activeChat",LockyApp.app.chat.active).put("chatError",LockyApp.app.chat.error).put("ruleSeen",new JSONArray(store.settings.getString("rule-seen","[]"))).put("dictionary",store.settings.getString("dictionary","")).put("savedChat",role==Role.PHONE_START?phoneSession().optString("chat"):store.settings.getString("last-chat","")).put("savedNote",role==Role.PHONE_START?phoneSession().optString("note"):store.settings.getString("last-note",""));
     }
