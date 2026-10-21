@@ -124,7 +124,7 @@ final class WebHost {
         if(changed&&!renderedScreen.isEmpty()&&!liveUpdate)resetVisualState("dom");
         hostTrace("data applied navigation="+navigation+" changed="+changed+" revision="+revision);
         renderedNavigation=navigation;renderedRevision=revision;renderedScreen=screen;everRendered=true;loadFailed=false;cancelInitialWatch();
-        if(!frameReady){if(isOverlay)invalidateFrame();requestVisualState();}
+        if(!frameReady)requestVisualState();
         if(!isOverlay&&frameReady&&frameAvailableCallback!=null)frameAvailableCallback.run();
     }
 
@@ -139,11 +139,11 @@ final class WebHost {
         hostTrace("data apply requested navigation="+navigationGeneration+" ready="+ready+" engine="+renderingActive+" attached="+view.isAttachedToWindow());
         if(loadFailed){retryInitialLoad();return;}
         if(ready){
-            // A retained but long-idle Chromium surface still needs a draw request;
-            // never force a fresh WebView, loadUrl or a full Android layout here.
-            resumeEngine();
+            // Keep the single loaded document. Only a truly paused renderer
+            // needs an invalidation; already-active surfaces are left alone.
+            boolean resumed=resumeEngine();
             dispatchScreen();
-            invalidateFrame();
+            if(resumed)invalidateFrame();
         }else watchInitialLoad();
     }
     // This only informs JavaScript; GuardService remains the exposure/input owner.
@@ -254,7 +254,13 @@ final class WebHost {
             hostTrace("visual callback observed generation="+id+" current="+visualGeneration);
             if(closed||candidate!=view||id!=generation||generation!=visualGeneration||navigation!=navigationGeneration
                 ||revision!=renderedRevision||transition!=gateTransition||!screen.equals(pendingScreen)){hostTrace("stale visual callback ignored navigation="+navigation);return;}
-            if(!visualHierarchyAvailable()||!currentGateEntry(transition)){suspendVisualRequest();return;}
+            // Rendering can start without policy I/O. Before promoting the
+            // current frame to visible, recheck management and the actual app.
+            if(!visualHierarchyAvailable()||!currentGateEntry(transition)
+                ||(isOverlay&&context instanceof GuardService
+                    &&!((GuardService)context).currentGateEntry(this,transition))){
+                suspendVisualRequest();return;
+            }
             if(frameReady)return;
             if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}
             if(isOverlay&&visualRetryCount>0)hostTrace("visual recovery succeeded navigation="+navigation);
