@@ -46,7 +46,7 @@ public final class MainActivity extends Activity {
         final Uri destination=data.getData();
         final Context application=getApplicationContext();rawExportWriting=true;
         LockyApp.app.work.execute(()->{
-            String status=diagnostic?"잠금 해제 진단 파일을 저장했습니다.":"기록 JSON 파일을 저장했습니다.";
+            String status=diagnostic?"관리 앱 시작 진단 파일을 저장했습니다.":"기록 JSON 파일을 저장했습니다.";
             try{RawExport.write(application,token,destination);}
             catch(Exception e){RawExport.removeFailedDocument(application,destination);status="기록 파일을 저장하지 못했습니다. 다시 시도해 주세요.";}
             finally{RawExport.discard(application,token);}
