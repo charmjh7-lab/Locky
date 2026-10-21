@@ -12,203 +12,199 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 
-/** Only controlled window/render metadata enters here. No node text, drafts or package names. */
+/**
+ * Bounded, opt-in APP_GATE timing diagnostics. No app package, purpose, node text,
+ * messages or credentials. The old unlock-cycle recording API is inert; the
+ * PhoneStartActivity lifecycle and navigation are not changed by this recorder.
+ */
 final class UnlockDiagnostics {
-    static final int MAX_CYCLES=5,MAX_BYTES=190_000,MAX_EVENTS=260;
-    static final int MAX_GATES=8,MAX_GATE_EVENTS=48,MAX_GATE_BYTES=32_000;
+    static final int MAX_GATES=24, MAX_GATE_EVENTS=72, MAX_GATE_BYTES=96_000;
     static volatile UnlockDiagnostics live;
-    static synchronized UnlockDiagnostics get(Context c){
+    static synchronized UnlockDiagnostics get(Context c) {
         Context app=c.getApplicationContext();
         if(live==null||live.context!=app)live=new UnlockDiagnostics(app);
         return live;
     }
-    final Context context;final SharedPreferences prefs;final AtomicFile file;
-    private final ScheduledExecutorService disk=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"LockyUnlockStore");t.setDaemon(true);return t;});
-    private final List<JSONObject> cycles=new ArrayList<>(),gates=new ArrayList<>();
-    private JSONObject currentGate;private long currentGateToken=-1,gateOrigin;
-    private final Map<String,JSONObject> observations=new HashMap<>();
-    private JSONObject current;private long origin,until;private int bytes;
-    private boolean enabled;private ScheduledFuture<?> pending;private String storageError="";
-    UnlockDiagnostics(Context c){
-        context=c;prefs=c.getSharedPreferences("locky-settings",0);enabled=prefs.getBoolean("unlock-diagnostics",false);
-        file=new AtomicFile(new File(c.getFilesDir(),"unlock-diagnostics.json"));
+    final Context context;
+    final SharedPreferences prefs;
+    final AtomicFile file;
+    private final ScheduledExecutorService disk=Executors.newSingleThreadScheduledExecutor(r->{
+        Thread t=new Thread(r,"LockyGateDiagnostics");t.setDaemon(true);return t;
+    });
+    private final List<JSONObject> gates=new ArrayList<>();
+    private JSONObject currentGate;
+    private long currentGateToken=-1,gateOrigin,lastGateEndUptime=-1;
+    private boolean enabled;
+    private ScheduledFuture<?> pending;
+    private String storageError="";
+
+    UnlockDiagnostics(Context c) {
+        context=c;
+        prefs=c.getSharedPreferences("locky-settings",0);
+        enabled=prefs.getBoolean("app-gate-diagnostics",false);
+        file=new AtomicFile(new File(c.getFilesDir(),"app-gate-diagnostics.json"));
+        // Unlock tracing has been retired. Preserve the unrelated phone start status.
+        new File(c.getFilesDir(),"unlock-diagnostics.json").delete();
+        prefs.edit().remove("unlock-diagnostics").apply();
         if(file.getBaseFile().exists())try{
-            byte[] saved=file.readFully();if(saved.length>MAX_BYTES+MAX_GATE_BYTES)throw new IOException("size");
-            JSONObject savedData=new JSONObject(new String(saved,StandardCharsets.UTF_8));
-            JSONArray gateRows=savedData.optJSONArray("appGates");
-            if(gateRows!=null)for(int i=Math.max(0,gateRows.length()-MAX_GATES);i<gateRows.length();i++)gates.add(gateRows.getJSONObject(i));
-            trimGates();
-            JSONArray rows=savedData.optJSONArray("cycles");
-            if(rows!=null)for(int i=Math.max(0,rows.length()-MAX_CYCLES);i<rows.length();i++)cycles.add(rows.getJSONObject(i));
-            recount();
-        }catch(Exception e){storageError="기존 진단 기록을 읽지 못했습니다.";}
+            byte[] bytes=file.readFully();
+            if(bytes.length>MAX_GATE_BYTES)throw new IOException("size");
+            JSONArray rows=new JSONObject(new String(bytes,StandardCharsets.UTF_8)).optJSONArray("appGates");
+            if(rows!=null)for(int i=Math.max(0,rows.length()-MAX_GATES);i<rows.length();i++)
+                gates.add(rows.getJSONObject(i));
+            trim();
+        }catch(Exception e){storageError="기존 앱 시작 진단 기록을 읽지 못했습니다.";}
     }
     synchronized boolean enabled(){return enabled;}
     synchronized void setEnabled(boolean value){
         if(enabled==value)return;
-        if(!value&&current!=null){record("recording stopped by user");try{current.put("captureEnd",System.currentTimeMillis()).put("captureEndReason","disabled");}catch(JSONException ignored){}current=null;}
+        enabled=value;
         if(!value)currentGate=null;
-        enabled=value;prefs.edit().putBoolean("unlock-diagnostics",value).apply();schedule();
-    }
-    synchronized void begin(){
-        if(!enabled)return;
-        try{
-            if(current!=null){current.put("captureEnd",System.currentTimeMillis());current.put("captureEndReason","next-screen-off");}
-            observations.clear();origin=SystemClock.elapsedRealtime();until=origin+30_000;
-            current=new JSONObject().put("start",System.currentTimeMillis()).put("originElapsed",origin).put("events",new JSONArray()).put("dropped",0).put("app",BuildConfig.VERSION_NAME).put("android",Build.VERSION.RELEASE).put("sdk",Build.VERSION.SDK_INT).put("model",Build.MANUFACTURER+" "+Build.MODEL);
-            cycles.add(current);trim();record("screen-off observed");
-        }catch(JSONException ignored){}
+        prefs.edit().putBoolean("app-gate-diagnostics",value).apply();
+        schedule();
     }
     synchronized void beginGate(long token,long detectedUptime){
         if(!enabled)return;
         try{
-            currentGateToken=token;gateOrigin=detectedUptime;
-            currentGate=new JSONObject().put("start",System.currentTimeMillis()-(SystemClock.uptimeMillis()-gateOrigin)).put("originUptime",gateOrigin)
-                .put("transition",token).put("events",new JSONArray().put(new JSONObject().put("elapsed",0).put("event","managed entry detected")));
-            gates.add(currentGate);trimGates();schedule();
-        }catch(JSONException ignored){}
-    }
-    synchronized void gateRecord(long token,String event){
-        if(!enabled||currentGate==null||token!=currentGateToken||SystemClock.uptimeMillis()-gateOrigin>30_000)return;
-        try{
-            JSONArray events=currentGate.getJSONArray("events");if(events.length()>=MAX_GATE_EVENTS)return;
-            events.put(new JSONObject().put("elapsed",SystemClock.uptimeMillis()-gateOrigin)
-                .put("event",event.substring(0,Math.min(event.length(),240))));
-            trimGates();schedule();
-        }catch(JSONException ignored){}
-    }
-    private void trimGates(){
-        while(gates.size()>MAX_GATES||new JSONArray(gates).toString().getBytes(StandardCharsets.UTF_8).length>MAX_GATE_BYTES-1024){
-            if(gates.isEmpty())break;JSONObject removed=gates.remove(0);if(removed==currentGate)currentGate=null;
-        }
-    }
-    synchronized void resumeCapture(){if(enabled&&current!=null){until=SystemClock.elapsedRealtime()+30_000;current.remove("captureEnd");current.remove("captureEndReason");}}
-    synchronized void confirmedActivity(){
-        long now=System.currentTimeMillis();
-        prefs.edit().putString("unlock-last-window","activity").putLong("unlock-last-at",now).apply();
-        if(enabled&&current!=null)try{current.put("unlock",now).put("window","activity");record("unlock confirmed Activity");}catch(JSONException ignored){}
-    }
-    void failure(String operation,Exception error){
-        // Exception messages can include app/window information. Keep only controlled category and class.
-        String value=operation+":"+error.getClass().getSimpleName();
-        prefs.edit().putString("unlock-last-failure",value).putLong("unlock-last-failure-at",System.currentTimeMillis()).apply();
-        record("activity failure "+value);
-    }
-
-    synchronized void record(String event){
-        if(!enabled||current==null)return;
-        if(until>0&&SystemClock.elapsedRealtime()>until){
-            if(!current.has("captureEnd")){try{current.put("captureEnd",System.currentTimeMillis()).put("captureEndReason","bounded-capture-ended");}catch(JSONException ignored){}schedule();}
-            return;
-        }
-        try{
-            String text=event.substring(0,Math.min(event.length(),500));
-            JSONObject row=new JSONObject().put("at",System.currentTimeMillis()).put("elapsed",SystemClock.elapsedRealtime()-origin).put("event",text);
-            // Compress repeated observations by source (not only adjacent rows).
-            // Changes remain chronological.
-            String key=observationKey(text);JSONObject prior=key==null?null:observations.get(key);
-            if(prior!=null&&text.equals(prior.optString("event"))){
-                bytes-=rowBytes(prior);prior.put("repeats",prior.optInt("repeats")+1).put("lastAt",row.getLong("at")).put("lastElapsed",row.getLong("elapsed"));bytes+=rowBytes(prior);
-                current.put("compressed",current.optInt("compressed")+1);trim();schedule();return;
+            final long now=SystemClock.uptimeMillis();
+            if(currentGate!=null&&!currentGate.has("end")){
+                currentGate.put("end",System.currentTimeMillis());
+                currentGate.put("outcome","interrupted-by-new-entry");
             }
-            if(key!=null){if(observations.size()>=64)observations.clear();observations.put(key,row);}
-            current.getJSONArray("events").put(row);bytes+=rowBytes(row);
-            JSONArray events=current.getJSONArray("events");
-            if(events.length()>MAX_EVENTS)evict(current);
+            gateOrigin=Math.min(now,Math.max(0,detectedUptime));
+            long gap=lastGateEndUptime<0?-1:Math.max(0,gateOrigin-lastGateEndUptime);
+            currentGateToken=token;
+            currentGate=new JSONObject()
+                .put("start",System.currentTimeMillis()-(now-gateOrigin))
+                .put("transition",token)
+                .put("idleGapMs",gap)
+                .put("detectionToGateMs",Math.max(0,now-gateOrigin))
+                .put("events",new JSONArray().put(new JSONObject().put("elapsed",0).put("event","foreground detected")));
+            gates.add(currentGate);
             trim();schedule();
         }catch(JSONException ignored){}
     }
-    private static String observationKey(String text){
-        if(text.startsWith("accessibility observed"))return text;
-        return null;
-    }
-    private static int priority(String text){
-        if(observationKey(text)!=null)return 0;
-        if(text.startsWith("web=")&&(text.contains("dom ")||text.contains("Draw observed")||text.contains("view-draw")||text.contains("frame-commit")||text.contains("visual ")||text.contains("visual-ready")||text.contains("frameReady=")||text.contains("visibility")||text.contains("attach")||text.contains("detach")||text.contains("recovery")))return 2;
-        if(text.startsWith("phone-activity ")||text.startsWith("unlock")||text.startsWith("keyguard observed")||text.contains("failure"))return 2;
-        return 1;
-    }
-    private static int rowBytes(JSONObject row){return row.toString().getBytes(StandardCharsets.UTF_8).length+1;}
-    private void evict(JSONObject cycle) throws JSONException {
-        JSONArray events=cycle.getJSONArray("events");if(events.length()==0)return;
-        int index=-1,best=3;
-        for(int i=0;i<events.length();i++){
-            int rank=priority(events.getJSONObject(i).optString("event"));
-            // Keep the first preparation evidence even if critical-only overflow occurs.
-            if(rank<best&&(i>=12||rank<2)){best=rank;index=i;if(rank==0)break;}
-        }
-        if(index<0)index=events.length()>12?12:0;
-        JSONObject removed=events.getJSONObject(index);bytes-=rowBytes(removed);events.remove(index);
-        observations.values().removeIf(value->value==removed);
-        cycle.put("dropped",cycle.optInt("dropped")+1);
-        if(best==2)cycle.put("criticalDropped",cycle.optInt("criticalDropped")+1);
-    }
-    private void recount(){bytes=0;for(JSONObject cycle:cycles)bytes+=cycle.toString().getBytes(StandardCharsets.UTF_8).length+1;}
-    private void trim(){
-        while(cycles.size()>MAX_CYCLES){cycles.remove(0);recount();}
-        while(bytes>MAX_BYTES-4096&&cycles.size()>1){cycles.remove(0);recount();}
-        if(bytes>MAX_BYTES-4096&&!cycles.isEmpty())try{
-            JSONObject cycle=cycles.get(0);
-            while(bytes>MAX_BYTES-4096&&cycle.getJSONArray("events").length()>0)evict(cycle);
+    synchronized void gateRecord(long token,String event){
+        if(!enabled||currentGate==null||token!=currentGateToken)return;
+        long elapsed=SystemClock.uptimeMillis()-gateOrigin;
+        if(elapsed>60_000)return;
+        try{
+            JSONArray rows=currentGate.getJSONArray("events");
+            if(rows.length()>=MAX_GATE_EVENTS){currentGate.put("dropped",currentGate.optInt("dropped")+1);return;}
+            rows.put(new JSONObject().put("elapsed",Math.max(0,elapsed))
+                .put("event",event.substring(0,Math.min(240,event.length()))));
+            trim();schedule();
         }catch(JSONException ignored){}
     }
-    private synchronized String encode(){
+    synchronized void finishGate(long token,String outcome){
+        if(!enabled||currentGate==null||token!=currentGateToken||currentGate.has("end"))return;
         try{
-            String data=new JSONObject().put("schema",1).put("cycles",new JSONArray(cycles)).toString();
-            while(data.getBytes(StandardCharsets.UTF_8).length>MAX_BYTES&&!cycles.isEmpty()){
-                if(cycles.size()>1)cycles.remove(0);
-                else {JSONObject c=cycles.get(0);if(c.getJSONArray("events").length()==0)break;evict(c);}
-                recount();data=new JSONObject().put("schema",1).put("cycles",new JSONArray(cycles)).toString();
-            }
-            trimGates();return new JSONObject(data).put("appGates",new JSONArray(gates)).toString();
-        }catch(JSONException e){throw new IllegalStateException(e);}
+            long now=SystemClock.uptimeMillis();
+            currentGate.put("end",System.currentTimeMillis())
+                .put("durationMs",Math.max(0,now-gateOrigin))
+                .put("outcome",outcome);
+            lastGateEndUptime=now;
+            schedule();
+        }catch(JSONException ignored){}
     }
-    private synchronized void schedule(){if(pending==null)pending=disk.schedule(this::persist,3000,TimeUnit.MILLISECONDS);}
+    private void trim(){
+        while(gates.size()>MAX_GATES||new JSONArray(gates).toString().getBytes(StandardCharsets.UTF_8).length>MAX_GATE_BYTES-1024){
+            if(gates.isEmpty())break;
+            JSONObject first=gates.get(0);
+            if(first==currentGate&&gates.size()==1) {
+                JSONArray events=first.optJSONArray("events");
+                if(events==null||events.length()<2)break;
+                events.remove(1);
+            } else {
+                gates.remove(0);
+                if(first==currentGate)currentGate=null;
+            }
+        }
+    }
+    private synchronized void schedule(){
+        if(pending==null)pending=disk.schedule(this::persist,1500,TimeUnit.MILLISECONDS);
+    }
+    private synchronized String encode(){
+        trim();
+        return new JSONObject(Collections.singletonMap("appGates",new JSONArray(gates))).toString();
+    }
     private void persist(){
-        String data;synchronized(this){pending=null;data=encode();}
+        String data;
+        synchronized(this){pending=null;data=encode();}
         FileOutputStream out=null;
-        try{out=file.startWrite();out.write(data.getBytes(StandardCharsets.UTF_8));file.finishWrite(out);synchronized(this){storageError="";}}
-        catch(IOException e){if(out!=null)file.failWrite(out);synchronized(this){storageError="진단 기록을 저장하지 못했습니다. 다시 내보내기를 시도해 주세요.";}}
+        try{
+            out=file.startWrite();
+            out.write(data.getBytes(StandardCharsets.UTF_8));
+            file.finishWrite(out);
+            synchronized(this){storageError="";}
+        }catch(IOException e){
+            if(out!=null)file.failWrite(out);
+            synchronized(this){storageError="앱 시작 진단 기록을 저장하지 못했습니다.";}
+        }
     }
     void clear() throws Exception {
-        synchronized(this){cycles.clear();gates.clear();observations.clear();current=null;currentGate=null;bytes=0;if(pending!=null){pending.cancel(false);pending=null;}}
-        // Runs on the bridge worker, never on the display thread. Serial ordering prevents old writes returning after deletion.
+        synchronized(this){
+            gates.clear();currentGate=null;currentGateToken=-1;
+            lastGateEndUptime=-1;
+            if(pending!=null){pending.cancel(false);pending=null;}
+        }
         disk.submit(()->{file.delete();synchronized(this){storageError="";}}).get(5,TimeUnit.SECONDS);
     }
-    void flush() throws Exception {synchronized(this){if(pending!=null){pending.cancel(false);pending=null;}}disk.submit(this::persist).get(5,TimeUnit.SECONDS);}
-    synchronized JSONObject status() throws JSONException {
-        long last=cycles.isEmpty()?0:cycles.get(cycles.size()-1).optLong("start");int unlocks=0;
-        for(JSONObject c:cycles)if(c.has("unlock"))unlocks++;
-        return new JSONObject().put("enabled",enabled).put("cycles",cycles.size()).put("appGates",gates.size()).put("unlocks",unlocks).put("lastAt",last).put("error",storageError);
+    void flush() throws Exception {
+        synchronized(this){if(pending!=null){pending.cancel(false);pending=null;}}
+        disk.submit(this::persist).get(5,TimeUnit.SECONDS);
+    }
+    synchronized JSONObject status() throws JSONException{
+        long last=gates.isEmpty()?0:gates.get(gates.size()-1).optLong("start");
+        return new JSONObject().put("enabled",enabled).put("appGates",gates.size())
+            .put("lastAt",last).put("error",storageError);
+    }
+    // Keep the existing PhoneStartActivity status indicator, not unlock tracing.
+    synchronized void confirmedActivity(){
+        prefs.edit().putString("unlock-last-window","activity")
+            .putLong("unlock-last-at",System.currentTimeMillis()).apply();
     }
     JSONObject windowStatus() throws JSONException {
-        return new JSONObject().put("lastUnlockWindow",prefs.getString("unlock-last-window","none")).put("lastUnlockAt",prefs.getLong("unlock-last-at",0))
-            .put("lastFailure",prefs.getString("unlock-last-failure","")).put("lastFailureAt",prefs.getLong("unlock-last-failure-at",0));
+        return new JSONObject().put("lastUnlockWindow",prefs.getString("unlock-last-window","none"))
+            .put("lastUnlockAt",prefs.getLong("unlock-last-at",0))
+            .put("lastFailure","").put("lastFailureAt",0);
+    }
+    void failure(String operation,Exception error){
+        if(operation.startsWith("app-gate"))gateRecord(currentGateToken,operation+":"+error.getClass().getSimpleName());
     }
     synchronized String text(){
-        StringBuilder out=new StringBuilder("Locky 잠금 해제 진단 · "+BuildConfig.VERSION_NAME+"\nAndroid "+Build.VERSION.RELEASE+" (SDK "+Build.VERSION.SDK_INT+") · "+Build.MANUFACTURER+" "+Build.MODEL+"\n내보낸 시각: "+timestamp(System.currentTimeMillis())+"\n");
-        out.append("Activity 실행 요청과 실제 생명주기 콜백을 구분합니다. onCreate/onResume은 실제 삼성 화면 전환의 자연스러움을 보증하지 않습니다.\n메모·질문·답변·검색어·화면 텍스트는 수집하지 않습니다.\n");
-        out.append("진단 기록: ").append(enabled?"켜짐":"꺼짐").append(" · 보관 ").append(cycles.size()).append("회 (최대 5회/약 200KB)\n");
+        StringBuilder out=new StringBuilder("Locky 관리 앱 시작화면(APP_GATE) 진단 · "+BuildConfig.VERSION_NAME+
+            "\nAndroid "+Build.VERSION.RELEASE+" (SDK "+Build.VERSION.SDK_INT+") · "+Build.MANUFACTURER+" "+Build.MODEL+
+            "\n내보낸 시각: "+timestamp(System.currentTimeMillis())+"\n");
+        out.append("시간: foreground 감지 기준 uptime 밀리초. Chromium visual-ready는 실제 시스템 화면 합성 완료를 의미하지 않습니다.\n");
+        out.append("앱 이름·패키지·목적·입력 내용은 기록하지 않습니다.\n");
+        out.append("진단: ").append(enabled?"켜짐":"꺼짐").append(" · 최근 ").append(gates.size()).append("회 (최대 24회/96KB)\n");
         if(!storageError.isEmpty())out.append(storageError).append('\n');
-        if(cycles.isEmpty()&&gates.isEmpty())out.append("기록이 없습니다. 진단을 켠 뒤 잠금을 해제하거나 관리 앱을 열어 주세요.\n");
-        int n=0;
-        for(JSONObject c:cycles){
-            out.append("\n=== 주기 ").append(++n).append(" · ").append(timestamp(c.optLong("start"))).append(" ===\n");
-            out.append("환경: Locky ").append(c.optString("app")).append(" / Android ").append(c.optString("android")).append(" SDK ").append(c.optInt("sdk")).append(" / ").append(c.optString("model")).append('\n');
-            out.append("잠금 해제 확인: ").append(stamp(c,"unlock")).append(" · 창: ").append(c.optString("window","아직 확인되지 않음")).append('\n');
-            out.append("기록 종료: ").append(stamp(c,"captureEnd")).append(" · 이유: ").append(c.optString("captureEndReason","기록 중/마지막 관찰 이후 대기")).append('\n');
-            JSONArray rows=c.optJSONArray("events");if(rows==null)continue;
-            out.append("중복 관찰 압축 ").append(c.optInt("compressed")).append(" / 용량 초과 핵심 이벤트 생략 ").append(c.optInt("criticalDropped")).append('\n');
-            for(int i=0;i<rows.length();i++){JSONObject r=rows.optJSONObject(i);out.append(timestamp(r.optLong("at"))).append(" +").append(r.optLong("elapsed")).append("ms ").append(r.optString("event"));if(r.optInt("repeats")>0)out.append(" [동일 관찰 추가 ").append(r.optInt("repeats")).append("회 · 마지막 +").append(r.optLong("lastElapsed")).append("ms]");out.append('\n');}
-        }
-        out.append("\nAPP_GATE 진입 기록: ").append(gates.size()).append("회 (별도 최대 8회/32KB, uptime 기준)\n");
-        for(JSONObject c:gates){
-            out.append("\n=== APP_GATE · ").append(timestamp(c.optLong("start"))).append(" · transition ").append(c.optLong("transition")).append(" ===\n");
-            JSONArray rows=c.optJSONArray("events");if(rows==null)continue;
-            for(int i=0;i<rows.length();i++){JSONObject r=rows.optJSONObject(i);out.append('+').append(r.optLong("elapsed")).append("ms ").append(r.optString("event")).append('\n');}
+        if(gates.isEmpty())out.append("기록이 없습니다. 진단을 켠 뒤 관리 앱에 진입해 주세요.\n");
+        for(JSONObject entry:gates){
+            out.append("\n=== APP_GATE ").append(timestamp(entry.optLong("start")))
+                .append(" · transition ").append(entry.optLong("transition")).append(" ===\n");
+            out.append("직전 진입 종료 후 쉬었던 시간: ")
+                .append(entry.optLong("idleGapMs",-1)<0?"미확인":entry.optLong("idleGapMs")+"ms")
+                .append(" · 감지→진입 처리: ").append(entry.optLong("detectionToGateMs")).append("ms\n");
+            out.append("결과: ").append(entry.optString("outcome","기록 중/중단"))
+                .append(" · 총 소요: ").append(entry.has("durationMs")?entry.optLong("durationMs")+"ms":"미확인").append('\n');
+            JSONArray rows=entry.optJSONArray("events");if(rows==null)continue;
+            for(int i=0;i<rows.length();i++){
+                JSONObject row=rows.optJSONObject(i);
+                out.append('+').append(row.optLong("elapsed")).append("ms ")
+                    .append(row.optString("event")).append('\n');
+            }
+            if(entry.optInt("dropped")>0)out.append("생략된 이벤트: ").append(entry.optInt("dropped")).append('\n');
         }
         return out.toString();
     }
-    private static String timestamp(long value){return Instant.ofEpochMilli(value).atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME);}
-    private static String stamp(JSONObject c,String key){return c.has(key)?timestamp(c.optLong(key)):"미확인";}
+    private static String timestamp(long value){
+        return Instant.ofEpochMilli(value).atZone(java.time.ZoneId.systemDefault())
+            .format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+    }
+    // Retired unlock recording entry points. These no longer allocate cycles or write logs.
+    void begin(){}
+    void resumeCapture(){}
+    void record(String ignored){}
 }
