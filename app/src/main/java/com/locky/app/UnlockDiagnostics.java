@@ -33,7 +33,7 @@ final class UnlockDiagnostics {
     });
     private final List<JSONObject> gates=new ArrayList<>();
     private JSONObject currentGate;
-    private long currentGateToken=-1,gateOrigin,lastGateEndUptime=-1;
+    private long currentGateToken=-1,gateOrigin,lastGateEndUptime=-1,lastGateEndWall=-1;
     private boolean enabled;
     private ScheduledFuture<?> pending;
     private String storageError="";
@@ -53,6 +53,7 @@ final class UnlockDiagnostics {
             if(rows!=null)for(int i=Math.max(0,rows.length()-MAX_GATES);i<rows.length();i++)
                 gates.add(rows.getJSONObject(i));
             trim();
+            if(!gates.isEmpty())lastGateEndWall=gates.get(gates.size()-1).optLong("end",-1);
         }catch(Exception e){storageError="기존 앱 시작 진단 기록을 읽지 못했습니다.";}
     }
     synchronized boolean enabled(){return enabled;}
@@ -73,11 +74,13 @@ final class UnlockDiagnostics {
             }
             gateOrigin=Math.min(now,Math.max(0,detectedUptime));
             long gap=lastGateEndUptime<0?-1:Math.max(0,gateOrigin-lastGateEndUptime);
+            long wallGap=lastGateEndWall<0?-1:Math.max(0,System.currentTimeMillis()-lastGateEndWall);
             currentGateToken=token;
             currentGate=new JSONObject()
                 .put("start",System.currentTimeMillis()-(now-gateOrigin))
                 .put("transition",token)
                 .put("idleGapMs",gap)
+                .put("idleWallMs",wallGap)
                 .put("detectionToGateMs",Math.max(0,now-gateOrigin))
                 .put("events",new JSONArray().put(new JSONObject().put("elapsed",0).put("event","foreground detected")));
             gates.add(currentGate);
@@ -106,6 +109,7 @@ final class UnlockDiagnostics {
                 .put("durationMs",Math.max(0,now-gateOrigin))
                 .put("outcome",outcome);
             lastGateEndUptime=now;
+            lastGateEndWall=System.currentTimeMillis();
             schedule();
         }catch(JSONException ignored){}
     }
@@ -147,7 +151,7 @@ final class UnlockDiagnostics {
     void clear() throws Exception {
         synchronized(this){
             gates.clear();currentGate=null;currentGateToken=-1;
-            lastGateEndUptime=-1;
+            lastGateEndUptime=-1;lastGateEndWall=-1;
             if(pending!=null){pending.cancel(false);pending=null;}
         }
         disk.submit(()->{file.delete();synchronized(this){storageError="";}}).get(5,TimeUnit.SECONDS);
@@ -186,7 +190,9 @@ final class UnlockDiagnostics {
         for(JSONObject entry:gates){
             out.append("\n=== APP_GATE ").append(timestamp(entry.optLong("start")))
                 .append(" · transition ").append(entry.optLong("transition")).append(" ===\n");
-            out.append("직전 진입 종료 후 쉬었던 시간: ")
+            out.append("직전 종료 후 경과(잠자기 포함): ")
+                .append(entry.optLong("idleWallMs",-1)<0?"미확인":entry.optLong("idleWallMs")+"ms")
+                .append(" · 기기 가동 시간 기준: ")
                 .append(entry.optLong("idleGapMs",-1)<0?"미확인":entry.optLong("idleGapMs")+"ms")
                 .append(" · 감지→진입 처리: ").append(entry.optLong("detectionToGateMs")).append("ms\n");
             out.append("결과: ").append(entry.optString("outcome","기록 중/중단"))
