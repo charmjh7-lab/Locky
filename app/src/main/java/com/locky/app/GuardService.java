@@ -431,6 +431,9 @@ public final class GuardService extends AccessibilityService {
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_SECURE|WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
                     |WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE|WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,PixelFormat.TRANSLUCENT);
             overlayLayout.gravity=Gravity.TOP|Gravity.START;overlayLayout.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;overlayLayout.setTitle("Locky app gate");
+            // Conceal at the window, not at the WebView: INVISIBLE also hides
+            // WebContents from Chromium and lets its renderer go idle.
+            overlayLayout.alpha=0f;
             overlayWindow.setBackgroundColor(android.graphics.Color.TRANSPARENT);
             overlayWindow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
         }
@@ -545,12 +548,11 @@ public final class GuardService extends AccessibilityService {
         boolean input=next==Exposure.INTERACTIVE;
         boolean waiting=next==Exposure.WAITING;
         boolean error=waiting&&overlay.gateErrorVisible();
-        // The attached transparent hierarchy keeps Chromium eligible for visual callbacks.
-        // Only the current prepared WebView (or native recovery view) covers the app.
+        // Keep Chromium's page visibility VISIBLE even during a long absence.
+        // Window alpha owns pixel exposure; flags and token checks own input.
         if(overlayWindow.getVisibility()!=View.VISIBLE)overlayWindow.setVisibility(View.VISIBLE);
         if(overlay.root.getVisibility()!=View.VISIBLE)overlay.root.setVisibility(View.VISIBLE);
-        int webVisibility=input?View.VISIBLE:View.INVISIBLE;
-        if(overlay.view.getVisibility()!=webVisibility)overlay.view.setVisibility(webVisibility);
+        if(overlay.view.getVisibility()!=View.VISIBLE)overlay.view.setVisibility(View.VISIBLE);
         int errorVisibility=error?View.VISIBLE:View.GONE;
         if(overlay.loadingView.getVisibility()!=errorVisibility)overlay.loadingView.setVisibility(errorVisibility);
         overlay.presentationActive=input||waiting;
@@ -558,11 +560,12 @@ public final class GuardService extends AccessibilityService {
         if(next==Exposure.HIDDEN||next==Exposure.SUSPENDED)cancelOverlayAttachRetry();
         overlayWindow.setImportantForAccessibility(input||error?View.IMPORTANT_FOR_ACCESSIBILITY_AUTO:View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
         if(overlayLayout!=null){
+            float alpha=input||error?1f:0f;
             int passive=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
             int flags=input?overlayLayout.flags&~passive:overlayLayout.flags|passive;
             if(waiting)flags&=~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-            if(flags!=overlayLayout.flags||overlayLayoutDirty){
-                overlayLayout.flags=flags;overlayLayoutDirty=true;
+            if(alpha!=overlayLayout.alpha||flags!=overlayLayout.flags||overlayLayoutDirty){
+                overlayLayout.alpha=alpha;overlayLayout.flags=flags;overlayLayoutDirty=true;
                 if(overlayAttached&&overlayWindow.isAttachedToWindow())try{window.updateViewLayout(overlayWindow,overlayLayout);overlayLayoutDirty=false;}
                 catch(RuntimeException layoutError){
                     overlayAttached=overlayWindow.isAttachedToWindow();

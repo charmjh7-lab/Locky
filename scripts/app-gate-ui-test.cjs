@@ -107,6 +107,21 @@ const fs=require('fs'),path=require('path'),assert=require('assert/strict');
   assert.equal(await page.evaluate(()=>poll!==null&&gateExposure==='INTERACTIVE'),true);await page.evaluate(()=>{clearInterval(poll);poll=null;});
   const utility=await page.evaluate(async()=>{const navigation=nativeNavigation,node=document.querySelector('.gate-page');await navigate('notes');return {same:node===document.querySelector('.gate-page')&&navigation===nativeNavigation&&screen==='app',target:calls.filter(c=>c.action==='open').at(-1)?.args.screen};});
   assert.deepEqual(utility,{same:true,target:'notes'});
+  // Mutations outside presentGate (editor/control/theme) must retire pixel reuse.
+  const tracked=await page.evaluate(async()=>{
+   const revision=domRevision,control=document.querySelector('[data-purpose]');
+   control.disabled=true;await Promise.resolve();const disabled=domRevision>revision;
+   const next=domRevision;purposeSheet();await Promise.resolve();const editor=domRevision>next;
+   closeSheet();control.disabled=false;await new Promise(requestAnimationFrame);
+   return {disabled,editor};
+  });
+  assert.deepEqual(tracked,{disabled:true,editor:true});
+  await page.evaluate(()=>new Promise(requestAnimationFrame));
+  const reusedLayout=await page.evaluate(async()=>{
+   layouts=0;const revision=domRevision;presentGate('app',fixture,nativeNavigation+1);clearInterval(poll);
+   await new Promise(requestAnimationFrame);return {layouts,unchanged:revision===domRevision};
+  });
+  assert.deepEqual(reusedLayout,{layouts:0,unchanged:true});
   if(process.env.LOCKY_GATE_SCREEN_DIR){fs.mkdirSync(process.env.LOCKY_GATE_SCREEN_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.LOCKY_GATE_SCREEN_DIR,'app-gate.png')});}
   for(const role of ['PHONE_START','MAIN']){
    await page.evaluate(role=>{clearInterval(poll);const purposes=[{id:'linked',scope:'phone',label:'연결된 목적',pkg:'linked.app'},{id:'web',scope:'phone',label:'웹 페이지',uri:'https://example.com'},{id:'plain',scope:'phone',label:'연결 없음'}];fixture={...gateData(''),role,overlay:false,status:{accessibility:true},phoneSession:{},phoneCycle:1,purposes,allPurposes:purposes,purposeOrders:{phone:purposes},purposeIcons:{linked:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="green"/></svg>'},dictionary:'',notes:[{id:'note',title:'메모',body:'메모 본문',checks:'[]',mode:'text'}]};state=fixture;screen=role==='MAIN'?'home':'unlock';purposeEntry=null;render();},role);

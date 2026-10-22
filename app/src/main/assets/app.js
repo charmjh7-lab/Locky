@@ -62,7 +62,14 @@ async function openNoteById(id,navigation=null){await flushMemo();noteId=id;awai
 function openChatById(id,navigation=null){chatId=id;return navigate('chat',navigation);}
 // APP_GATE owns a single prepared document. Gate data comes with the native entry,
 // so navigation never waits behind memo/chat bridge work or displays the old app.
-let gatePurposeHTML=null,gateExposure='HIDDEN',gateAlive=false,gateWorkEpoch=0,gateRefresh=null,lastGateRendered='';
+let gatePurposeHTML=null,gateExposure='HIDDEN',gateAlive=false,gateWorkEpoch=0,gateRefresh=null,lastGateRendered='',gateDOMObserver=null;
+// Reuse pixels only while *all* visual DOM state is unchanged, including editor,
+// disabled controls, theme and viewport styles. Entry tokens remain independent.
+function observeGateDOM(){
+ if(gateDOMObserver)return;
+ gateDOMObserver=new MutationObserver(records=>{if(records.length&&state?.role==='APP_GATE'){++domRevision;signalRendered();}});
+ gateDOMObserver.observe(document.documentElement,{subtree:true,childList:true,attributes:true,characterData:true});
+}
 let purposeStartOperation=null;
 function gateSnapshot(){return state?.role==='APP_GATE'?{navigation:nativeNavigation,transition:state.gateTransition,pkg:state.gate?.pkg,screen,epoch:gateWorkEpoch}:null;}
 function currentGate(entry,response=null){
@@ -122,6 +129,7 @@ document.addEventListener('click',event=>{
  gateGestureNavigation=null;
 },true);
 function prepareGate(navigation=0){
+ observeGateDOM();
  clearInterval(poll);poll=null;closeSheet();
  nativeNavigation=navigation;screen='gateIdle';state={role:'APP_GATE',overlay:true,gateTransition:-1,gate:{},prefs:{start:0,end:0},notes:[],chats:[],accounts:[],models:[],connection:{},rules:[],allPurposes:[],purposeOrders:{}};
  gateAlive=false;gateExposure='HIDDEN';++gateWorkEpoch;gateRefresh=null;purposeEntry=null;
@@ -160,7 +168,7 @@ function presentGate(name,payload,navigation){
  if(!transition&&!gateAlive)return;nativeNavigation=navigation;
  if(transition){closeSheet();selected='';minutes=5;purposeEntry=null;purposeStarting=false;purposeStartOperation=null;gateAlive=true;gateExposure=payload.gateExposure||'WAITING';++gateWorkEpoch;gateRefresh=null;}
  state={...state,...payload,role:'APP_GATE',overlay:true,purposeOrders:{[payload.scope]:payload.purposes}};
- screen=name;let main=$('.gate-page'),changed=false,layout=transition;
+ screen=name;let main=$('.gate-page'),changed=false,layout=false;
  if(!main){$('#app').innerHTML=gate();main=$('.gate-page');bind(main);gatePurposeHTML=null;changed=true;layout=true;}
  const g=state.gate,locked=name==='blocked',renew=name==='renew',policyBlock=state.rules.find(r=>r.pkg===g.pkg)?.mode==='locked';
  const text=(selector,value,first=false)=>{const el=main.querySelector(selector),node=first?el.firstChild:el;if((first?node.data:node.textContent)!==value){if(first)node.data=value;else node.textContent=value;changed=true;}};
@@ -180,13 +188,13 @@ function presentGate(name,payload,navigation){
   if(html!==gatePurposeHTML){const template=document.createElement('template');template.innerHTML=html;const grid=main.querySelector('.app-decision .reason-grid');if(patchGateNode(grid,template.content.firstElementChild)){changed=true;layout=true;}gatePurposeHTML=html;}
  }
  if(main.inert){main.inert=false;changed=true;}if(!document.body.classList.contains('start-screen'))document.body.classList.add('start-screen');
- if(transition)main.querySelectorAll('[data-purpose],[data-min],[data-act=direct]').forEach(el=>el.disabled=false);
- if(changed)++domRevision;if(layout)viewportChanged();
+ if(transition)main.querySelectorAll('[data-purpose],[data-min],[data-act=direct]').forEach(el=>{if(el.disabled){el.disabled=false;changed=true;}});
+ if(changed)++domRevision;if(layout||(transition&&changed))viewportChanged();
  const needsAck=transition||changed||renderedRoute!==screen;renderedRoute=screen;if(needsAck)signalRendered();
  if(transition)startPolling();
 }
 function presentScreen(name){const previous=nativeNavigation++;Native.request('0','present',JSON.stringify({screen:name,previous,navigation:nativeNavigation,chat:chatId}));}
-function signalRendered(force=false){if(state?.role==='APP_GATE'){const stamp=JSON.stringify([screen,nativeNavigation,state.gateTransition,domRevision]);if(!force&&lastGateRendered===stamp)return;lastGateRendered=stamp;}Native.request('0','rendered',JSON.stringify({screen,navigation:nativeNavigation,revision:domRevision}));}
+function signalRendered(force=false){if(state?.role==='APP_GATE'){if(gateDOMObserver?.takeRecords().length)++domRevision;const stamp=JSON.stringify([screen,nativeNavigation,state.gateTransition,domRevision]);if(!force&&lastGateRendered===stamp)return;lastGateRendered=stamp;}Native.request('0','rendered',JSON.stringify({screen,navigation:nativeNavigation,revision:domRevision}));}
 function nativeRestore(){if($('#app')?.childElementCount)signalRendered(true);else return refresh(true);}
 function render(){if(state?.role==='APP_GATE'&&gated.includes(screen)){presentGate(screen,state,nativeNavigation);return;}const previousPresetScroll=$('.preset-scroll')?.scrollTop||0;if($('#quickQuestion'))quickQuestionDraft=$('#quickQuestion').value;if($('#word'))dictionaryWordDraft=$('#word').value;let html='';switch(screen){case 'gateIdle':break;case 'unlock':case 'home':html=home();break;case 'setup':html=setup();break;case 'settings':html=settings();break;case 'apps':html=appsPage();break;case 'usageApps':html=usageAppsPage();break;case 'app':case 'renew':case 'blocked':html=gate();break;case 'timer':html=timer();break;case 'notes':html=notesPage();break;case 'chats':html=chats();break;case 'chat':html=chat();break;case 'brief':html=brief();break;case 'week':briefDays=7;screen='brief';html=brief();break;default:screen='home';html=home();}
  document.body.classList.toggle('start-screen',starts.includes(screen));$('#app').innerHTML=html+nav();if(gated.includes(screen))gatePurposeHTML=null;bind();if(state?.role==='PHONE_START'&&screen==='chat'&&$('#chatInput')&&state.phoneSession?.chat===chatId)$('#chatInput').value=state.phoneSession.chatDraft||'';if($('.preset-scroll'))$('.preset-scroll').scrollTop=previousPresetScroll;viewportChanged();if(screen==='chat'&&quickTurns.has(chatId))applyMessages(quickMessages(quickTurns.get(chatId)),true);renderedRoute=screen;if(['home','unlock'].includes(screen))startNoteSnapshot=noteSnapshot();++domRevision;signalRendered();}

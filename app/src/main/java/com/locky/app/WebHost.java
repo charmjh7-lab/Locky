@@ -37,6 +37,9 @@ final class WebHost {
     boolean frameReady,presentationActive,everRendered,loadFailed,visualFailed,renderingActive;int initialRetries;
     Boolean insetKeyboard;
     private Runnable initialWatch,visualWatch;int visualRetryCount;
+    // A prepared pixel revision may outlive an entry token. Reuse requires a
+    // fresh acknowledgement from the new entry and no intervening DOM changes.
+    long preparedGateRevision=-1,reusableGateRevision=-1;String reusableGateScreen="";
     // Bounded Logcat plus opt-in private recording. Never log user content or package names.
     
     static boolean tracing(){return BuildConfig.DEBUG||android.util.Log.isLoggable("LockyGate",android.util.Log.DEBUG);}
@@ -101,7 +104,7 @@ final class WebHost {
         if(view!=null){view.getSettings().setTextZoom(Math.round(context.getResources().getConfiguration().fontScale*100));view.setBackgroundColor(UiTheme.background(context));if(Build.VERSION.SDK_INT>=29)view.setForceDarkAllowed(false);}
         if(ready)evaluate("themeChanged("+UiTheme.dark(context)+");viewportChanged()");
     }
-    void resetVisualState(String reason){if(role==Role.PHONE_START)return;if(tracing())hostTrace("frameReady="+frameReady+"->false reason="+reason+" generation="+(visualGeneration+1));if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}++visualGeneration;visualPending=-1;frameReady=false;visualRetryCount=0;}
+    void resetVisualState(String reason){if(role==Role.PHONE_START)return;if(tracing())hostTrace("frameReady="+frameReady+"->false reason="+reason+" generation="+(visualGeneration+1));if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}++visualGeneration;visualPending=-1;frameReady=false;visualRetryCount=0;preparedGateRevision=-1;reusableGateRevision=-1;reusableGateScreen="";}
     void showLoading(){if(role==Role.PHONE_START){cancelInitialWatch();return;}cancelInitialWatch();resetVisualState("document");renderedNavigation=-1;renderedRevision=-1;renderedScreen="";if(!isOverlay&&loadingView!=null)loadingView.setVisibility(View.GONE);}
     boolean gateErrorVisible(){return isOverlay&&(loadFailed||visualFailed);}
     void showGateError(){
@@ -119,11 +122,19 @@ final class WebHost {
         if(!isOverlay)pendingScreen=screen;
         if(role==Role.PHONE_START){renderedRevision=revision;renderedScreen=screen;everRendered=true;loadFailed=false;cancelInitialWatch();return;}
         boolean changed=revision!=renderedRevision||!screen.equals(renderedScreen);
+        boolean reuse=isOverlay&&revision==reusableGateRevision&&screen.equals(reusableGateScreen)
+            &&visualHierarchyAvailable()&&view.getWindowVisibility()==View.VISIBLE;
         // Revisions within an already prepared entry update in place (polling/timers).
         boolean liveUpdate=isOverlay&&currentGateReady()&&screen.equals(renderedScreen);
-        if(changed&&!renderedScreen.isEmpty()&&!liveUpdate)resetVisualState("dom");
+        if(changed&&!renderedScreen.isEmpty()&&!liveUpdate&&!reuse)resetVisualState("dom");
         hostTrace("data applied navigation="+navigation+" changed="+changed+" revision="+revision);
         renderedNavigation=navigation;renderedRevision=revision;renderedScreen=screen;everRendered=true;loadFailed=false;cancelInitialWatch();
+        if(reuse){
+            frameReady=true;preparedGateRevision=revision;reusableGateRevision=-1;
+            hostTrace("prepared frame reused navigation="+navigation);
+            if(frameAvailableCallback!=null)frameAvailableCallback.run();
+            return;
+        }
         if(!frameReady)requestVisualState();
         if(!isOverlay&&frameReady&&frameAvailableCallback!=null)frameAvailableCallback.run();
     }
@@ -133,7 +144,10 @@ final class WebHost {
         &&pendingScreen.equals(renderedScreen)&&!"gateIdle".equals(renderedScreen);}
     boolean gateNeedsInitialLoad(){return !ready||loadFailed;}
     void gateScreen(String name,JSONObject payload){
+        long retained=frameReady&&preparedGateRevision==renderedRevision?preparedGateRevision:-1;
+        String retainedScreen=renderedScreen;
         cancelInitialWatch();visualFailed=false;initialRetries=0;resetVisualState("new-entry");
+        reusableGateRevision=retained;reusableGateScreen=retainedScreen;
         pendingGate=payload;gateTransition=payload.optLong("gateTransition",-1);preparedPurposeDay=payload.optString("purposeDate");pendingScreen=name;pendingChat="";++navigationGeneration;
         renderedNavigation=-1;renderedRevision=-1;
         hostTrace("data apply requested navigation="+navigationGeneration+" ready="+ready+" engine="+renderingActive+" attached="+view.isAttachedToWindow());
@@ -264,11 +278,11 @@ final class WebHost {
             if(frameReady)return;
             if(visualWatch!=null){main.removeCallbacks(visualWatch);visualWatch=null;}
             if(isOverlay&&visualRetryCount>0)hostTrace("visual recovery succeeded navigation="+navigation);
-            visualPending=-1;visualRetryCount=0;frameReady=true;if(tracing())hostTrace("visual-ready observed generation="+generation);
+            visualPending=-1;visualRetryCount=0;frameReady=true;if(isOverlay)preparedGateRevision=revision;if(tracing())hostTrace("visual-ready observed generation="+generation);
             // Chromium guarantees that a subsequent draw can contain this DOM revision.
             // Neither this callback nor onDraw is a fence for the system compositor.
-            // GuardService applies VISIBLE synchronously inside this callback, as required
-            // by the INVISIBLE WebView visual-state contract, then enables current input.
+            // GuardService exposes the already-visible WebView through window alpha
+            // synchronously, and independently enables only the current entry's input.
             if(isOverlay){if(frameAvailableCallback!=null)frameAvailableCallback.run();}
             else {candidate.setVisibility(View.VISIBLE);if(loadingView!=null)loadingView.setVisibility(View.GONE);if(frameAvailableCallback!=null)frameAvailableCallback.run();}
             invalidateFrame();
@@ -321,13 +335,19 @@ final class WebHost {
             @Override protected void onWindowVisibilityChanged(int visibility){
                 super.onWindowVisibilityChanged(visibility);
                 hostTrace("window visibility observed="+visibility+" attached="+isAttachedToWindow()+" accelerated="+isHardwareAccelerated());
+                if(isOverlay&&WebHost.this.view==this&&visibility!=View.VISIBLE){preparedGateRevision=-1;reusableGateRevision=-1;}
+            }
+            @Override protected void onSizeChanged(int width,int height,int oldWidth,int oldHeight){
+                super.onSizeChanged(width,height,oldWidth,oldHeight);
+                if(isOverlay&&WebHost.this.view==this&&(width!=oldWidth||height!=oldHeight)){preparedGateRevision=-1;reusableGateRevision=-1;}
             }
         };
         // Keep MainActivity's existing renderer workaround; PhoneStartActivity uses
         // the ordinary hardware-accelerated Activity window.
         if(role==Role.MAIN)view.setLayerType(View.LAYER_TYPE_SOFTWARE,null);
         root.addView(view,0,new android.widget.FrameLayout.LayoutParams(-1,-1));
-        if(isOverlay)view.setVisibility(View.INVISIBLE);
+        // GuardService creates the window at alpha=0 before attachment. Keeping
+        // this VISIBLE prevents a second, contradictory Chromium lifecycle.
         WebSettings s=view.getSettings();s.setJavaScriptEnabled(true);s.setDomStorageEnabled(false);s.setAllowFileAccess(false);s.setAllowContentAccess(false);s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);s.setMediaPlaybackRequiresUserGesture(true);s.setSupportMultipleWindows(false);
         if(isOverlay)s.setOffscreenPreRaster(true); // App gate only; phone rendering belongs to Activity.
         applyTheme();

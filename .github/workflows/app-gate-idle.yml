@@ -1,0 +1,73 @@
+name: APP_GATE idle entry
+on:
+  push:
+    branches: [fix/app-gate-idle-entry-20261022]
+permissions:
+  contents: write
+concurrency:
+  group: app-gate-idle-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  focused:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+          cache-disabled: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: APP_GATE browser interactions
+        run: |
+          npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright
+          export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="$(command -v google-chrome || command -v chromium)"
+          node scripts/app-gate-ui-test.cjs
+      - name: SDK and focused lifecycle checks
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses > /dev/null || true
+          "$sdkmanager" --install 'platforms;android-36' 'build-tools;35.0.0'
+          gradle :app:testDebugUnitTest --tests 'com.locky.app.GateRestoreTest' --tests 'com.locky.app.OverlayRenderingTest' :app:assembleRelease :app:assembleDebug :app:assembleDebugAndroidTest :fixture:assembleDebug --no-daemon
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Actual WebView idle visibility and re-entry
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          emulator-boot-timeout: 180
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 2048
+          script: bash scripts/gate-idle-device-test.sh
+      - name: Verify and publish signed APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p distribution
+          cp app/build/outputs/apk/release/app-release.apk distribution/Locky-1.3.4-app-gate.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs distribution/Locky-1.3.4-app-gate.apk > distribution/signature.txt
+          expected=$(keytool -exportcert -keystore signing/personal.p12 -alias locky -storepass locky-personal | sha256sum | cut -d' ' -f1)
+          actual=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' distribution/signature.txt)
+          test "$actual" = "$expected"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging distribution/Locky-1.3.4-app-gate.apk > distribution/package.txt
+          grep -q "name='com.locky.app' versionCode='19' versionName='1.3.4-app-gate-preview'" distribution/package.txt
+          gh release create "app-gate-idle-${GITHUB_RUN_NUMBER}" distribution/Locky-1.3.4-app-gate.apk --target "$GITHUB_SHA" --title "Locky 1.3.4 · APP_GATE idle entry" --notes "Retain Chromium page visibility behind window alpha, reuse unchanged prepared frames, preserve entry input validation. Focused JVM/browser checks and an Android 15 WebView 70-second idle test. Samsung device performance remains to be observed." --prerelease --latest=false
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Locky-app-gate-idle
+          path: |
+            distribution/
+            app/build/test-results/testDebugUnitTest/*.xml
+          retention-days: 7

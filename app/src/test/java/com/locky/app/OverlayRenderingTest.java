@@ -39,22 +39,22 @@ public class OverlayRenderingTest {
         // Robolectric 4.16.1 RoboWebSettings does not store offscreenPreRaster.
         // Its getter always returns false; hardware rasterization needs device evidence.
         host.root.removeView(host.view);host.view.destroy();view=new FrameView(a);host.view=view;host.root.addView(view,0,new android.widget.FrameLayout.LayoutParams(-1,-1));a.setContentView(host.root);
-        view.setVisibility(View.INVISIBLE);
+        view.setVisibility(View.VISIBLE);view.setAlpha(0f);
         // Isolated WebHost tests use the same synchronous exposure handoff as the service.
-        host.frameAvailableCallback=()->{view.setVisibility(host.currentGateReady()?View.VISIBLE:View.INVISIBLE);host.loadingView.setVisibility(host.gateErrorVisible()?View.VISIBLE:View.GONE);};
+        host.frameAvailableCallback=()->{view.setAlpha(host.currentGateReady()?1f:0f);host.loadingView.setVisibility(host.gateErrorVisible()?View.VISIBLE:View.GONE);};
         host.pendingScreen="app";host.ready=true;host.resumeOverlay();
     }
     @After public void cleanup(){host.close();host.store.close();Store.instance=null;}
-    void entry(String name,org.json.JSONObject payload){view.setVisibility(View.INVISIBLE);host.gateScreen(name,payload);}
+    void entry(String name,org.json.JSONObject payload){view.setVisibility(View.VISIBLE);view.setAlpha(0f);host.gateScreen(name,payload);}
     void rendered(){host.rendered(view,"app",host.navigationGeneration,1);}
     @Test public void acknowledgementCannotExposeBeforeThePreparedFrame(){
-        rendered();assertEquals(1,view.frames.size());assertEquals(View.INVISIBLE,view.getVisibility());
+        rendered();assertEquals(1,view.frames.size());assertEquals(0f,view.getAlpha(),0f);
         view.complete(0);assertTrue(host.frameReady);assertEquals(View.VISIBLE,view.getVisibility());
         assertEquals(View.GONE,host.loadingView.getVisibility());
     }
     @Test public void staleFrameAndSameScreenJavascriptCannotCompleteNewNavigation(){
         long previous=host.navigationGeneration;rendered();entry("app",new org.json.JSONObject());view.complete(0);
-        assertFalse(host.frameReady);assertEquals(View.INVISIBLE,view.getVisibility());
+        assertFalse(host.frameReady);assertEquals(0f,view.getAlpha(),0f);
         host.rendered(view,"app",previous,1);assertEquals(1,view.frames.size());
         host.rendered(view,"app",host.navigationGeneration,1);assertEquals(2,view.frames.size());
     }
@@ -132,7 +132,7 @@ public class OverlayRenderingTest {
         host.resetVisualState("detach");assertFalse(host.frameReady);
         host.requestVisualState();view.complete(view.frames.size()-1);assertTrue(host.frameReady);
         entry("app",new org.json.JSONObject());assertFalse(host.frameReady);
-        assertEquals(View.INVISIBLE,view.getVisibility());
+        assertEquals(0f,view.getAlpha(),0f);
     }
     @Test public void warmEntryCannotValidateOldSameScreenBeforeItsOwnDomAcknowledgement() throws Exception {
         rendered();view.complete(0);int frames=view.frames.size();long old=host.navigationGeneration;
@@ -168,15 +168,21 @@ public class OverlayRenderingTest {
         androidx.core.view.ViewCompat.dispatchApplyWindowInsets(host.root,ime);Shadows.shadowOf(Looper.getMainLooper()).idle();
         assertEquals(count+1,view.scripts.stream().filter(s->s.startsWith("insetsChanged")).count());assertEquals(300,host.root.getPaddingBottom());
     }
-    @Test public void newEntryWithUnchangedDomStillRequiresItsOwnVisualCallback() throws Exception {
+    @Test public void unchangedPixelsReuseTheFrameOnlyAfterTheNewEntryAcknowledges() throws Exception {
         org.json.JSONObject payload=new org.json.JSONObject().put("gate",new org.json.JSONObject().put("pkg","video"));
         entry("app",payload);host.rendered(view,"app",host.navigationGeneration,1);view.complete(view.frames.size()-1);
         long old=host.navigationGeneration;int frames=view.frames.size();
-        entry("app",payload);assertFalse(host.frameReady);assertEquals(View.INVISIBLE,view.getVisibility());
+        entry("app",payload);assertFalse(host.currentGateReady());assertEquals(0f,view.getAlpha(),0);
         host.rendered(view,"app",old,1);assertFalse(host.currentGateReady());
-        host.rendered(view,"app",host.navigationGeneration,1);assertFalse(host.currentGateReady());assertEquals(frames+1,view.frames.size());
-        view.complete(frames-1);assertFalse(host.currentGateReady());
-        view.complete(frames);assertTrue(host.currentGateReady());assertEquals(View.VISIBLE,view.getVisibility());assertEquals(1f,view.getAlpha(),0);
+        host.rendered(view,"app",host.navigationGeneration,1);
+        assertTrue(host.currentGateReady());assertEquals(frames,view.frames.size());
+        assertEquals(1f,view.getAlpha(),0);assertEquals(0,view.loads);
+    }
+    @Test public void liveDomChangesCannotReuseTheOlderPreparedPixels() throws Exception {
+        rendered();view.complete(0);host.rendered(view,"app",host.navigationGeneration,2);
+        entry("app",new org.json.JSONObject());host.rendered(view,"app",host.navigationGeneration,2);
+        assertFalse(host.currentGateReady());assertEquals(2,view.frames.size());
+        view.complete(1);assertTrue(host.currentGateReady());
     }
 
     @Test public void hiddenDataAcknowledgementDoesNotNeedHiddenOnDraw(){
