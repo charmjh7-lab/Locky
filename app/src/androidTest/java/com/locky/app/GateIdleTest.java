@@ -46,7 +46,8 @@ public class GateIdleTest {
         boolean enabled=store.settings.getBoolean("enabled",true);
         try{
             device.wakeUp();device.executeShellCommand("wm dismiss-keyguard");device.pressHome();
-            store.settings.edit().putBoolean("enabled",true).putInt("start",0).putInt("end",0).commit();
+            int minute=Rules.minute(System.currentTimeMillis(),java.time.ZoneId.systemDefault());
+            store.saveFocus(true,(minute+60)%1440,(minute+59)%1440,"idle-test");
             ContentValues rule=new ContentValues();rule.put("pkg","com.locky.fixture");rule.put("label","유휴 진입 테스트");rule.put("mode","limited");rule.put("minutes",60);store.put("rules",rule);
             device.executeShellCommand("settings put secure enabled_accessibility_services com.locky.app/com.locky.app.GuardService");
             device.executeShellCommand("settings put secure accessibility_enabled 1");
@@ -72,7 +73,7 @@ public class GateIdleTest {
         }finally{
             main(()->{if(GuardService.live!=null)GuardService.live.stopApp();});
             store.getWritableDatabase().delete("rules","pkg=?",new String[]{"com.locky.fixture"});
-            store.settings.edit().putBoolean("enabled",enabled).putInt("start",start).putInt("end",end).commit();
+            store.saveFocus(enabled,start,end,"idle-test-restore");
             device.executeShellCommand("settings put secure enabled_accessibility_services "+(services.equals("null")?"''":services));
             device.pressHome();
         }
