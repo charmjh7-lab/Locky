@@ -66,7 +66,7 @@ public class GateIdleTest {
             device.executeShellCommand("am start -n com.locky.fixture/.ProbeActivity");awaitReady(g);
             long elapsed=SystemClock.uptimeMillis()-requested;
             assertSame(retained,g.overlay);
-            assertEquals("\"유휴 진입 테스트\"",js(retained,"document.querySelector('.gate-app').textContent"));
+            assertEquals(JSONObject.quote(UsageReader.label(c,"com.locky.fixture")),js(retained,"document.querySelector('.gate-app').textContent"));
             assertEquals("\"visible\"",js(retained,"document.visibilityState"));
             main(()->{assertEquals(1f,g.overlayLayout.alpha,0f);assertEquals(0,g.overlayLayout.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);});
             android.util.Log.i("LockyIdleTest",new JSONObject().put("idleMs",70000).put("launchToInteractiveMs",elapsed).put("sameWebView",true).put("hiddenPageVisibility","visible").toString());
