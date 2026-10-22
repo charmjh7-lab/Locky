@@ -169,13 +169,16 @@ public class OverlayRenderingTest {
         assertEquals(count+1,view.scripts.stream().filter(s->s.startsWith("insetsChanged")).count());assertEquals(300,host.root.getPaddingBottom());
     }
     @Test public void unchangedPixelsReuseTheFrameOnlyAfterTheNewEntryAcknowledges() throws Exception {
+        // Deliver Activity window visibility/attachment before testing reuse of
+        // pixels. The isolated harness otherwise has a pending window traversal.
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
         org.json.JSONObject payload=new org.json.JSONObject().put("gate",new org.json.JSONObject().put("pkg","video"));
         entry("app",payload);host.rendered(view,"app",host.navigationGeneration,1);view.complete(view.frames.size()-1);
         long old=host.navigationGeneration;int frames=view.frames.size();
         entry("app",payload);assertFalse(host.currentGateReady());assertEquals(0f,view.getAlpha(),0);
         host.rendered(view,"app",old,1);assertFalse(host.currentGateReady());
         host.rendered(view,"app",host.navigationGeneration,1);
-        assertTrue(host.currentGateReady());assertEquals(frames,view.frames.size());
+        assertTrue("reuse="+host.reusableGateRevision+" prepared="+host.preparedGateRevision+" window="+view.getWindowVisibility()+" attached="+view.isAttachedToWindow(),host.currentGateReady());assertEquals(frames,view.frames.size());
         assertEquals(1f,view.getAlpha(),0);assertEquals(0,view.loads);
     }
     @Test public void liveDomChangesCannotReuseTheOlderPreparedPixels() throws Exception {
