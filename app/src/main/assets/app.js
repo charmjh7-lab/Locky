@@ -84,6 +84,7 @@ function patchPreparedGatePurposes(main){
  const changed=patchGateNode(main.querySelector('.app-decision .reason-grid'),prepared.node);gatePurposeHTML=prepared.html;return changed;
 }
 function installGateCatalog(data,update=true){
+ if(gateCatalog&&data.catalogVersion<gateCatalog.catalogVersion)return;
  if(gateCatalog?.catalogVersion===data.catalogVersion&&gateCatalog?.purposeDate===data.purposeDate)return;
  gateCatalog={catalogVersion:data.catalogVersion,purposeDate:data.purposeDate,prefs:data.prefs,allPurposes:data.allPurposes,purposeOrders:data.purposeOrders,rules:data.rules};
  gatePurposeTemplates=new Map();gateFallbackTemplates.clear();
@@ -92,7 +93,7 @@ function installGateCatalog(data,update=true){
   gatePurposeTemplates.set(scope,{html,node:template.content.firstElementChild});
  }
  if(state?.role!=='APP_GATE')return;
- state={...state,...gateCatalog};purposeEntry=null;
+ state={...state,...gateCatalog,purposes:gateCatalog.purposeOrders[state.gate?.pkg||'app']||[]};purposeEntry=null;
  if(!update||!document.querySelector('.gate-page'))return;
  if(gateAlive&&gated.includes(screen))presentGate(screen,state,nativeNavigation);
  else if(patchPreparedGatePurposes(document.querySelector('.gate-page'))){++domRevision;viewportChanged();signalRendered();}
@@ -120,6 +121,7 @@ function refreshGate(force=false){
    const full=request.force;request.force=false;
    const next=await api(full?'state':'tick');
    if(!currentGate(entry,next)||gateExposure!=='INTERACTIVE')return false;
+   if(full&&gateCatalog&&next.catalogVersion!==undefined&&next.catalogVersion<gateCatalog.catalogVersion){if(request.force)continue;return false;}
    if(full)presentGate(screen,next,entry.navigation);
    else {state.gate=next.gate;state.free=next.free;updateTimers();}
   }while(request.force&&currentGate(entry));
@@ -190,6 +192,7 @@ function bindGateNode(node){
 }
 function presentGate(name,payload,navigation){
  if(navigation<nativeNavigation)return;
+ if(gateCatalog&&payload.catalogVersion!==undefined&&payload.catalogVersion<gateCatalog.catalogVersion)return;
  const same=screen===name&&state?.gate?.pkg===payload.gate.pkg;
  const transition=!same||navigation!==nativeNavigation||state?.gateTransition!==payload.gateTransition;
  if(!transition&&!gateAlive)return;nativeNavigation=navigation;

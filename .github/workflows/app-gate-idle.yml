@@ -62,7 +62,7 @@ jobs:
           test "$actual" = "$expected"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging distribution/Locky-1.3.5-app-gate.apk > distribution/package.txt
           grep -q "name='com.locky.app' versionCode='20' versionName='1.3.5-app-gate-preview'" distribution/package.txt
-          gh release create "app-gate-idle-${GITHUB_RUN_NUMBER}" distribution/Locky-1.3.5-app-gate.apk --target "$GITHUB_SHA" --title "Locky 1.3.5 · APP_GATE idle entry" --notes "Retain Chromium page visibility behind window alpha, reuse unchanged prepared frames, preserve entry input validation. Focused JVM/browser checks and an Android 15 WebView 70-second idle test. Samsung device performance remains to be observed." --prerelease --latest=false
+          gh release create "app-gate-idle-${GITHUB_RUN_NUMBER}" distribution/Locky-1.3.5-app-gate.apk --target "$GITHUB_SHA" --title "Locky 1.3.5 · APP_GATE idle entry" --notes "Prepare real purpose buttons and per-app templates before entry; cache the shared catalog by data revision and day; send compact entry payloads; avoid redundant usage-history reads. Retain Chromium visibility and confirmed unchanged frames with current-entry input validation. Focused JVM/browser checks and an Android 15 WebView 70-second idle test. Samsung device performance remains to be observed." --prerelease --latest=false
       - uses: actions/upload-artifact@v4
         if: always()
         with:

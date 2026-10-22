@@ -24,3 +24,12 @@ Scope: existing WebView, one accessibility window, current design and policy/inp
 The focused pipeline runs the existing APP_GATE browser flow, GateRestoreTest and OverlayRenderingTest, and one real Android 15 WebView test: conceal, remain idle for 70 seconds, verify `document.visibilityState` stays visible and input stays blocked, then re-enter using the same WebView. It records launch-to-interactive time separately from compositor display time.
 
 These checks do not establish Samsung SM-F966N / Android 17 compositor latency or hours-long OEM process survival. The implementation removes confirmed visibility/lifecycle and redundant-frame barriers; the user's actual first visible frame still needs observation on that device.
+
+## 1.3.5 prepared purpose catalog
+
+- Build and serialize the shared purpose/settings/rules catalog once per data revision and local day. Prepare deterministic per-scope ordering and parsed purpose-button templates before entry, and mount actual buttons in the concealed document. Known rule and custom-purpose scopes are warmed; an unknown scope keeps the existing fallback.
+- Entry payloads carry only current gate identity, budget, exposure and catalog version. Interactive exposure requests a lightweight tick; full state remains available after explicit edits. Reject older catalog replies without weakening navigation/transition checks.
+- Catalog changes rebuild the prepared templates; checkpoint preferences do not invalidate them. Day/time changes warm a new catalog. Renderer recovery reinstalls it.
+- Retire per-entry callback/input identity without discarding an unchanged confirmed visual revision. Actual visual changes still invalidate frame reuse.
+- Chronological usage append avoids scanning prior history when the new interval starts at or beyond the stored maximum end. Already screen-ON-validated Guard intervals avoid duplicate evidence reads. Backdated recovery retains overlap and evidence checks.
+- Expanded checks cover cached reads with source tables removed, mutation/day invalidation, native ordering, compact entry payloads, real concealed purpose buttons, usage-history/session/export regression, and browser transitions/editing/stale replies.

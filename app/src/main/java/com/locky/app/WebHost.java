@@ -403,7 +403,9 @@ final class WebHost {
         WebView candidate=view;long navigation=navigationGeneration;String name=pendingScreen,chat=pendingChat;JSONObject gateData=pendingGate;
         Runnable dispatch=()->{
             if(closed||!ready||candidate!=view||navigation!=navigationGeneration)return;
-            if(isOverlay)try{installGateCatalog(store.gateCatalog());}catch(JSONException e){showGateError();return;}
+            if(isOverlay)try{Store.GateCatalog catalog=store.gateCatalog();installGateCatalog(catalog);
+                if(gateData!=null)gateData.put("catalogVersion",catalog.revision).put("purposeDate",catalog.day);
+            }catch(JSONException e){showGateError();return;}
             String navJs="notes".equals(name)&&!pendingNote.isEmpty()?"openNoteById("+JSONObject.quote(pendingNote)+","+navigation+")":"chat".equals(name)&&!chat.isEmpty()?"openChatById("+JSONObject.quote(chat)+","+navigation+")":"navigate("+JSONObject.quote(name)+","+navigation+")";
             if(role==Role.APP_GATE)navJs=gateData==null?"prepareGate("+navigation+")":"presentGate("+JSONObject.quote(name)+","+gateData+","+navigation+")";
             if(role==Role.APP_GATE&&gateData!=null&&!everRendered)navJs="prepareGate("+navigation+");"+navJs;
