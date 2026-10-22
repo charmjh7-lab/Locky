@@ -20,8 +20,11 @@ public class OverlayRenderingTest {
     WebHost host;FrameView view;
     static class FrameView extends WebView {
         final List<VisualStateCallback> frames=new ArrayList<>();final List<Long> ids=new ArrayList<>();
-        final List<String> scripts=new ArrayList<>();final List<ValueCallback<String>> preparations=new ArrayList<>();int loads,resumes,pauses,layouts,timers,invalidations;
+        final List<String> scripts=new ArrayList<>();final List<ValueCallback<String>> preparations=new ArrayList<>();int loads,resumes,pauses,layouts,timers,invalidations,windowVisibility=View.VISIBLE;
         FrameView(android.content.Context c){super(c);}
+        // The mock frame source supplies window visibility too: Robolectric's
+        // isolated Activity reports GONE even after attachment and visible().
+        @Override public int getWindowVisibility(){return windowVisibility;}
         @Override public void postVisualStateCallback(long id,VisualStateCallback callback){ids.add(id);frames.add(callback);}
         @Override public void evaluateJavascript(String script,ValueCallback<String> callback){scripts.add(script);if(script.startsWith("prepareStart(")){preparations.add(callback);return;}if(callback!=null)callback.onReceiveValue("null");}
         @Override public void loadUrl(String url){loads++;}
@@ -169,9 +172,6 @@ public class OverlayRenderingTest {
         assertEquals(count+1,view.scripts.stream().filter(s->s.startsWith("insetsChanged")).count());assertEquals(300,host.root.getPaddingBottom());
     }
     @Test public void unchangedPixelsReuseTheFrameOnlyAfterTheNewEntryAcknowledges() throws Exception {
-        // Deliver Activity window visibility/attachment before testing reuse of
-        // pixels. The isolated harness otherwise has a pending window traversal.
-        Shadows.shadowOf(Looper.getMainLooper()).idle();
         org.json.JSONObject payload=new org.json.JSONObject().put("gate",new org.json.JSONObject().put("pkg","video"));
         entry("app",payload);host.rendered(view,"app",host.navigationGeneration,1);view.complete(view.frames.size()-1);
         long old=host.navigationGeneration;int frames=view.frames.size();
@@ -186,6 +186,11 @@ public class OverlayRenderingTest {
         entry("app",new org.json.JSONObject());host.rendered(view,"app",host.navigationGeneration,2);
         assertFalse(host.currentGateReady());assertEquals(2,view.frames.size());
         view.complete(1);assertTrue(host.currentGateReady());
+    }
+    @Test public void aNonVisibleWindowCannotReusePreviouslyPreparedPixels() throws Exception {
+        rendered();view.complete(0);entry("app",new org.json.JSONObject());
+        view.windowVisibility=View.GONE;host.rendered(view,"app",host.navigationGeneration,1);
+        assertFalse(host.currentGateReady());assertEquals(2,view.frames.size());
     }
 
     @Test public void hiddenDataAcknowledgementDoesNotNeedHiddenOnDraw(){
