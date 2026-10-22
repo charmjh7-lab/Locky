@@ -15,6 +15,16 @@ const fs=require('fs'),path=require('path'),assert=require('assert/strict');
   });
   await page.addScriptTag({content:fs.readFileSync(path.join(__dirname,'../app/src/main/assets/app.js'),'utf8')});
   await page.evaluate(()=>{const original=presentGate;window.presentGate=(name,payload,navigation)=>{payload.gateNavigation=navigation;original(name,payload,navigation);};});
+  const preparedCatalog=await page.evaluate(()=>{
+   let builds=0;const original=purposeGridMarkup;window.purposeGridMarkup=(...args)=>{builds++;return original(...args);};
+   const shared={catalogVersion:1,purposeDate:fixture.purposeDate,prefs:fixture.prefs,allPurposes:fixture.allPurposes,rules:fixture.rules,purposeOrders:{app:fixture.purposes,'app.video':fixture.purposes,'app.social':fixture.purposes}};
+   installGateCatalog(shared);prepareGate(0);const button=document.querySelector('[data-purpose="app-p"]'),before=builds;
+   const compact=pkg=>({catalogVersion:1,scope:pkg,purposeDate:shared.purposeDate,gateTransition:99,gateExposure:'WAITING',gate:{...fixture.gate,pkg,label:pkg},free:false});
+   presentGate('app',compact('app.video'),1);presentGate('app',compact('app.social'),2);clearInterval(poll);
+   const result={prewarmed:!!button,same:button===document.querySelector('[data-purpose="app-p"]'),builds:builds-before};
+   window.purposeGridMarkup=original;gateCatalog=null;gatePurposeTemplates.clear();gateFallbackTemplates.clear();nativeNavigation=0;return result;
+  });
+  assert.deepEqual(preparedCatalog,{prewarmed:true,same:true,builds:0});
   await page.evaluate(()=>{prepareGate(0);window.preparedMain=document.querySelector('.gate-page');window.preparedDuration=document.querySelector('.duration');window.idleInert=preparedMain.inert;presentGate('app',fixture,1);clearInterval(poll);window.durationNode=document.querySelector('.duration');window.presetNode=document.querySelector('[data-purpose="app-p"]');});
   assert.equal(await page.evaluate(()=>idleInert&&preparedMain===document.querySelector('.gate-page')&&preparedDuration===document.querySelector('.duration')&&!preparedMain.inert),true);
   await page.locator('[data-min="9"]').click();await page.evaluate(async()=>{presentGate('app',fixture,1);clearInterval(poll);await refresh();await refresh(true);clearInterval(poll);});

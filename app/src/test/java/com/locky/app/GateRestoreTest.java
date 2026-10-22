@@ -37,6 +37,12 @@ public class GateRestoreTest {
         assertTrue(g.canPrepareGateFrame(host,host.gateTransition));
         assertTrue(host.currentGateEntry(host.gateTransition));
     }
+    @Test public void entryPayloadCarriesOnlyChangingDataAfterCatalogPreparation() throws Exception {
+        g.showGate("app","video");org.json.JSONObject payload=g.gatePayload();
+        assertEquals("video",payload.getJSONObject("gate").getString("pkg"));assertTrue(payload.has("catalogVersion"));
+        for(String key:new String[]{"allPurposes","purposes","prefs","rules","purposeOrders"})assertFalse(key,payload.has(key));
+        assertTrue(g.store.gateCatalog().data.getJSONObject("purposeOrders").getJSONArray("video").length()>0);
+    }
     @Test public void phoneScreenOffCreatesNoOverlayAndCannotBeSentThroughShowGate(){
         g.screenOff();assertNull(g.overlay);assertEquals(0,adds);assertFalse(g.overlayVisible);
         try{g.showGate("unlock","");fail();}catch(IllegalArgumentException expected){}

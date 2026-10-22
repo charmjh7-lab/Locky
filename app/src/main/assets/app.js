@@ -70,6 +70,33 @@ function observeGateDOM(){
  gateDOMObserver=new MutationObserver(records=>{if(records.length&&state?.role==='APP_GATE'){++domRevision;signalRendered();}});
  gateDOMObserver.observe(document.documentElement,{subtree:true,childList:true,attributes:true,characterData:true});
 }
+let gateCatalog=null,gatePurposeTemplates=new Map(),gateFallbackTemplates=new Map();
+function preparedGatePurposeTemplate(){
+ const scope=state?.gate?.pkg||'app';
+ if(gateCatalog&&state?.catalogVersion===gateCatalog.catalogVersion&&gatePurposeTemplates.has(scope))return gatePurposeTemplates.get(scope);
+ const ps=visiblePurposes(true),key=JSON.stringify([state.purposeDate,ps]);let cached=gateFallbackTemplates.get(scope);
+ if(cached?.key===key)return cached;
+ const html=purposeGridMarkup(ps,true,false,'',false),template=document.createElement('template');template.innerHTML=html;
+ cached={key,html,node:template.content.firstElementChild};gateFallbackTemplates.set(scope,cached);return cached;
+}
+function patchPreparedGatePurposes(main){
+ const prepared=preparedGatePurposeTemplate();if(prepared.html===gatePurposeHTML)return false;
+ const changed=patchGateNode(main.querySelector('.app-decision .reason-grid'),prepared.node);gatePurposeHTML=prepared.html;return changed;
+}
+function installGateCatalog(data,update=true){
+ if(gateCatalog?.catalogVersion===data.catalogVersion&&gateCatalog?.purposeDate===data.purposeDate)return;
+ gateCatalog={catalogVersion:data.catalogVersion,purposeDate:data.purposeDate,prefs:data.prefs,allPurposes:data.allPurposes,purposeOrders:data.purposeOrders,rules:data.rules};
+ gatePurposeTemplates=new Map();gateFallbackTemplates.clear();
+ for(const [scope,purposes] of Object.entries(data.purposeOrders||{})){
+  const html=purposeGridMarkup(purposes,true,false,'',false),template=document.createElement('template');template.innerHTML=html;
+  gatePurposeTemplates.set(scope,{html,node:template.content.firstElementChild});
+ }
+ if(state?.role!=='APP_GATE')return;
+ state={...state,...gateCatalog};purposeEntry=null;
+ if(!update||!document.querySelector('.gate-page'))return;
+ if(gateAlive&&gated.includes(screen))presentGate(screen,state,nativeNavigation);
+ else if(patchPreparedGatePurposes(document.querySelector('.gate-page'))){++domRevision;viewportChanged();signalRendered();}
+}
 let purposeStartOperation=null;
 function gateSnapshot(){return state?.role==='APP_GATE'?{navigation:nativeNavigation,transition:state.gateTransition,pkg:state.gate?.pkg,screen,epoch:gateWorkEpoch}:null;}
 function currentGate(entry,response=null){
@@ -81,7 +108,7 @@ function gateExposureChanged(exposure,navigation,transition,pkg){
  gateExposure=exposure;++gateWorkEpoch;gateRefresh=null;
  if(exposure==='HIDDEN'){gateAlive=false;closeSheet();}
  startPolling();
- if(exposure==='INTERACTIVE'&&gateAlive)safe(()=>refreshGate(true));
+ if(exposure==='INTERACTIVE'&&gateAlive)safe(()=>refreshGate());
 }
 function refreshGate(force=false){
  const entry=gateSnapshot();
@@ -131,10 +158,10 @@ document.addEventListener('click',event=>{
 function prepareGate(navigation=0){
  observeGateDOM();
  clearInterval(poll);poll=null;closeSheet();
- nativeNavigation=navigation;screen='gateIdle';state={role:'APP_GATE',overlay:true,gateTransition:-1,gate:{},prefs:{start:0,end:0},notes:[],chats:[],accounts:[],models:[],connection:{},rules:[],allPurposes:[],purposeOrders:{}};
+ nativeNavigation=navigation;screen='gateIdle';state={role:'APP_GATE',overlay:true,gateTransition:-1,gate:{},prefs:{start:0,end:0},notes:[],chats:[],accounts:[],models:[],connection:{},rules:[],allPurposes:[],purposeOrders:{},...(gateCatalog||{})};
  gateAlive=false;gateExposure='HIDDEN';++gateWorkEpoch;gateRefresh=null;purposeEntry=null;
  let main=$('.gate-page');
- if(!main){$('#app').innerHTML=gate();main=$('.gate-page');bind(main);gatePurposeHTML=null;++domRevision;}
+ if(!main){$('#app').innerHTML=gate();main=$('.gate-page');bind(main);gatePurposeHTML=preparedGatePurposeTemplate().html;++domRevision;}
  main.inert=true;document.body.classList.add('start-screen');renderedRoute=screen;signalRendered(true);
 }
 // Patch attributes/text in place. Only changed list membership creates/removes nodes.
@@ -167,9 +194,13 @@ function presentGate(name,payload,navigation){
  const transition=!same||navigation!==nativeNavigation||state?.gateTransition!==payload.gateTransition;
  if(!transition&&!gateAlive)return;nativeNavigation=navigation;
  if(transition){closeSheet();selected='';minutes=5;purposeEntry=null;purposeStarting=false;purposeStartOperation=null;gateAlive=true;gateExposure=payload.gateExposure||'WAITING';++gateWorkEpoch;gateRefresh=null;}
- state={...state,...payload,role:'APP_GATE',overlay:true,purposeOrders:{[payload.scope]:payload.purposes}};
+ if(payload.catalogVersion!==undefined&&payload.allPurposes)installGateCatalog(payload,false);
+ const shared=gateCatalog&&gateCatalog.catalogVersion===payload.catalogVersion?gateCatalog:{};
+ const orders={...(state?.purposeOrders||{}),...(shared.purposeOrders||{}),...(payload.purposeOrders||{})};
+ if(payload.purposes)orders[payload.scope]=payload.purposes;
+ state={...state,...shared,...payload,role:'APP_GATE',overlay:true,purposes:payload.purposes||orders[payload.scope]||[],purposeOrders:orders};
  screen=name;let main=$('.gate-page'),changed=false,layout=false;
- if(!main){$('#app').innerHTML=gate();main=$('.gate-page');bind(main);gatePurposeHTML=null;changed=true;layout=true;}
+ if(!main){$('#app').innerHTML=gate();main=$('.gate-page');bind(main);gatePurposeHTML=preparedGatePurposeTemplate().html;changed=true;layout=true;}
  const g=state.gate,locked=name==='blocked',renew=name==='renew',policyBlock=state.rules.find(r=>r.pkg===g.pkg)?.mode==='locked';
  const text=(selector,value,first=false)=>{const el=main.querySelector(selector),node=first?el.firstChild:el;if((first?node.data:node.textContent)!==value){if(first)node.data=value;else node.textContent=value;changed=true;}};
  const hidden=(selector,value)=>{const el=main.querySelector(selector);if(el.hidden!==value){el.hidden=value;changed=true;}};
@@ -184,8 +215,7 @@ function presentGate(name,payload,navigation){
  if(!locked){text('.duration h3',renew?'추가할 시간':'사용할 시간');for(const el of main.querySelectorAll('[data-min]')){const chosen=Number(el.dataset.min)===minutes;if(el.classList.contains('selected')!==chosen){el.classList.toggle('selected',chosen);el.setAttribute('aria-pressed',chosen);changed=true;}}}
  hidden('#startApp',!renew);if(renew)text('#startApp',`${minutes}분 연장 `,true);
  if(!locked&&!renew){
-  const html=purposeGrid(true);
-  if(html!==gatePurposeHTML){const template=document.createElement('template');template.innerHTML=html;const grid=main.querySelector('.app-decision .reason-grid');if(patchGateNode(grid,template.content.firstElementChild)){changed=true;layout=true;}gatePurposeHTML=html;}
+  if(patchPreparedGatePurposes(main)){changed=true;layout=true;}
  }
  if(main.inert){main.inert=false;changed=true;}if(!document.body.classList.contains('start-screen'))document.body.classList.add('start-screen');
  if(transition)main.querySelectorAll('[data-purpose],[data-min],[data-act=direct]').forEach(el=>{if(el.disabled){el.disabled=false;changed=true;}});
@@ -275,9 +305,9 @@ function purposeLinkIcon(p,isApp){
  return image?`<span class="purpose-link-icon" aria-hidden="true"><img class="linked-app-icon" src="${esc(image)}" alt="">${icon('link')}</span>`:icon('link');
 }
 document.addEventListener('error',event=>{const img=event.target;if(img.matches?.('.linked-app-icon')){img.parentElement.classList.add('icon-failed');}},true);
-function purposeGrid(isApp,all=false){
- const ps=visiblePurposes(isApp);
- const items=ps.map(p=>`<div class="purpose-item"><button class="reason ${p.id===selected?'selected':''} ${p.aimless?'aimless':''} ${!isApp&&['PHONE_START','MAIN'].includes(state?.role)?'phone-purpose':''}" data-purpose="${esc(p.id)}" ${isApp&&purposeStarting?'disabled':''}><span>${esc(p.label)}</span>${purposeLinkIcon(p,isApp)}</button></div>`).join('');
+function purposeGrid(isApp,all=false){return purposeGridMarkup(visiblePurposes(isApp),isApp,all,selected,purposeStarting);}
+function purposeGridMarkup(ps,isApp,all=false,chosen='',starting=false){
+ const items=ps.map(p=>`<div class="purpose-item"><button class="reason ${p.id===chosen?'selected':''} ${p.aimless?'aimless':''} ${!isApp&&['PHONE_START','MAIN'].includes(state?.role)?'phone-purpose':''}" data-purpose="${esc(p.id)}" ${isApp&&starting?'disabled':''}><span>${esc(p.label)}</span>${purposeLinkIcon(p,isApp)}</button></div>`).join('');
  const direct=`<button class="reason direct" data-act="direct">${icon('plus')} 직접 적기</button>`;
  if(!isApp&&!all)return `<div class="reason-picker">${direct}<div class="preset-scroll" role="region" tabindex="0" aria-label="목적 프리셋 목록"><div class="reason-grid">${items}</div></div></div>`;
  return `<div class="reason-grid ${all?'all-reasons':''}">${direct}${items}${!all?`<button class="reason more-reasons" data-act="morePurposes" hidden>${icon('more')} 전체 ${ps.length}개 보기</button>`:''}</div>`;
@@ -291,7 +321,7 @@ function gate(){
  const g=state.gate,locked=screen==='blocked',renew=screen==='renew',idle=screen==='gateIdle';
  const rule=state.rules.find(r=>r.pkg===g.pkg),policyBlock=rule?.mode==='locked';
  const duration=`<section class="duration"><div class="sectionhead"><h3>${renew?'추가할 시간':'사용할 시간'}</h3><span class="small muted">분</span></div><div class="minutes">${[5,6,7,8,9,10].map(m=>`<button data-min="${m}" class="${minutes===m?'selected':''}" aria-pressed="${minutes===m}">${m}</button>`).join('')}</div></section>`;
- return `<main class="start-page gate-page overlay-start ${locked?'blocked-page':renew?'renew-page':''}" ${idle?'inert':''}>${header(false,locked?'사용 제한':renew?'사용 연장':'앱 시작')}<div class="gate-info"><div class="gate-app">${esc(g.label||'앱 사용')}</div><h2>${locked?(policyBlock?'집중 시간에는 차단된 앱이에요':'오늘의 사용 시간을 모두 썼어요'):renew?'같은 목적으로 더 사용하나요?':'무엇을 하러 들어가나요?'}</h2><div class="daily-budget" ${locked?'hidden':''}><span>오늘 남은 시간</span><strong id="dailyLeft">${fmt(g.daily||0)}</strong></div></div><section class="block-detail" ${locked?'':'hidden'}><span>다시 사용할 수 있는 시간</span><strong>${time(state.prefs.end)}<small>자유 시간 시작</small></strong><p class="muted">${time(state.prefs.start)}–${time(state.prefs.end)} 집중 시간</p></section><div class="gate-note" ${renew?'':'hidden'}><span>처음 정한 목적</span><strong>${esc(g.purpose||'선택한 목적 없음')}</strong></div><div class="app-decision" ${locked?'hidden':''}>${duration}<section class="start-purposes" ${locked||renew?'hidden':''}><div class="purpose-intro sectionhead"><h3>사용 목적</h3><button class="textbtn" data-act="managePurposes" aria-label="앱 사용 목적 편집">편집</button></div>${idle?'<div class="reason-grid"><button class="reason direct" data-act="direct">'+icon('plus')+' 직접 적기</button></div>':purposeGrid(true)}</section></div><footer class="start-footer"><button id="startApp" class="primary" data-act="extend" ${renew?'':'hidden'}>${minutes}분 연장 ${icon('arrow')}</button>${dismissButton()}</footer></main>`;
+ return `<main class="start-page gate-page overlay-start ${locked?'blocked-page':renew?'renew-page':''}" ${idle?'inert':''}>${header(false,locked?'사용 제한':renew?'사용 연장':'앱 시작')}<div class="gate-info"><div class="gate-app">${esc(g.label||'앱 사용')}</div><h2>${locked?(policyBlock?'집중 시간에는 차단된 앱이에요':'오늘의 사용 시간을 모두 썼어요'):renew?'같은 목적으로 더 사용하나요?':'무엇을 하러 들어가나요?'}</h2><div class="daily-budget" ${locked?'hidden':''}><span>오늘 남은 시간</span><strong id="dailyLeft">${fmt(g.daily||0)}</strong></div></div><section class="block-detail" ${locked?'':'hidden'}><span>다시 사용할 수 있는 시간</span><strong>${time(state.prefs.end)}<small>자유 시간 시작</small></strong><p class="muted">${time(state.prefs.start)}–${time(state.prefs.end)} 집중 시간</p></section><div class="gate-note" ${renew?'':'hidden'}><span>처음 정한 목적</span><strong>${esc(g.purpose||'선택한 목적 없음')}</strong></div><div class="app-decision" ${locked?'hidden':''}>${duration}<section class="start-purposes" ${locked||renew?'hidden':''}><div class="purpose-intro sectionhead"><h3>사용 목적</h3><button class="textbtn" data-act="managePurposes" aria-label="앱 사용 목적 편집">편집</button></div>${preparedGatePurposeTemplate().html}</section></div><footer class="start-footer"><button id="startApp" class="primary" data-act="extend" ${renew?'':'hidden'}>${minutes}분 연장 ${icon('arrow')}</button>${dismissButton()}</footer></main>`;
 }
 async function choosePurpose(id){
  if(screen==='gateIdle')return;

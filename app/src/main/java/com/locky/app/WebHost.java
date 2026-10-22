@@ -40,6 +40,12 @@ final class WebHost {
     // A prepared pixel revision may outlive an entry token. Reuse requires a
     // fresh acknowledgement from the new entry and no intervening DOM changes.
     long preparedGateRevision=-1,reusableGateRevision=-1;String reusableGateScreen="";
+    long sentGateCatalog=-1;
+    void installGateCatalog(Store.GateCatalog catalog){
+        if(closed||!isOverlay||!ready||catalog.revision==sentGateCatalog||!store.currentGateCatalog(catalog))return;
+        sentGateCatalog=catalog.revision;preparedPurposeDay=catalog.day;
+        view.evaluateJavascript("installGateCatalog("+catalog.json+")",null);
+    }
     // Bounded Logcat plus opt-in private recording. Never log user content or package names.
     
     static boolean tracing(){return BuildConfig.DEBUG||android.util.Log.isLoggable("LockyGate",android.util.Log.DEBUG);}
@@ -146,7 +152,10 @@ final class WebHost {
     void gateScreen(String name,JSONObject payload){
         long retained=frameReady&&preparedGateRevision==renderedRevision?preparedGateRevision:-1;
         String retainedScreen=renderedScreen;
-        cancelInitialWatch();visualFailed=false;initialRetries=0;resetVisualState("new-entry");
+        cancelInitialWatch();visualFailed=false;initialRetries=0;
+        // Retire the previous entry's callbacks/input identity, preserving the
+        // document and prepared pixels. Only changed DOM/detachment invalidates them.
+        cancelVisualWatch();++visualGeneration;visualPending=-1;visualRetryCount=0;frameReady=false;
         reusableGateRevision=retained;reusableGateScreen=retainedScreen;
         pendingGate=payload;gateTransition=payload.optLong("gateTransition",-1);preparedPurposeDay=payload.optString("purposeDate");pendingScreen=name;pendingChat="";++navigationGeneration;
         renderedNavigation=-1;renderedRevision=-1;
@@ -173,6 +182,7 @@ final class WebHost {
     // readiness gate or WebView lifecycle changes; a visible page never runs this on a timer.
     void ensurePurposeDay(){
         String today=java.time.LocalDate.now().toString();if(closed||!ready||!Set.of("home","unlock","app").contains(renderedScreen)||today.equals(preparedPurposeDay))return;
+        if(isOverlay){try{installGateCatalog(store.gateCatalog());}catch(JSONException e){throw new IllegalStateException(e);}return;}
         try{String scope="app".equals(renderedScreen)&&GuardService.live!=null?GuardService.live.gatePkg:"phone";
             JSONObject order=new JSONObject().put("date",today).put("scope",scope).put("purposes",store.purposes(scope));preparedPurposeDay=today;evaluate("prepareStart("+order+")");
         }catch(JSONException e){android.util.Log.w("LockyBriefing","Daily purpose data unavailable");}
@@ -330,6 +340,7 @@ final class WebHost {
     }
     void createView(){
         if(closed)return;
+        sentGateCatalog=-1;
         renderingActive=false;insetKeyboard=null;loadFailed=false;visualFailed=false;if(isOverlay){notifiedGateExposure="";resetVisualState("create");}
         view=new WebView(context){
             @Override protected void onWindowVisibilityChanged(int visibility){
@@ -392,6 +403,7 @@ final class WebHost {
         WebView candidate=view;long navigation=navigationGeneration;String name=pendingScreen,chat=pendingChat;JSONObject gateData=pendingGate;
         Runnable dispatch=()->{
             if(closed||!ready||candidate!=view||navigation!=navigationGeneration)return;
+            if(isOverlay)try{installGateCatalog(store.gateCatalog());}catch(JSONException e){showGateError();return;}
             String navJs="notes".equals(name)&&!pendingNote.isEmpty()?"openNoteById("+JSONObject.quote(pendingNote)+","+navigation+")":"chat".equals(name)&&!chat.isEmpty()?"openChatById("+JSONObject.quote(chat)+","+navigation+")":"navigate("+JSONObject.quote(name)+","+navigation+")";
             if(role==Role.APP_GATE)navJs=gateData==null?"prepareGate("+navigation+")":"presentGate("+JSONObject.quote(name)+","+gateData+","+navigation+")";
             if(role==Role.APP_GATE&&gateData!=null&&!everRendered)navJs="prepareGate("+navigation+");"+navJs;
@@ -455,7 +467,7 @@ final class WebHost {
             case "usageApps":out=usageApps();break;
             case "excludeUsage":{Set<String> excluded=new HashSet<>(store.settings.getStringSet("usage-excluded",Set.of()));String target=a.getString("pkg");if(a.getBoolean("excluded"))excluded.add(target);else excluded.remove(target);store.settings.edit().putStringSet("usage-excluded",excluded).apply();if(g!=null)g.policyChanged();break;}
             case "purpose":out=store.purpose(a,a.optString("scope","phone"));break;
-            case "removePurpose":store.getWritableDatabase().delete("purposes","id=?",new String[]{a.getString("id")});break;
+            case "removePurpose":store.removePurpose(a.getString("id"));break;
             case "choose":if(role==Role.PHONE_START)((PhoneStartActivity)context).choose(resolvePurpose(a));else if(role==Role.APP_GATE)throw new IllegalStateException("앱 사용시간을 선택해 주세요.");else {JSONObject p=resolvePurpose(a);store.event("unlock",p.getString("label"),"",p.optString("pkg"),0,p.optInt("aimless",0)==1);Intent i=Links.intent(context,p.optString("pkg"),p.optString("uri"));if(i!=null)context.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));else if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);}break;
             case "grant":if(g==null)throw new IllegalStateException("접근성 서비스를 먼저 켜 주세요.");g.allowApp(resolveGatePurpose(a,g),a.optInt("minutes",5));break;
             case "extend":if(g!=null)g.extend(a.optInt("minutes",5));break;
@@ -478,7 +490,7 @@ final class WebHost {
             case "settings":if(g!=null)g.flushOnMain();saveSettings(a);if(a.has("themeMode"))main.post(()->{for(var ref:hosts){WebHost h=ref.get();if(h!=null&&!h.closed)h.applyTheme();}});if(g!=null)g.policyChanged();LockyApp.app.backgroundWork.execute(()->Scheduler.fire(context));break;
             case "rule":String pkg=a.getString("pkg");if(pkg.equals(context.getPackageName()))throw new IllegalArgumentException("Locky는 관리 대상으로 지정할 수 없습니다.");String mode=a.optString("mode");JSONObject prior=store.rule(pkg);
                 String key="rule-memory:"+pkg;JSONObject memory=new JSONObject(store.settings.getString(key,"{}"));if(mode.equals("restore"))mode=memory.optString("mode","limited");
-                if(mode.equals("none")){if(prior!=null)memory=prior;store.getWritableDatabase().delete("rules","pkg=?",new String[]{pkg});store.settings.edit().remove("blocked-until:"+pkg).putString(key,memory.toString()).apply();}
+                if(mode.equals("none")){if(prior!=null)memory=prior;store.removeRule(pkg);store.settings.edit().remove("blocked-until:"+pkg).putString(key,memory.toString()).apply();}
                 else {if(!mode.equals("limited")&&!mode.equals("locked"))throw new IllegalArgumentException("관리 방식을 확인해 주세요.");ContentValues v=new ContentValues();v.put("pkg",pkg);v.put("label",UsageReader.label(context,pkg));v.put("mode",mode);int limit=Rules.dailyMinutes(a.optInt("minutes",memory.optInt("minutes",60)));v.put("minutes",limit);store.put("rules",v);
                     var editor=store.settings.edit().putString(key,new JSONObject().put("mode",mode).put("minutes",limit).toString());
                     if(prior==null||!prior.optString("mode").equals(mode)||limit>prior.optInt("minutes",60))editor.remove("blocked-until:"+pkg);editor.apply();
@@ -522,6 +534,7 @@ final class WebHost {
         }
         // Real shared-data writes, rather than Activity/visibility callbacks,
         // notify the other document. Start pages apply only changed regions.
+        if(g!=null&&Set.of("purpose","removePurpose","settings","rule").contains(action))g.warmGateCatalog();
         if(Set.of("purpose","removePurpose","saveNote","deleteNote").contains(action))
             for(var ref:hosts){WebHost peer=ref.get();if(peer!=null&&peer!=this)peer.refresh();}
         answer(source,id,out,null);
@@ -574,12 +587,10 @@ final class WebHost {
     JSONObject state() throws Exception {
         if(isOverlay){
             GuardService guard=GuardService.live;String scope=guard==null||guard.gatePkg.isEmpty()?"app":guard.gatePkg;
-            JSONArray purposes=store.purposes(scope);JSONObject rule=guard==null?store.rule(scope):guard.policyRule(scope);
-            return gateResponseIdentity(new JSONObject(),guard).put("role",role.name()).put("overlay",true).put("purposeEditor",purposeEditorPkg)
-                .put("gate",guard==null?new JSONObject():guard.state()).put("prefs",store.preferences()).put("free",!store.managed(System.currentTimeMillis()))
-                .put("scope",scope).put("purposeDate",java.time.LocalDate.now().toString()).put("purposes",purposes).put("purposeOrders",new JSONObject().put(scope,purposes))
-                .put("allPurposes",store.rows("SELECT * FROM purposes ORDER BY rowid")).put("rules",rule==null?new JSONArray():new JSONArray().put(rule))
-                .put("notes",new JSONArray()).put("chats",new JSONArray()).put("models",new JSONArray()).put("accounts",new JSONArray()).put("connection",new JSONObject());
+            Store.GateCatalog catalog=store.gateCatalog();
+            return gateResponseIdentity(new JSONObject(catalog.json),guard).put("role",role.name()).put("overlay",true).put("purposeEditor",purposeEditorPkg)
+                .put("gate",guard==null?new JSONObject():guard.state()).put("free",!store.managed(System.currentTimeMillis()))
+                .put("scope",scope).put("purposes",store.purposes(scope));
         }
         JSONObject status=new JSONObject().put("accessibility",GuardService.live!=null).put("drawOverlays",Settings.canDrawOverlays(context)).put("startWindow",GuardService.live==null?UnlockDiagnostics.get(context).windowStatus().put("status","service-off"):GuardService.live.startWindowStatus()).put("appGateDiagnostics",UnlockDiagnostics.get(context).status()).put("usage",UsageReader.allowed(context)).put("notifications",context.getSystemService(NotificationManager.class).areNotificationsEnabled()).put("exact",Build.VERSION.SDK_INT<31||context.getSystemService(AlarmManager.class).canScheduleExactAlarms()).put("briefing",Notices.briefingStatus(context)).put("liveTimer",Notices.timerStatus(context));
         JSONArray phonePurposes=store.purposes("phone");

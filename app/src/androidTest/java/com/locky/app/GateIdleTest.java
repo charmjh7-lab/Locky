@@ -54,6 +54,10 @@ public class GateIdleTest {
             long deadline=SystemClock.uptimeMillis()+12000;
             while(GuardService.live==null&&SystemClock.uptimeMillis()<deadline)Thread.sleep(100);
             GuardService g=GuardService.live;assertNotNull("Accessibility service did not connect",g);
+            long preparedUntil=SystemClock.uptimeMillis()+15000;boolean[] prepared={false};
+            do{main(()->prepared[0]=g.overlay!=null&&g.overlay.ready&&g.overlay.sentGateCatalog>=0&&"gateIdle".equals(g.overlay.renderedScreen));if(prepared[0])break;Thread.sleep(25);}while(SystemClock.uptimeMillis()<preparedUntil);
+            assertTrue("Actual purpose buttons were not prepared before app entry",prepared[0]);
+            assertTrue(Integer.parseInt(js(g.overlay,"document.querySelectorAll('.gate-page [data-purpose]').length"))>0);
             device.executeShellCommand("am start -n com.locky.fixture/.ProbeActivity");awaitReady(g);
             WebHost retained=g.overlay;
             assertEquals("\"visible\"",js(retained,"document.visibilityState"));

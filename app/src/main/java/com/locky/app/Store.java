@@ -14,8 +14,43 @@ final class Store extends SQLiteOpenHelper {
     final Context context;private long lastObservation;
     // Budget inputs change on charged usage and screen evidence; uncharged gate checkpoints cannot spend time.
     private volatile long usageRevision;
+    private JSONArray purposeRows;
+    private String purposeDay="";
+    private final Map<String,JSONArray> purposeOrders=new HashMap<>();
+    private long catalogRevision;
+    private String catalogDay="";
+    private long recordedUsageEnd=-1;
+    private GateCatalog cachedGateCatalog;
+    private final android.content.SharedPreferences.OnSharedPreferenceChangeListener gatePreferences=(prefs,key)->{
+        if(key==null||Set.of("enabled","floatingTimer","start","end","reminders","dailyBrief","dailyBriefTime","focusBrief","weeklyDay","model","theme-mode").contains(key))invalidateGateCatalog();
+    };
+    static final class GateCatalog {
+        final long revision;final String day,json;final JSONObject data;
+        GateCatalog(long revision,String day,JSONObject data){this.revision=revision;this.day=day;this.data=data;json=data.toString();}
+    }
+    synchronized void invalidateGateCatalog(){++catalogRevision;cachedGateCatalog=null;}
+    private void invalidatePurposes(){purposeRows=null;purposeOrders.clear();invalidateGateCatalog();}
+    synchronized boolean currentGateCatalog(GateCatalog catalog){return catalog!=null&&catalog.revision==catalogRevision&&catalog.day.equals(LocalDate.now().toString());}
+    synchronized GateCatalog gateCatalog() throws JSONException {
+        if(currentGateCatalog(cachedGateCatalog))return cachedGateCatalog;
+        String day=LocalDate.now().toString();if(!day.equals(catalogDay)){catalogDay=day;++catalogRevision;}
+        JSONArray all=allPurposes(),rules=rows("SELECT * FROM rules ORDER BY pkg");
+        Set<String> scopes=new LinkedHashSet<>(Set.of("app"));
+        for(int i=0;i<rules.length();i++)scopes.add(rules.getJSONObject(i).getString("pkg"));
+        for(int i=0;i<all.length();i++){String scope=all.getJSONObject(i).getString("scope");if(!Set.of("*","phone").contains(scope))scopes.add(scope);}
+        JSONObject orders=new JSONObject();for(String scope:scopes)orders.put(scope,purposes(scope));
+        JSONObject data=new JSONObject().put("catalogVersion",catalogRevision).put("purposeDate",day)
+            .put("prefs",preferences()).put("allPurposes",all).put("purposeOrders",orders).put("rules",rules);
+        return cachedGateCatalog=new GateCatalog(catalogRevision,day,data);
+    }
+    synchronized JSONArray allPurposes() throws JSONException {
+        if(purposeRows==null)purposeRows=rows("SELECT * FROM purposes ORDER BY rowid");return purposeRows;
+    }
+    synchronized void removePurpose(String id){getWritableDatabase().delete("purposes","id=?",new String[]{id});invalidatePurposes();}
+    synchronized void removeRule(String pkg){getWritableDatabase().delete("rules","pkg=?",new String[]{pkg});invalidateGateCatalog();}
     long usageRevision(){return usageRevision;}
-    private Store(Context c) { super(c,"locky.db",null,5);context=c; settings=c.getSharedPreferences("locky-settings",0);if(!settings.contains("usage-excluded"))settings.edit().putStringSet("usage-excluded",new HashSet<>(Set.of("com.samsung.android.sidegesturepad"))).apply();setWriteAheadLoggingEnabled(true); }
+    private Store(Context c) { super(c,"locky.db",null,5);context=c; settings=c.getSharedPreferences("locky-settings",0);if(!settings.contains("usage-excluded"))settings.edit().putStringSet("usage-excluded",new HashSet<>(Set.of("com.samsung.android.sidegesturepad"))).apply();settings.registerOnSharedPreferenceChangeListener(gatePreferences);setWriteAheadLoggingEnabled(true); }
+    @Override public synchronized void close(){settings.unregisterOnSharedPreferenceChangeListener(gatePreferences);super.close();}
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE purposes(id TEXT PRIMARY KEY,label TEXT NOT NULL,pkg TEXT NOT NULL DEFAULT '',uri TEXT NOT NULL DEFAULT '',aimless INTEGER NOT NULL DEFAULT 0,scope TEXT NOT NULL DEFAULT '*')");
         db.execSQL("CREATE TABLE rules(pkg TEXT PRIMARY KEY,label TEXT NOT NULL,mode TEXT NOT NULL,minutes INTEGER NOT NULL)");
@@ -109,7 +144,7 @@ final class Store extends SQLiteOpenHelper {
     synchronized JSONArray rows(String sql,String...args) throws JSONException {
         JSONArray out=new JSONArray();try(Cursor c=getReadableDatabase().rawQuery(sql,args)) {while(c.moveToNext()){JSONObject o=new JSONObject();for(int i=0;i<c.getColumnCount();i++){int type=c.getType(i);o.put(c.getColumnName(i),type==Cursor.FIELD_TYPE_INTEGER?c.getLong(i):type==Cursor.FIELD_TYPE_NULL?JSONObject.NULL:c.getString(i));}out.put(o);}}return out;
     }
-    synchronized void put(String table,ContentValues values) { getWritableDatabase().insertWithOnConflict(table,null,values,SQLiteDatabase.CONFLICT_REPLACE); }
+    synchronized void put(String table,ContentValues values) { getWritableDatabase().insertWithOnConflict(table,null,values,SQLiteDatabase.CONFLICT_REPLACE);if(table.equals("purposes"))invalidatePurposes();else if(table.equals("rules"))invalidateGateCatalog();else if(table.equals("usage")){recordedUsageEnd=-1;++usageRevision;}else if(table.equals("screen_states"))++usageRevision; }
     synchronized long event(String kind,String purpose,String pkg,String target,long parent) {
         return event(kind,purpose,pkg,target,parent,false);
     }
@@ -117,22 +152,30 @@ final class Store extends SQLiteOpenHelper {
         ContentValues v=new ContentValues();v.put("aimless",aimless?1:0);v.put("time",System.currentTimeMillis());v.put("kind",kind);v.put("purpose",purpose);v.put("pkg",pkg);v.put("target",target);v.put("parent",parent);return getWritableDatabase().insertOrThrow("events",null,v);
     }
     synchronized void usage(long from,long to,String pkg,String label,boolean managed,long parent) {usage(from,to,pkg,label,managed,parent,"accessibility");}
-    synchronized void usage(long from,long to,String pkg,String label,boolean managed,long parent,String source) {
+    synchronized void usage(long from,long to,String pkg,String label,boolean managed,long parent,String source) {usage(from,to,pkg,label,managed,parent,source,false);}
+    // GuardService has already intersected this interval with ON evidence.
+    synchronized void observedUsage(long from,long to,String pkg,String label,boolean managed,long parent){usage(from,to,pkg,label,managed,parent,"accessibility",true);}
+    private void usage(long from,long to,String pkg,String label,boolean managed,long parent,String source,boolean observedActive) {
         if(to<=from||pkg.isEmpty()||UsageReader.excluded(context,pkg))return;
         // Accessibility observation owns a span. Recovery fills only uncovered gaps,
         // even when an overlay/system pause was recorded under another package.
         long cursor=from;List<long[]> gaps=new ArrayList<>();
         try {
-            JSONArray occupied=screenUsage(from,to);
-            for(int n=0;n<occupied.length();n++){JSONObject row=occupied.getJSONObject(n);long a=row.getLong("start"),b=row.getLong("end");if(a>cursor)gaps.add(new long[]{cursor,Math.min(a,to)});cursor=Math.max(cursor,b);if(cursor>=to)break;}
+            if(recordedUsageEnd<0)try(Cursor last=getReadableDatabase().rawQuery("SELECT MAX(end) FROM usage",null)){recordedUsageEnd=last.moveToFirst()?last.getLong(0):0;}
+            // A chronological append cannot overlap any recorded interval.
+            // Recovery/backdated writes still use the full overlap path.
+            if(from<recordedUsageEnd){JSONArray occupied=screenUsage(from,to);
+                for(int n=0;n<occupied.length();n++){JSONObject row=occupied.getJSONObject(n);long a=row.getLong("start"),b=row.getLong("end");if(a>cursor)gaps.add(new long[]{cursor,Math.min(a,to)});cursor=Math.max(cursor,b);if(cursor>=to)break;}}
         }catch(JSONException e){throw new IllegalStateException(e);}
         if(cursor<to)gaps.add(new long[]{cursor,to});
         String surface=pkg.equals(context.getPackageName())?"internal":"external";
         if(source.equals("accessibility")&&PhoneStartActivity.current()!=null&&PhoneStartActivity.current().allowsDictionary(pkg))surface="dictionary-tool";
-        ScreenHistory.Evidence evidence=ScreenHistory.read(context,from,to,ScreenHistory.UNKNOWN,true);
-        for(long[] gap:gaps)for(ScreenHistory.Span span:evidence.spans){long a=Math.max(gap[0],span.start),b=Math.min(gap[1],span.end);if(b>a&&span.state!=ScreenHistory.OFF)appendUsage(a,b,pkg,label,managed,parent,source,surface);}
+        if(observedActive){for(long[] gap:gaps)appendUsage(gap[0],gap[1],pkg,label,managed,parent,source,surface);}
+        else {ScreenHistory.Evidence evidence=ScreenHistory.read(context,from,to,ScreenHistory.UNKNOWN,true);
+            for(long[] gap:gaps)for(ScreenHistory.Span span:evidence.spans){long a=Math.max(gap[0],span.start),b=Math.min(gap[1],span.end);if(b>a&&span.state!=ScreenHistory.OFF)appendUsage(a,b,pkg,label,managed,parent,source,surface);}}
     }
     private void appendUsage(long from,long to,String pkg,String label,boolean managed,long parent,String source,String surface) {
+        recordedUsageEnd=Math.max(recordedUsageEnd,to);
         SQLiteDatabase d=getWritableDatabase();JSONObject policy=source.equals("accessibility")?rule(pkg):null;String mode=source.equals("accessibility")?(policy==null?"none":policy.optString("mode")):"unknown";
         try(Cursor c=d.rawQuery("SELECT id,end,pkg,label,managed,parent,source,rule_mode,surface FROM usage ORDER BY id DESC LIMIT 1",null)) {
             if(c.moveToFirst()&&c.getLong(1)==from&&pkg.equals(c.getString(2))&&label.equals(c.getString(3))&&c.getInt(4)==(managed?1:0)&&c.getLong(5)==parent&&source.equals(c.getString(6))&&mode.equals(c.getString(7))&&surface.equals(c.getString(8))){ContentValues update=new ContentValues();update.put("end",to);d.update("usage",update,"id=?",new String[]{""+c.getLong(0)});if(managed)++usageRevision;return;}
@@ -157,8 +200,11 @@ final class Store extends SQLiteOpenHelper {
     }
     JSONObject rule(String pkg) {try{JSONArray a=rows("SELECT * FROM rules WHERE pkg=?",pkg);return a.length()==0?null:a.getJSONObject(0);}catch(JSONException e){throw new IllegalStateException(e);} }
     synchronized JSONArray purposes(String scope) throws JSONException {
-        JSONArray rows=rows("SELECT * FROM purposes WHERE scope=? OR scope=? OR (scope='*' AND ?='phone') ORDER BY rowid",scope,scope.equals("phone")?"phone":"app",scope);Map<String,JSONObject> byId=new LinkedHashMap<>();for(int i=0;i<rows.length();i++)byId.put(rows.getJSONObject(i).getString("id"),rows.getJSONObject(i));
-        JSONArray out=new JSONArray();for(String id:Rules.shuffle(new ArrayList<>(byId.keySet()),LocalDate.now().toString(),scope))out.put(byId.get(id));return out;
+        String day=LocalDate.now().toString();if(!day.equals(purposeDay)){purposeDay=day;purposeOrders.clear();}
+        JSONArray cached=purposeOrders.get(scope);if(cached!=null)return cached;
+        JSONArray all=allPurposes();Map<String,JSONObject> byId=new LinkedHashMap<>();
+        for(int i=0;i<all.length();i++){JSONObject p=all.getJSONObject(i);String owner=p.optString("scope");if(owner.equals(scope)||owner.equals(scope.equals("phone")?"phone":"app")||(owner.equals("*")&&scope.equals("phone")))byId.put(p.getString("id"),p);}
+        JSONArray out=new JSONArray();for(String id:Rules.shuffle(new ArrayList<>(byId.keySet()),day,scope))out.put(byId.get(id));purposeOrders.put(scope,out);return out;
     }
     static JSONObject purposeData(JSONObject input,String scope) throws JSONException {
         String label=input.optString("label").trim();if(label.isEmpty()||label.length()>100)throw new JSONException("목적을 1~100자로 입력해 주세요.");

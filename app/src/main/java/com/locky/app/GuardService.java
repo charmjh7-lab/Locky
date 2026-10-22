@@ -62,6 +62,20 @@ public final class GuardService extends AccessibilityService {
     Boolean observedKeyguard;
     boolean overlayAttached,overlayAttachPending,overlayAttachFailed,overlayLayoutDirty;int overlayAttachRetries;Runnable overlayAttachRetry;long foregroundDetectedUptime,gateDetectedUptimeSeen;
     WebHost overlay;long gateTransition;WindowManager window;WindowManager.LayoutParams overlayLayout;final Set<String> systemPackages=new HashSet<>();
+    Store.GateCatalog preparedCatalog;boolean catalogWarming;
+    void warmGateCatalog(){
+        if(Looper.myLooper()!=Looper.getMainLooper()){main.post(this::warmGateCatalog);return;}
+        if(overlay==null||store.currentGateCatalog(preparedCatalog)||catalogWarming)return;
+        if(LockyApp.app==null){try{preparedCatalog=store.gateCatalog();overlay.installGateCatalog(preparedCatalog);}catch(JSONException e){throw new IllegalStateException(e);}return;}
+        catalogWarming=true;
+        LockyApp.app.backgroundWork.execute(()->{
+            Store.GateCatalog catalog=null;try{catalog=store.gateCatalog();}catch(JSONException e){android.util.Log.w("LockyGate","Purpose preparation failed");}
+            Store.GateCatalog result=catalog;
+            main.post(()->{catalogWarming=false;if(live!=this||overlay==null)return;
+                if(store.currentGateCatalog(result)){preparedCatalog=result;overlay.installGateCatalog(result);}
+                else if(result!=null)warmGateCatalog();});
+        });
+    }
     String homePackage="",homeClass="",launcherClass="";
     final Set<String> homeClasses=new HashSet<>();
     volatile boolean pulseScheduled;volatile long pulseCount;
@@ -72,8 +86,8 @@ public final class GuardService extends AccessibilityService {
         if(Intent.ACTION_SCREEN_OFF.equals(a))screenOff();
         else if(Intent.ACTION_USER_PRESENT.equals(a)||Intent.ACTION_SCREEN_ON.equals(a)){
             interactive=getSystemService(PowerManager.class).isInteractive();
-            beginScreenObservation();completeUnlock();
-        }else if(Intent.ACTION_TIME_CHANGED.equals(a)||Intent.ACTION_TIMEZONE_CHANGED.equals(a)){checkpoint();policyChanged();Scheduler.schedule(c);}
+            beginScreenObservation();warmGateCatalog();completeUnlock();
+        }else if(Intent.ACTION_TIME_CHANGED.equals(a)||Intent.ACTION_TIMEZONE_CHANGED.equals(a)||Intent.ACTION_DATE_CHANGED.equals(a)){checkpoint();policyChanged();Scheduler.schedule(c);}
     }};
     void screenOff(){
         if(!interactive&&phoneStart!=null&&phoneStart.awaitingUnlock()){WebHost.trace("duplicate screen-off ignored");return;}
@@ -106,7 +120,7 @@ public final class GuardService extends AccessibilityService {
         for(ResolveInfo candidate:getPackageManager().queryIntentActivities(homeIntent,PackageManager.MATCH_DEFAULT_ONLY))if(candidate.activityInfo.packageName.equals(homePackage))rememberHome(candidate.activityInfo);
         systemPackages.add("com.android.systemui");systemPackages.add("com.android.permissioncontroller");systemPackages.add("com.google.android.permissioncontroller");
         android.view.inputmethod.InputMethodManager ime=getSystemService(android.view.inputmethod.InputMethodManager.class);for(android.view.inputmethod.InputMethodInfo x:ime.getEnabledInputMethodList())systemPackages.add(x.getPackageName());
-        IntentFilter f=new IntentFilter();for(String a:new String[]{Intent.ACTION_SCREEN_OFF,Intent.ACTION_SCREEN_ON,Intent.ACTION_USER_PRESENT,Intent.ACTION_TIME_CHANGED,Intent.ACTION_TIMEZONE_CHANGED})f.addAction(a);
+        IntentFilter f=new IntentFilter();for(String a:new String[]{Intent.ACTION_SCREEN_OFF,Intent.ACTION_SCREEN_ON,Intent.ACTION_USER_PRESENT,Intent.ACTION_TIME_CHANGED,Intent.ACTION_TIMEZONE_CHANGED,Intent.ACTION_DATE_CHANGED})f.addAction(a);
         if(Build.VERSION.SDK_INT>=33)registerReceiver(screen,f,Context.RECEIVER_NOT_EXPORTED);else registerReceiver(screen,f);
         segmentWall=System.currentTimeMillis();segmentElapsed=SystemClock.elapsedRealtime();segmentUptime=SystemClock.uptimeMillis();
         beginScreenObservation();prepareAppGate();
@@ -273,7 +287,7 @@ public final class GuardService extends AccessibilityService {
     void restoreSession(String pkg){
         long now=System.currentTimeMillis(),elapsed=SystemClock.elapsedRealtime();
         pausedSessions.entrySet().removeIf(e->elapsed>e.getValue().until||now>=e.getValue().policyEnd);
-        PausedSession saved=pausedSessions.remove(pkg);JSONObject rule=store.rule(pkg);
+        PausedSession saved=pausedSessions.remove(pkg);if(saved==null)return;JSONObject rule=policyRule(pkg);
         if(saved==null||!store.managed(now)||rule==null||!"limited".equals(rule.optString("mode"))||dailyRemaining(pkg)<=0)return;
         sessionPkg=pkg;sessionRemaining=saved.remaining;sessionEvent=saved.event;purpose=saved.purpose;sessionPolicyEnd=saved.policyEnd;lastNotice=-1;
     }
@@ -291,7 +305,7 @@ public final class GuardService extends AccessibilityService {
             boolean currentActive=getSystemService(PowerManager.class).isInteractive()&&!keyguardLocked();
             if((suspended&&!evidence.hasInactive)||(!currentActive&&!evidence.hasStop&&!evidence.hasInactive))evidence=ScreenHistory.read(this,from,wall,ScreenHistory.UNKNOWN,false);
             long firstInactive=Long.MAX_VALUE;for(ScreenHistory.Span span:evidence.spans)if(span.state==ScreenHistory.OFF)firstInactive=Math.min(firstInactive,span.start);
-            for(long[] span:evidence.active()){if(span[0]>=firstInactive){clearSessions();cancelLinkedLaunch();charge=false;}long at=span[0],end=span[1];while(at<end){long boundary=Math.min(end,Math.min(Rules.nextDay(at,ZoneId.systemDefault()),Rules.nextBoundary(at,store.settings.getInt("start",540),store.settings.getInt("end",1260),ZoneId.systemDefault())));boolean managed=store.managed(at);store.usage(at,boundary,pkg,label,charge&&managed,charge?sessionEvent:phoneEvent);if(charge&&managed){sessionRemaining=Math.max(0,sessionRemaining-(boundary-at));invalidateGateBudget();}at=boundary;}}
+            for(long[] span:evidence.active()){if(span[0]>=firstInactive){clearSessions();cancelLinkedLaunch();charge=false;}long at=span[0],end=span[1];while(at<end){long boundary=Math.min(end,Math.min(Rules.nextDay(at,ZoneId.systemDefault()),Rules.nextBoundary(at,store.settings.getInt("start",540),store.settings.getInt("end",1260),ZoneId.systemDefault())));boolean managed=store.managed(at);store.observedUsage(at,boundary,pkg,label,charge&&managed,charge?sessionEvent:phoneEvent);if(charge&&managed){sessionRemaining=Math.max(0,sessionRemaining-(boundary-at));invalidateGateBudget();}at=boundary;}}
             if(firstInactive<wall){clearSessions();cancelLinkedLaunch();}
         }
         segmentWall=wall;segmentElapsed=elapsed;segmentUptime=SystemClock.uptimeMillis();store.settings.edit().putLong("checkpoint",wall).putString("last-package",foreground).putBoolean("checkpoint-interactive",interactive).apply();
@@ -386,6 +400,7 @@ public final class GuardService extends AccessibilityService {
         }
         prepareAppGateWindow();
         overlay.prepareOverlay();
+        warmGateCatalog();
     }
     void gateTrace(String event){UnlockDiagnostics.get(this).gateRecord(gateTransition,event);}
     void prepareAppGateWindow(){
@@ -480,10 +495,9 @@ public final class GuardService extends AccessibilityService {
         startActivity(launch);switchForeground(getPackageName());
     }
     JSONObject gatePayload() throws JSONException {
-        String scope=gatePkg.isEmpty()?"app":gatePkg;JSONObject rule=policyRule(gatePkg);
-        return new JSONObject().put("gateTransition",gateTransition).put("gateExposure","WAITING").put("gate",state()).put("prefs",store.preferences()).put("free",!store.managed(System.currentTimeMillis()))
-            .put("purposeDate",java.time.LocalDate.now().toString()).put("scope",scope).put("purposes",store.purposes(scope))
-            .put("allPurposes",store.rows("SELECT * FROM purposes ORDER BY rowid")).put("rules",rule==null?new JSONArray():new JSONArray().put(rule));
+        Store.GateCatalog catalog=store.gateCatalog();
+        return new JSONObject().put("gateTransition",gateTransition).put("gateExposure","WAITING").put("gate",state()).put("free",!store.managed(System.currentTimeMillis()))
+            .put("catalogVersion",catalog.revision).put("purposeDate",catalog.day).put("scope",gatePkg.isEmpty()?"app":gatePkg);
     }
     void showGate(String type,String pkg){
         boolean ownsRead=budgetReads.get()==null;if(ownsRead)budgetReads.set(new BudgetRead());
@@ -623,7 +637,7 @@ public final class GuardService extends AccessibilityService {
     void openMain(String screen){openMain(screen,"");}
     void openMain(String screen,String chatId){useUtility(screen.equals("chats")||screen.equals("chat")?"ChatGPT":screen.equals("notes")?"메모":"Locky");hideOverlay();Intent launch=MainActivity.launchIntent(this).putExtra("screen",screen).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);if("chat".equals(screen)&&!chatId.isEmpty())launch.putExtra("chat",chatId);startActivity(launch);}
     void launch(JSONObject p) throws Exception {String pkg=p.optString("pkg"),uri=p.optString("uri");if(pkg.isEmpty()&&uri.isEmpty())return;Intent i=Links.intent(this,pkg,uri);if(i==null)throw new IllegalStateException("연결한 앱이나 동작을 열 수 없습니다. 목적 연결을 확인해 주세요.");startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}
-    void policyChanged(){gateDailyUntil=0;main.post(()->{invalidateGateBudget();observeForeground(null);checkpoint();enforce();ensurePulse();if(overlayVisible&&overlay!=null)overlay.evaluate("refresh(true)");WebHost.refreshGeneralHosts();});}
+    void policyChanged(){gateDailyUntil=0;main.post(()->{invalidateGateBudget();warmGateCatalog();observeForeground(null);checkpoint();enforce();ensurePulse();if(overlayVisible&&overlay!=null)overlay.evaluate("refresh(true)");WebHost.refreshGeneralHosts();});}
     JSONObject state() throws JSONException {String pkg=overlayVisible?gatePkg:sessionPkg;return new JSONObject().put("mode",gate).put("pkg",pkg).put("label",UsageReader.label(this,pkg)).put("purpose",purpose).put("daily",dailyRemaining(pkg)).put("session",sessionRemaining).put("activePkg",sessionPkg).put("free",!store.managed(System.currentTimeMillis())).put("paused",systemPaused||foreground.equals(getPackageName())).put("visible",overlayVisible);}
     final Runnable lockCompletion=()->{
         if(!lockPending)return;
