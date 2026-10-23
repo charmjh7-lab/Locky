@@ -404,7 +404,7 @@ public final class GuardService extends AccessibilityService {
         ensureGateWindow();revealOverlay();
     }
     WindowManager.LayoutParams gateLayout(int type){
-        WindowManager.LayoutParams p=new WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.MATCH_PARENT,type,WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE|WindowManager.LayoutParams.FLAG_SECURE|WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,PixelFormat.OPAQUE);
+        WindowManager.LayoutParams p=new WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.MATCH_PARENT,type,WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE|WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,PixelFormat.OPAQUE);
         // The primary-display SAW stays touchable/nonfocusable across keyguard teardown.
         // Android keeps it below keyguard; GateSurface also rejects all locked/unready input.
         if(type==WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)p.flags&=~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
