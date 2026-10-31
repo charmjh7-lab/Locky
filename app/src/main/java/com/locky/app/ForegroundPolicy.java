@@ -18,14 +18,10 @@ final class ForegroundPolicy {
         if(best==null)return new Result("",false);
         return system.contains(best.pkg)?new Result("",true):new Result(best.pkg,false);
     }
-    // A new SystemUI/unknown window ID is not evidence of a user interrupt while
-    // keyguard is being removed. Focused permission/phone/system apps and explicit
-    // system actions still interrupt; after a stable app/touch boundary normal policy applies.
-    static boolean interruptUnlock(boolean unlocking,boolean explicit){return !unlocking||explicit;}
-    static boolean explicitSystemAction(String className){
-        String name=className.toLowerCase(Locale.ROOT);
-        return name.contains("notificationpanel")||name.contains("quicksettings")||name.contains("qscontainer")
-            ||name.contains("qsdetail")||name.contains("globalactions")||name.contains("volumedialog");
-    }
     private static int score(Window w){return w.focused?2:w.active?1:0;}
+    /** An actual app state event plus focused, active full window can bypass Overview settling. */
+    static boolean confirmedEntry(List<Window> windows,Result result,String eventPackage,boolean appStateEvent){
+        return appStateEvent&&!result.paused&&!result.pkg.isEmpty()&&result.pkg.equals(eventPackage)
+            &&windows.stream().anyMatch(w->w.type==1&&w.pkg.equals(result.pkg)&&w.focused&&w.active&&w.covering&&!w.pip);
+    }
 }

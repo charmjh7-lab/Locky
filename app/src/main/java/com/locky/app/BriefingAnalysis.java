@@ -7,14 +7,20 @@ import org.json.*;
 /** One fact-based analysis contract for screens, exports and notifications. No model calls. */
 final class BriefingAnalysis {
     static void addComparison(android.content.Context c,JSONObject result,int days) throws Exception {
+        addComparison(c,result,days,new Briefing.Request(c,System.currentTimeMillis(),ZoneId.systemDefault()));
+    }
+    static void addComparison(android.content.Context c,JSONObject result,int days,Briefing.Request request) throws Exception {
         if(!result.getBoolean("complete"))return;long start=result.getLong("start"),end=result.getLong("end");ZoneId z=ZoneId.systemDefault();
         LocalDate first=Instant.ofEpochMilli(start).atZone(z).toLocalDate();long prior=first.minusDays(days).atStartOfDay(z).toInstant().toEpochMilli();
-        JSONObject previous=Briefing.range(c,prior,start);result.put("previous",new JSONObject().put("available",previous.getJSONArray("timeline").length()>0).put("total",previous.getLong("total")).put("start",prior).put("end",start));
+        // Fix all seven local-date ranges before fetching any comparisons (including DST days).
+        List<LocalDate> dates=new ArrayList<>();List<long[]> ranges=new ArrayList<>();
+        if(days==1)for(int d=1;d<=7;d++){LocalDate date=first.minusDays(d);dates.add(date);ranges.add(new long[]{date.atStartOfDay(z).toInstant().toEpochMilli(),date.plusDays(1).atStartOfDay(z).toInstant().toEpochMilli()});}
+        JSONObject previous=request.range(prior,start);result.put("previous",new JSONObject().put("available",previous.getJSONArray("timeline").length()>0).put("total",previous.getLong("total")).put("start",prior).put("end",start));
         if(days!=1)return;
         JSONArray dayTotals=new JSONArray();Map<String,Long> sums=new HashMap<>();int comparable=0;long recentTotal=0,recentEvening=0;
-        for(int d=1;d<=7;d++){
-            LocalDate date=first.minusDays(d);long a=date.atStartOfDay(z).toInstant().toEpochMilli(),b=date.plusDays(1).atStartOfDay(z).toInstant().toEpochMilli();
-            JSONObject p=d==1?previous:Briefing.range(c,a,b);JSONObject focus=p.getJSONObject("focus");
+        for(int d=0;d<ranges.size();d++){
+            LocalDate date=dates.get(d);long[] range=ranges.get(d);
+            JSONObject p=request.range(range[0],range[1]);
             // Full schedule history and positive observation on at least five days; no zero-filled missing days.
             if(!p.getJSONObject("quality").optBoolean("comparisonEligible"))continue;
             comparable++;recentTotal+=p.getLong("total");recentEvening+=p.optLong("eveningMillis");dayTotals.put(new JSONObject().put("date",date.toString()).put("total",p.getLong("total")));

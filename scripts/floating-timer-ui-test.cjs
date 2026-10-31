@@ -1,3 +1,4 @@
+// Manual-only focused check; see README.md → Manual focused verification.
 const {chromium}=require('playwright');
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 (async()=>{

@@ -4,7 +4,7 @@ A lightweight personal Android app for intentional phone use. Android 8+; design
 
 ## Features
 
-- Accessibility overlay prepared on screen-off, visible after unlock; tools and purposes remain available during free time.
+- PhoneStartActivity prepared on screen-off behind the Android keyguard, visible after normal unlock; managed-app gates remain accessibility overlays. Tools and purposes remain available during free time.
 - Fixed-size inline notes and direct questions on the compact start screen; separate text/check notes with a single editor scroll and pinned actions; local ChatGPT conversation list, new chats and deletion.
 - Official Continue with ChatGPT: system browser, loopback callback, PKCE, state, nonce, signature/issuer/audience validation, Android Keystore encrypted credentials; account-specific models and streaming Responses API.
 - Dictionary searches preserve the same start view and drafts behind popup dictionaries and restore it after full dictionary/chooser return. Remembered dictionary selection: explicit Android word processing activity, Samsung dictionary or Naver dictionary. Samsung's external search intent is not a stable API: the app may open at its home rather than prefill the word.
@@ -24,16 +24,26 @@ Briefing shows the ongoing day separately from completed dates and focus-window 
 
 ## Real platform limits
 
-This is a voluntary self-management app, not device-owner kiosk software. Disabling accessibility, force-stopping or uninstalling it can stop enforcement. Calls, system settings, keyboard and critical system UI are not blocked. Overlays cover a selected app and prevent using it; Locky does not kill its process. Launcher/system transitions, manufacturer service suspension and multi-window behavior require real-device checks. Screen-off preloading minimizes a flash after unlock, but Android/OEM scheduling cannot guarantee zero frames of the underlying app. Usage access recovers gaps when available; purposes are not invented for those gaps. Notification permission/Do Not Disturb and Doze can delay alerts; exact alarm permission improves scheduled transitions.
+This is a voluntary self-management app, not device-owner kiosk software. Disabling accessibility, force-stopping or uninstalling it can stop enforcement. Calls, system settings, keyboard and critical system UI are not blocked. Overlays cover a selected app and prevent using it; Locky does not kill its process. Launcher/system transitions, manufacturer service suspension and multi-window behavior require real-device checks. Screen-off Activity preparation uses the system-bound accessibility service. A single recovery request at confirmed unlock handles a preparation without lifecycle acknowledgement; Android/OEM background-launch policy and visual transitions still require real-device checks. Usage access recovers gaps when available; purposes are not invented for those gaps. Notification permission/Do Not Disturb and Doze can delay alerts; exact alarm permission improves scheduled transitions.
 
 ChatGPT integration follows the official personal/local-client OAuth documentation. It does not import conversations from ChatGPT. Connection and account quota require the user's actual approval on the device. No API key or subscription token is included in this repository. All local history is retained, and completed history is sent to maintain context; long chats can increase input usage.
 
 ## Build and release
 
-Version 1.1.0 (`versionCode 2`) upgrades the original signed installation without deleting records, notes, chats or purposes.
+The app version is defined by `versionName` and `versionCode` in `app/build.gradle`. Release titles read the generated APK's actual `versionName`; the PhoneStart branch remains a prerelease. The package and personal signing key stay unchanged, preserving updates and existing records, notes, chats and purposes.
 
 JDK 21 (required by Android 16 JVM tests), Gradle 8.11.1, Android SDK 36. Java source/target compatibility and targetSdk remain 17 and 35 respectively. `gradle :app:testDebugUnitTest :app:lintDebug :app:assembleRelease`.
 
-GitHub Actions runs JVM policy tests, browser interaction checks, Android integration tests and APK/signature verification before publishing `Locky.apk` directly to Releases. No APK Actions artifacts are uploaded. Latest **three successful `locky-build-*` releases** are kept; cleanup happens only after the new APK is verified and uploaded. Unrelated/manual releases are not touched. The fixed personal signing key is committed for reproducible personal builds; it is not a Play production signing key. Keep the key unchanged for future updates.
+GitHub Actions runs JVM policy tests, browser interaction checks, Android integration tests and APK/signature verification before publishing `Locky.apk` directly to Releases. No APK Actions artifacts are uploaded. UI comparison captures are uploaded only as artifacts of their own Actions run (`distribution/ui-*.png`, retained for 14 days). Latest **three successful `locky-build-*` releases** are kept; cleanup happens only after the new APK is verified and uploaded. Unrelated/manual releases are not touched. The fixed personal signing key is committed for reproducible personal builds; it is not a Play production signing key. Keep the key unchanged for future updates.
 
 Sources: https://developers.openai.com/siwc/token-sharing-open-source/sign-in and https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference . Authentication helpers adapted from the user's Ailey Android project, with separate app identity/storage.
+
+### Manual focused verification
+
+These scripts are retained for manual browser checks and are not part of the automatic Actions test list:
+
+- `node scripts/briefing-navigation-test.cjs`: briefing navigation and stored date/window targets.
+- `node scripts/floating-timer-ui-test.cjs`: floating timer settings UI; native timer behavior is covered by the focused JVM interaction tests.
+- `node scripts/start-return-ui-test.cjs`: returning to the start screen from notes and ChatGPT.
+
+Use the repository root with Playwright and Chromium installed (`npm install --no-save --package-lock=false playwright`, `npx playwright install chromium`). Run only the script relevant to the change.

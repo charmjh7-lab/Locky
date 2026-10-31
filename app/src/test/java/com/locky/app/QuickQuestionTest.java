@@ -46,8 +46,8 @@ public class QuickQuestionTest {
     }
     @Test public void upgradingVersionTwoRetainsExistingHistoryAndDeletedChatsCannotResurrect() throws Exception {
         String old=store.newChat();store.appendTurn(old,"기존 대화");
-        // Recreate the real v2 schema, rather than only relabel a v4 database.
-        for(String table:new String[]{"focus_config_history","briefing_results","briefing_delivery","service_observations","quick_requests"})store.getWritableDatabase().execSQL("DROP TABLE "+table);
+        // Recreate the real v2 schema, including removal of post-v2 screen evidence.
+        for(String table:new String[]{"focus_config_history","briefing_results","briefing_delivery","service_observations","quick_requests","screen_states"})store.getWritableDatabase().execSQL("DROP TABLE "+table);
         store.getWritableDatabase().execSQL("ALTER TABLE usage DROP COLUMN source");store.getWritableDatabase().execSQL("ALTER TABLE usage DROP COLUMN rule_mode");store.getWritableDatabase().execSQL("ALTER TABLE usage DROP COLUMN surface");store.getWritableDatabase().setVersion(2);store.close();Store.instance=null;
         store=Store.get(RuntimeEnvironment.getApplication());assertEquals(2,store.messages(old).length());assertEquals(0,store.rows("SELECT * FROM quick_requests").length());
         engine=new ChatEngine(RuntimeEnvironment.getApplication(),null,responses::add);
@@ -55,4 +55,15 @@ public class QuickQuestionTest {
         try{engine.quickSend(request,"삭제한 질문","test",false);fail();}catch(java.io.IOException expected){}
         assertEquals(0,store.rows("SELECT * FROM chats WHERE id=?",request).length());
     }
+
+    @Test public void deletingChatRemovesItsRequestAndCleanupKeepsLiveRetries() throws Exception {
+        Store s=Store.get(RuntimeEnvironment.getApplication());
+        String deleted=java.util.UUID.randomUUID().toString(),live=java.util.UUID.randomUUID().toString();
+        s.acceptQuickQuestion(deleted,"delete");s.acceptQuickQuestion(live,"keep");s.deleteChat(deleted);
+        assertEquals(0,s.rows("SELECT * FROM quick_requests WHERE chat=?",deleted).length());
+        assertEquals(0,s.rows("SELECT * FROM messages WHERE chat=?",deleted).length());
+        s.getWritableDatabase().execSQL("INSERT INTO quick_requests VALUES('orphan','missing',0,0)");s.cleanOldUsage();
+        assertEquals(1,s.rows("SELECT * FROM quick_requests").length());assertNotNull(s.quickRequest(live,"keep"));
+    }
+
 }

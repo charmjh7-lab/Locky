@@ -26,7 +26,9 @@ final class UsageReader {
                 if(!pkg.equals(next)){if(at>=start)add(out,pkg,since,Math.min(end,at));pkg=next==null?"":next;since=Math.max(start,at);}
             }else if(t==UsageEvents.Event.ACTIVITY_PAUSED&&pkg.equals(next)){if(at>=start)add(out,pkg,since,Math.min(end,at));pkg="";}
         }
-        if(visible)add(out,pkg,since,end);return out;
+        if(visible)add(out,pkg,since,end);
+        JSONArray active=new JSONArray();ScreenHistory.Evidence evidence=ScreenHistory.read(c,start,end,ScreenHistory.UNKNOWN,true);
+        for(int n=0;n<out.length();n++){JSONObject row=out.getJSONObject(n);for(long[] span:evidence.active())add(active,row.getString("pkg"),Math.max(row.getLong("start"),span[0]),Math.min(row.getLong("end"),span[1]));}return active;
     }
     static String home(Context c){ResolveInfo h=c.getPackageManager().resolveActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),PackageManager.MATCH_DEFAULT_ONLY);return h==null?"":h.activityInfo.packageName;}
     static boolean excluded(Context c,String pkg){

@@ -58,17 +58,12 @@ final class Links {
     static void dictionary(Context c,String word) throws Exception {
         String choice=Store.get(c).settings.getString("dictionary","");Intent i=choice.isEmpty()?null:dictionaryIntent(c,choice,word);
         if(i==null){Store.get(c).settings.edit().remove("dictionary").apply();throw new ActivityNotFoundException("사전을 다시 선택해 주세요.");}
-        // Daum's popup must retain its isolated task flags; startActivityForResult
-        // cannot be combined with NEW_TASK (Android immediately cancels its result).
-        if(c instanceof DictionaryActivity && isolatedDaumPopup(i)) {
-            // The service launch path is the one that displayed Daum's mini
-            // dictionary correctly before the intermediate Activity regression.
-            GuardService guard=((DictionaryActivity)c).guard;
-            if(guard==null)throw new ActivityNotFoundException("로키 접근성 서비스를 확인해 주세요.");
-            guard.startActivity(i.addFlags(dictionaryFlags(i)));
-        } else if(c instanceof DictionaryActivity) {
-            ((Activity)c).startActivityForResult(i,DictionaryActivity.REQUEST);
-        } else c.startActivity(i.addFlags(dictionaryFlags(i)));
+        if(c instanceof PhoneStartActivity){
+            // Keep Daum's proven isolated mini-popup invocation. The Activity retains
+            // its own WebView throughout; no handoff/frozen cover is necessary.
+            if(isolatedDaumPopup(i)&&GuardService.live!=null)GuardService.live.startActivity(i.addFlags(dictionaryFlags(i)));
+            else if(isolatedDaumPopup(i))c.startActivity(i.addFlags(dictionaryFlags(i)));
+            else c.startActivity(i); // Return to the existing caller, including PROCESS_TEXT.
+        }else c.startActivity(i.addFlags(dictionaryFlags(i)));
     }
 }
-

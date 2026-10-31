@@ -2,4 +2,4 @@
 <string name="app_name">Locky</string>
 <string name="service_name">Locky · 의식적인 사용</string>
 <string name="service_description">잠금 해제 첫 화면과 선택한 앱의 사용 시간 관리를 위해 앱 전환을 확인하고 안내 화면을 표시합니다. 화면의 글·메시지·비밀번호를 읽거나 수집하지 않습니다. 사용 기록은 기기에 저장됩니다. 원할 때 이 설정에서 끌 수 있습니다.</string>
-</resources>
+<string name="note_widget_description">메모와 체크리스트를 확인하는 크기 조절형 위젯</string></resources>

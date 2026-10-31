@@ -81,31 +81,8 @@ const briefing={days:1,date:'2026-10-14',start:1,total:660000,unlocks:2,aimless:
  assert.equal(await page.locator('#themeMode').inputValue(),'dark');
  await page.locator('#themeMode').selectOption('system');
  await page.waitForFunction(()=>fixture.prefs.themeMode==='system');
- await page.setViewportSize({width:320,height:560});
- await page.evaluate(()=>{state.allPurposes=Array.from({length:30},(_,i)=>({id:'long'+i,label:'긴 목적 '+i,scope:'app'}));screen='app';render();});
- await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
- assert(await page.locator('.more-reasons').isVisible());
- assert((await page.locator('.start-purposes').boundingBox()).y+(await page.locator('.start-purposes').boundingBox()).height<=(await page.locator('.start-footer').boundingBox()).y+1);
- await page.locator('.more-reasons').click();assert.equal(await page.locator('#sheet [data-purpose]').count(),30);await page.locator('[data-act=closeSheet]').click();
+ // Managed-app UI is native; AppGateViewTest and GateRestoreTest cover its layouts and grants.
  await page.setViewportSize({width:390,height:780});
- await page.evaluate(({phone,app})=>{state.allPurposes=[...phone.slice(0,3),...app];screen='app';minutes=5;render();},{phone,app});
- await page.evaluate(()=>new Promise(r=>requestAnimationFrame(r)));
- assert.equal(await page.locator('#startApp').count(),0);assert.equal(await page.locator('.minutes .selected').innerText(),'5');
- assert((await page.locator('.duration').boundingBox()).y<(await page.locator('.start-purposes').boundingBox()).y);
- await page.locator('[data-min="9"]').click();
- await page.evaluate(()=>Promise.all([choosePurpose('a1'),choosePurpose('a1')]));
- let grants=await page.evaluate(()=>calls.filter(c=>c.action==='grant'));assert.equal(grants.length,1);assert.deepEqual(grants[0].args,{id:'a1',minutes:9});
- await page.evaluate(()=>{window.failGrant=true;});await page.locator('[data-purpose="a2"]').click();
- await page.waitForFunction(()=>document.querySelector('#toast').textContent.includes('앱이 바뀌었습니다'));
- assert.equal(await page.locator('[data-purpose="a2"]').isDisabled(),false);
- await page.locator('[data-purpose="a2"]').click();await page.waitForFunction(()=>calls.filter(c=>c.action==='grant').length===3);
- // Direct input uses the already chosen duration and starts without a second confirmation screen.
- await page.locator('[data-act="direct"]').click();await page.locator('#purposeLabel').fill('직접 입력 목적');await page.locator('#savePurpose').click();
- await page.waitForFunction(()=>calls.some(c=>c.action==='grant'&&c.args.id.startsWith('custom')));
- grants=await page.evaluate(()=>calls.filter(c=>c.action==='grant'));assert.equal(grants.at(-1).args.minutes,9);
- assert.equal(await page.locator('#sheet .sheet').count(),0);
- await page.evaluate(()=>{screen='renew';render();});assert.equal(await page.locator('[data-act=extend]').count(),1);
- await page.locator('[data-act=extend]').click();assert((await page.evaluate(()=>calls)).some(c=>c.action==='extend'));
  // Briefing defaults and independent icon-only sorting work without fetching again.
  await page.evaluate(()=>navigate('brief'));await page.locator('[data-brief-sort=apps]').waitFor();
  assert.equal(await page.locator('.usage-row strong').first().innerText(),'많이 사용');
@@ -157,12 +134,12 @@ const briefing={days:1,date:'2026-10-14',start:1,total:660000,unlocks:2,aimless:
  await page.evaluate(()=>{document.querySelector('#app').innerHTML=chatBody('<img src=x onerror=alert(1)>',{},'unsafe');});assert.equal(await page.locator('#app img').count(),0);
  if(process.env.LOCKY_UI_EVIDENCE_DIR){
   fs.mkdirSync(process.env.LOCKY_UI_EVIDENCE_DIR,{recursive:true});
-  for(const name of ['home','app','brief']){
+  for(const name of ['home','brief']){
    await page.evaluate(name=>{document.querySelector('#toast').style.display='none';screen=name;state=fixture;render();if(name==='brief')renderBrief(briefing);},name);
    await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
    await page.screenshot({path:path.join(process.env.LOCKY_UI_EVIDENCE_DIR,name+'.png'),fullPage:true});
   }
  }
- assert.deepEqual(errors,[]);console.log('UI revisions passed: 17 layouts, immediate/default/custom purpose grants, double-tap/error recovery, independent briefing sort, domain/marker deduplication and source disclosure links.');
+ assert.deepEqual(errors,[]);console.log('UI revisions passed: 17 layouts, independent briefing sort, domain/marker deduplication and source disclosure links.');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

@@ -23,7 +23,11 @@ public class SessionReturnTest {
     @Before public void setup() throws Exception {
         Store.instance=null;LockyApp.app=new LockyApp();
         g=Robolectric.buildService(GuardService.class).create().get();GuardService.live=g;
-        g.store=Store.get(g);g.store.settings.edit().clear().putBoolean("enabled",true).putInt("start",0).putInt("end",0).commit();g.wasManaged=true;g.interactive=true;g.homePackage="launcher";
+        g.store=Store.get(g);
+        // A valid near-full-day focus period, with its next boundary safely beyond
+        // this suite's five-minute session return scenarios (including midnight).
+        int minute=Rules.minute(System.currentTimeMillis(),java.time.ZoneId.systemDefault());
+        g.store.settings.edit().clear().putBoolean("enabled",true).putInt("start",(minute+60)%1440).putInt("end",(minute+59)%1440).commit();g.wasManaged=true;g.interactive=true;g.homePackage="launcher";
         for(String pkg:new String[]{"app.video","app.social"}){ContentValues v=new ContentValues();v.put("pkg",pkg);v.put("label",pkg);v.put("mode","limited");v.put("minutes",60);g.store.put("rules",v);}
         g.window=(WindowManager)Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{WindowManager.class},(p,m,a)->null);
         Notices.channels(g);g.foreground=g.sessionPkg="app.video";g.purpose="영상 한 편";g.sessionRemaining=180000;

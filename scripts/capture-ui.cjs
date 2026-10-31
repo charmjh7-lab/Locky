@@ -48,7 +48,7 @@ async function snap(browser,version,screen,theme,width,height,name){
   },{data:fixture,target:screen,theme,brief:briefing});
   await page.waitForTimeout(140);
   assert.deepEqual(errors,[],'JavaScript console failures '+name);
-  if(screen==='home'||screen==='app'){
+  if(screen==='home'){
    const r=await page.evaluate(()=>{const rect=s=>document.querySelector(s)?.getBoundingClientRect();
     const footer=rect('.start-footer'),area=rect('.start-purposes'),dismiss=rect('.dismiss'),direct=rect('[data-act=direct]');
     return {footerTop:footer.top,footerBottom:footer.bottom,areaBottom:area.bottom,dismissBottom:dismiss.bottom,
@@ -73,8 +73,6 @@ async function snap(browser,version,screen,theme,width,height,name){
    ['after','home','light',390,780,'ui-after-home-light'],
    ['after','home','dark',390,780,'ui-after-home-dark'],
    ['after','home','light',320,560,'ui-after-home-small'],
-   ['before','app','light',390,780,'ui-before-app'],
-   ['after','app','light',390,780,'ui-after-app'],
    ['before','settings','light',390,780,'ui-before-settings'],
    ['after','settings','light',390,780,'ui-after-settings'],
    ['before','brief','light',390,780,'ui-before-brief'],

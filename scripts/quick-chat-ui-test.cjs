@@ -1,13 +1,13 @@
 const {chromium}=require('playwright');
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 (async()=>{
- const browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,args:['--no-sandbox','--no-zygote','--single-process']}:{})});
+ const browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?{executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,args:['--no-sandbox']}:{})});
  try{
   const page=await browser.newPage({viewport:{width:390,height:780}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.setContent('<html><head><style>'+fs.readFileSync(path.join(__dirname,'../app/src/main/assets/style.css'),'utf8')+'</style></head><body><div id="app"></div><div id="sheet"></div><div id="toast"></div></body></html>');
   await page.addScriptTag({content:fs.readFileSync(path.join(__dirname,'../app/src/main/assets/app.js'),'utf8')});
   await page.evaluate(()=>{
-   window.fixture={overlay:true,prefs:{model:'test',enabled:true,start:540,end:1260},status:{accessibility:true},gate:{mode:'unlock'},allPurposes:[{id:'p',label:'목적',scope:'phone'}],notes:[{id:'n',title:'메모',body:'보존할 메모',mode:'text'}],chats:[],accounts:[{active:true,connected:true}],models:[],connection:{},rules:[],busy:false};
+   window.fixture={role:'PHONE_START',overlay:false,prefs:{model:'test',enabled:true,start:540,end:1260},status:{accessibility:true},gate:{mode:'unlock'},allPurposes:[{id:'p',label:'목적',scope:'phone'}],notes:[{id:'n',title:'메모',body:'보존할 메모',mode:'text'}],chats:[],accounts:[{active:true,connected:true}],models:[],connection:{},rules:[],busy:false};
    window.calls=[];window.pending=[];window.rows={};window.holdMemo=true;
    window.Native={request:(id,action,raw)=>{const a=JSON.parse(raw);calls.push({id,action,args:a});if(id==='0')return;
     if(action==='quickSend'){pending.push({id,args:a});return;}if(action==='saveNote'&&holdMemo){window.memoRequest=id;return;}

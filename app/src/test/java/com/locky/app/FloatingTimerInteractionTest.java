@@ -30,6 +30,7 @@ import static org.junit.Assert.*;
 @Config(application=Application.class,sdk=35)
 public class FloatingTimerInteractionTest {
     GuardService g;FloatingTimer timer;WindowManager window;Rect screen;long session;
+    int metricsReads;
     int dp(int n){return Math.round(n*g.getResources().getDisplayMetrics().density);}
     @Before public void setup() throws Exception {
         Store.instance=null;LockyApp.app=new LockyApp();
@@ -40,10 +41,10 @@ public class FloatingTimerInteractionTest {
         session=g.sessionEvent=g.store.event("app",g.purpose,g.sessionPkg,"",0);g.sessionPolicyEnd=g.policyEnd(System.currentTimeMillis());resetClock();Notices.channels(g);
         screen=new Rect(0,0,dp(390),dp(780));
         window=(WindowManager)Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{WindowManager.class},(p,m,a)->{
-            if(m.getName().equals("getCurrentWindowMetrics"))return new WindowMetrics(new Rect(screen),new WindowInsets.Builder()
+            if(m.getName().equals("getCurrentWindowMetrics")){metricsReads++;return new WindowMetrics(new Rect(screen),new WindowInsets.Builder()
                 .setInsetsIgnoringVisibility(WindowInsets.Type.systemBars(),android.graphics.Insets.of(0,dp(24),0,dp(24)))
                 .setInsets(WindowInsets.Type.systemBars(),android.graphics.Insets.of(0,dp(24),0,dp(24)))
-                .setVisible(WindowInsets.Type.systemBars(),true).build());
+                .setVisible(WindowInsets.Type.systemBars(),true).build());}
             return null;
         });
         timer=new FloatingTimer(g,window);g.floatingTimer=timer;g.syncFloatingTimer();
@@ -64,7 +65,8 @@ public class FloatingTimerInteractionTest {
         assertTrue((timer.panelLayout.flags&WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)!=0);
         assertTrue((timer.panelLayout.flags&WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)!=0);
         // Touching the panel is still use of the foreground app, with the same event.
-        g.segmentWall=System.currentTimeMillis()-2000;g.segmentElapsed=SystemClock.elapsedRealtime()-2000;g.checkpoint();g.syncFloatingTimer();
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(Duration.ofSeconds(2));
+        g.segmentWall=System.currentTimeMillis()-2000;g.segmentElapsed=SystemClock.elapsedRealtime()-2000;g.segmentUptime=SystemClock.uptimeMillis()-2000;g.checkpoint();g.syncFloatingTimer();
         assertEquals("04:30",timer.sessionTime.getText().toString());assertEquals("59:58",timer.dailyTime.getText().toString());assertFalse(g.overlayVisible);assertEquals("user.video",g.foreground);
         motion(timer.panel,MotionEvent.ACTION_OUTSIDE,0,0,SystemClock.uptimeMillis());assertNull(timer.panel);assertNotNull(timer.root);
         assertEquals(session,g.sessionEvent);assertEquals(1,g.store.rows("SELECT id FROM events WHERE kind='app'").length());
@@ -83,24 +85,64 @@ public class FloatingTimerInteractionTest {
         timer.hide();timer=new FloatingTimer(g,window);g.floatingTimer=timer;g.syncFloatingTimer();
         assertEquals(timer.safe.left,timer.timerLayout.x);assertEquals(timer.safe.bottom-timer.timerLayout.height,timer.timerLayout.y);assertEquals(session,g.sessionEvent);
     }
-    @Test public void swipeAndCancelledDragDoNotSaveOrOpen(){
-        int x=timer.timerLayout.x,y=timer.timerLayout.y;long now=SystemClock.uptimeMillis();
-        motion(timer.root,MotionEvent.ACTION_DOWN,40,20,now);motion(timer.root,MotionEvent.ACTION_MOVE,150,120,now+10);
-        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout()+1));assertFalse(timer.dragging);
-        motion(timer.root,MotionEvent.ACTION_UP,150,120,SystemClock.uptimeMillis());assertNull(timer.panel);assertEquals(x,timer.timerLayout.x);
-        drag(-10000,10000,false);assertEquals(x,timer.timerLayout.x);assertEquals(y,timer.timerLayout.y);assertFalse(g.store.settings.contains(timer.positionKey+".x"));
+    void temporaryDrag(){
+        long now=SystemClock.uptimeMillis();motion(timer.root,MotionEvent.ACTION_DOWN,40,20,now);
+        motion(timer.root,MotionEvent.ACTION_MOVE,-60,120,now+10);
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout()+1));
+        assertEquals(FloatingTimer.MoveMode.TEMP_DRAG,timer.moveMode);
+        motion(timer.root,MotionEvent.ACTION_UP,-60,120,SystemClock.uptimeMillis());
+    }
+    @Test public void ordinaryDragStaysTemporaryThroughPlacementThenOutsideTouchReturns(){
+        int x=timer.timerLayout.x,y=timer.timerLayout.y;temporaryDrag();
+        assertEquals(FloatingTimer.MoveMode.TEMPORARY,timer.moveMode);assertNull(timer.panel);assertNotEquals(x,timer.timerLayout.x);
+        int temporaryX=timer.timerLayout.x,temporaryY=timer.timerLayout.y;
+        timer.placeTimer();g.sessionRemaining=6500000;g.syncFloatingTimer();timer.placeTimer();
+        assertEquals(temporaryX,timer.timerLayout.x);assertEquals(temporaryY,timer.timerLayout.y);
+        assertFalse(g.store.settings.contains(timer.positionKey+".x"));
+        assertTrue((timer.timerLayout.flags&WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)!=0);
+        assertTrue((timer.timerLayout.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)!=0);
+        assertEquals(0,timer.timerLayout.flags&WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+        motion(timer.root,MotionEvent.ACTION_OUTSIDE,0,0,SystemClock.uptimeMillis());
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(199));assertEquals(temporaryX,timer.timerLayout.x);
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(400));
+        assertEquals(FloatingTimer.MoveMode.IDLE,timer.moveMode);assertEquals(timer.safe.right-timer.timerLayout.width,timer.timerLayout.x);assertEquals(y,timer.timerLayout.y);
+        assertFalse(g.store.settings.contains(timer.positionKey+".x"));
+    }
+    @Test public void cancelledDragAndLongPressWithoutMovementDoNotSave(){
+        int x=timer.timerLayout.x,y=timer.timerLayout.y;drag(-10000,10000,false);
+        assertEquals(x,timer.timerLayout.x);assertEquals(y,timer.timerLayout.y);assertFalse(g.store.settings.contains(timer.positionKey+".x"));
+        long now=SystemClock.uptimeMillis();motion(timer.root,MotionEvent.ACTION_DOWN,40,20,now);
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout()+1));
+        motion(timer.root,MotionEvent.ACTION_UP,40,20,SystemClock.uptimeMillis());assertFalse(g.store.settings.contains(timer.positionKey+".x"));assertNull(timer.panel);
+    }
+    @Test public void tapOnTemporaryTimerKeepsPositionAndNewDragCancelsReturn(){
+        temporaryDrag();int x=timer.timerLayout.x,y=timer.timerLayout.y;tap();assertNotNull(timer.panel);
+        assertEquals(x,timer.timerLayout.x);assertEquals(y,timer.timerLayout.y);timer.collapse();
+        motion(timer.root,MotionEvent.ACTION_OUTSIDE,0,0,SystemClock.uptimeMillis());
+        long now=SystemClock.uptimeMillis();motion(timer.root,MotionEvent.ACTION_DOWN,40,20,now);
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(400));assertEquals(x,timer.timerLayout.x);
+        motion(timer.root,MotionEvent.ACTION_CANCEL,40,20,SystemClock.uptimeMillis());assertEquals(FloatingTimer.MoveMode.IDLE,timer.moveMode);
+    }
+    @Test public void hideSessionChangeAndResizeCancelPendingReturn(){
+        temporaryDrag();motion(timer.root,MotionEvent.ACTION_OUTSIDE,0,0,SystemClock.uptimeMillis());timer.hide();g.syncFloatingTimer();
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500));assertEquals(FloatingTimer.MoveMode.IDLE,timer.moveMode);
+        temporaryDrag();motion(timer.root,MotionEvent.ACTION_OUTSIDE,0,0,SystemClock.uptimeMillis());
+        timer.update(true,g.sessionPkg,session+1,"새 세션",g.purpose,g.sessionRemaining,100000);
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500));assertEquals(FloatingTimer.MoveMode.IDLE,timer.moveMode);assertEquals(timer.safe.right-timer.timerLayout.width,timer.timerLayout.x);
+        temporaryDrag();motion(timer.root,MotionEvent.ACTION_OUTSIDE,0,0,SystemClock.uptimeMillis());screen=new Rect(0,0,dp(780),dp(390));timer.placeTimer();
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500));assertEquals(FloatingTimer.MoveMode.IDLE,timer.moveMode);assertEquals(timer.safe.top,timer.timerLayout.y);
     }
     @Test public void foldAndRotateUseIndependentPositionsAndResizingStaysOnScreen(){
         drag(-10000,10000,true);String cover=timer.positionKey;
-        screen=new Rect(0,0,dp(820),dp(1000));g.syncFloatingTimer();assertNotEquals(cover,timer.positionKey);assertEquals(timer.safe.right-timer.timerLayout.width,timer.timerLayout.x);assertEquals(timer.safe.top,timer.timerLayout.y);
+        screen=new Rect(0,0,dp(820),dp(1000));timer.placeTimer();g.syncFloatingTimer();assertNotEquals(cover,timer.positionKey);assertEquals(timer.safe.right-timer.timerLayout.width,timer.timerLayout.x);assertEquals(timer.safe.top,timer.timerLayout.y);
         drag(-10000,0,true);String inner=timer.positionKey;
-        screen=new Rect(0,0,dp(1000),dp(820));g.syncFloatingTimer();assertNotEquals(inner,timer.positionKey);assertEquals(timer.safe.right-timer.timerLayout.width,timer.timerLayout.x);
-        screen=new Rect(0,0,dp(820),dp(1000));g.syncFloatingTimer();assertEquals(timer.safe.left,timer.timerLayout.x);assertEquals(timer.safe.top,timer.timerLayout.y);
-        screen=new Rect(0,0,dp(390),dp(780));g.syncFloatingTimer();assertEquals(cover,timer.positionKey);assertEquals(timer.safe.left,timer.timerLayout.x);assertEquals(timer.safe.bottom-timer.timerLayout.height,timer.timerLayout.y);
-        screen=new Rect(0,0,dp(340),dp(620));g.syncFloatingTimer();assertTrue(timer.safe.contains(new Rect(timer.timerLayout.x,timer.timerLayout.y,timer.timerLayout.x+timer.timerLayout.width,timer.timerLayout.y+timer.timerLayout.height)));
+        screen=new Rect(0,0,dp(1000),dp(820));timer.placeTimer();g.syncFloatingTimer();assertNotEquals(inner,timer.positionKey);assertEquals(timer.safe.right-timer.timerLayout.width,timer.timerLayout.x);
+        screen=new Rect(0,0,dp(820),dp(1000));timer.placeTimer();g.syncFloatingTimer();assertEquals(timer.safe.left,timer.timerLayout.x);assertEquals(timer.safe.top,timer.timerLayout.y);
+        screen=new Rect(0,0,dp(390),dp(780));timer.placeTimer();g.syncFloatingTimer();assertEquals(cover,timer.positionKey);assertEquals(timer.safe.left,timer.timerLayout.x);assertEquals(timer.safe.bottom-timer.timerLayout.height,timer.timerLayout.y);
+        screen=new Rect(0,0,dp(340),dp(620));timer.placeTimer();g.syncFloatingTimer();assertTrue(timer.safe.contains(new Rect(timer.timerLayout.x,timer.timerLayout.y,timer.timerLayout.x+timer.timerLayout.width,timer.timerLayout.y+timer.timerLayout.height)));
     }
     @Test public void panelFitsShortScreenAndKeepsActionsVisibleWithLongPurpose(){
-        g.purpose="긴 사용 목적을 화면 크기와 관계없이 확인합니다. ".repeat(30);screen=new Rect(0,0,dp(390),dp(300));g.syncFloatingTimer();tap();
+        g.purpose="긴 사용 목적을 화면 크기와 관계없이 확인합니다. ".repeat(30);screen=new Rect(0,0,dp(390),dp(300));timer.placeTimer();g.syncFloatingTimer();tap();
         assertNotNull(timer.panel);WindowManager.LayoutParams p=timer.panelLayout;assertTrue(timer.safe.contains(new Rect(p.x,p.y,p.x+p.width,p.y+p.height)));
         timer.panel.measure(View.MeasureSpec.makeMeasureSpec(p.width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(p.height,View.MeasureSpec.EXACTLY));timer.panel.layout(0,0,p.width,p.height);
         assertTrue(timer.stop.getBottom()<=p.height);assertTrue(timer.stop.getTop()>=0);assertTrue(timer.close.getBottom()<=p.height);assertTrue(timer.panel.getChildAt(1) instanceof ScrollView);
@@ -124,5 +166,16 @@ public class FloatingTimerInteractionTest {
         g.systemPaused=false;g.syncFloatingTimer();assertNotNull(timer.root);assertNull(timer.panel);assertEquals(session,g.sessionEvent);
         tap();g.foreground="other.app";g.syncFloatingTimer();assertNull(timer.root);assertNull(timer.panel);
         g.foreground=g.sessionPkg;g.syncFloatingTimer();tap();g.sessionRemaining=0;g.syncFloatingTimer();assertNull(timer.root);assertNull(timer.panel);
+    }
+
+    @Test public void countdownReusesDrawableAndSkipsMetricsUntilDisplayOrWidthChanges(){
+        Shadows.shadowOf(Looper.getMainLooper()).idle();Object background=timer.remaining.getBackground();int before=metricsReads;
+        CharSequence description=timer.root.getContentDescription();
+        g.syncFloatingTimer();assertSame(description,timer.root.getContentDescription());
+        for(int i=0;i<4;i++){g.sessionRemaining-=1000;g.syncFloatingTimer();Shadows.shadowOf(Looper.getMainLooper()).idle();assertSame(background,timer.remaining.getBackground());}
+        assertEquals(before,metricsReads);assertEquals("04:28",timer.remaining.getText().toString());
+        g.sessionRemaining=60000;g.syncFloatingTimer();Object warning=timer.remaining.getBackground();assertNotSame(background,warning);
+        g.sessionRemaining=59000;g.syncFloatingTimer();assertSame(warning,timer.remaining.getBackground());
+        g.sessionRemaining=61000;g.syncFloatingTimer();assertSame(background,timer.remaining.getBackground());
     }
 }
