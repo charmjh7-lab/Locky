@@ -57,6 +57,8 @@ public final class GuardService extends AccessibilityService {
     PhoneStartController phoneStart;
     boolean lockPending;
     android.widget.FrameLayout overlayWindow;
+    android.widget.LinearLayout gateWaitingView;
+    long lastCheckpointObservation;
     enum Exposure { HIDDEN, WAITING, INTERACTIVE, SUSPENDED }
     Exposure exposure=Exposure.HIDDEN;
     Boolean observedKeyguard;
@@ -292,7 +294,13 @@ public final class GuardService extends AccessibilityService {
         sessionPkg=pkg;sessionRemaining=saved.remaining;sessionEvent=saved.event;purpose=saved.purpose;sessionPolicyEnd=saved.policyEnd;lastNotice=-1;
     }
     void checkpoint(){
-        if(store==null)return;store.observe("checkpoint",interactive);long wall=System.currentTimeMillis(),elapsed=SystemClock.elapsedRealtime();long delta=Math.max(0,elapsed-segmentElapsed);
+        if(store==null)return;long wall=System.currentTimeMillis(),elapsed=SystemClock.elapsedRealtime();
+        // Observation logging is not part of the gate's critical path.
+        if(wall-lastCheckpointObservation>=30000){
+            lastCheckpointObservation=wall;
+            boolean observed=interactive;
+            if(LockyApp.app!=null)LockyApp.app.backgroundWork.execute(()->store.observe("checkpoint",observed));
+        }long delta=Math.max(0,elapsed-segmentElapsed);
         // Time changes cannot manufacture usage: reconstruct the wall start from monotonic elapsed time.
         long from=Math.abs((wall-segmentWall)-delta)<2000?segmentWall:wall-delta;
         if(interactive&&!foreground.isEmpty()&&delta>0){
@@ -377,6 +385,7 @@ public final class GuardService extends AccessibilityService {
     }
     void syncFloatingTimer(){
         if(floatingTimer==null||store==null)return;
+        if(overlayVisible){floatingTimer.hide();return;}
         boolean ownsRead=budgetReads.get()==null;if(ownsRead)budgetReads.set(new BudgetRead());
         try {
         long now=System.currentTimeMillis();JSONObject rule=policyRule(foreground);long remaining=dailyRemaining(foreground);
@@ -390,7 +399,7 @@ public final class GuardService extends AccessibilityService {
         }finally{if(ownsRead)budgetReads.remove();}
     }
     void hideFloatingTimer(){if(floatingTimer!=null)floatingTimer.hide();}
-    @Override public void onConfigurationChanged(android.content.res.Configuration config){super.onConfigurationChanged(config);if(overlay!=null)overlay.applyTheme();hideFloatingTimer();syncFloatingTimer();if(overlayVisible&&overlay!=null)revealOverlay();}
+    @Override public void onConfigurationChanged(android.content.res.Configuration config){super.onConfigurationChanged(config);if(overlay!=null)overlay.applyTheme();updateGateWaitingTheme();hideFloatingTimer();syncFloatingTimer();if(overlayVisible&&overlay!=null)revealOverlay();}
     long lastNotice=-1;
     void prepareAppGate(){
         if(overlay==null){
@@ -403,6 +412,12 @@ public final class GuardService extends AccessibilityService {
         warmGateCatalog();
     }
     void gateTrace(String event){UnlockDiagnostics.get(this).gateRecord(gateTransition,event);}
+    void updateGateWaitingTheme(){
+        if(gateWaitingView==null)return;
+        gateWaitingView.setBackgroundColor(UiTheme.background(this));
+        if(gateWaitingView.getChildCount()>0)((android.widget.TextView)gateWaitingView.getChildAt(0)).setTextColor(UiTheme.ink(this));
+        if(gateWaitingView.getChildCount()>1)((android.widget.TextView)gateWaitingView.getChildAt(1)).setTextColor(UiTheme.muted(this));
+    }
     void prepareAppGateWindow(){
         if(overlayWindow!=null){
             overlayAttached=overlayWindow.isAttachedToWindow();
@@ -428,6 +443,28 @@ public final class GuardService extends AccessibilityService {
                 }
             };
             overlayWindow.addView(overlay.root,new android.widget.FrameLayout.LayoutParams(-1,-1));
+            // A native, non-interactive cover prevents stale app controls or a blank
+            // Chromium surface from leaking into the first visible gate frame.
+            gateWaitingView=new android.widget.LinearLayout(this);
+            gateWaitingView.setOrientation(android.widget.LinearLayout.VERTICAL);
+            gateWaitingView.setGravity(Gravity.CENTER);
+            gateWaitingView.setPadding(32,24,32,24);
+            android.widget.TextView heading=new android.widget.TextView(this);
+            heading.setText("앱 시작");
+            heading.setGravity(Gravity.CENTER);
+            heading.setTextSize(24);
+            heading.setTypeface(null,android.graphics.Typeface.BOLD);
+            gateWaitingView.addView(heading);
+            android.widget.TextView prompt=new android.widget.TextView(this);
+            prompt.setText("무엇을 하러 들어가나요?");
+            prompt.setGravity(Gravity.CENTER);
+            prompt.setTextSize(18);
+            android.widget.LinearLayout.LayoutParams promptParams=new android.widget.LinearLayout.LayoutParams(-2,-2);
+            promptParams.topMargin=16;
+            gateWaitingView.addView(prompt,promptParams);
+            gateWaitingView.setVisibility(View.GONE);
+            overlayWindow.addView(gateWaitingView,new android.widget.FrameLayout.LayoutParams(-1,-1));
+            updateGateWaitingTheme();
             overlayWindow.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener(){
                 @Override public void onViewAttachedToWindow(View v){
                     overlayAttached=true;overlayAttachPending=false;overlayAttachFailed=false;overlayLayoutDirty=true;
@@ -495,9 +532,14 @@ public final class GuardService extends AccessibilityService {
         startActivity(launch);switchForeground(getPackageName());
     }
     JSONObject gatePayload() throws JSONException {
-        Store.GateCatalog catalog=store.gateCatalog();
+        // The latest catalog is installed independently on the retained WebView.
+        // Never rebuild its SQL-derived contents during a foreground transition.
+        Store.GateCatalog catalog=preparedCatalog;
+        if(catalog==null||!store.currentGateCatalog(catalog)){warmGateCatalog();catalog=null;}
         return new JSONObject().put("gateTransition",gateTransition).put("gateExposure","WAITING").put("gate",state()).put("free",!store.managed(System.currentTimeMillis()))
-            .put("catalogVersion",catalog.revision).put("purposeDate",catalog.day).put("scope",gatePkg.isEmpty()?"app":gatePkg);
+            .put("catalogVersion",catalog==null?-1:catalog.revision)
+            .put("purposeDate",catalog==null?java.time.LocalDate.now().toString():catalog.day)
+            .put("scope",gatePkg.isEmpty()?"app":gatePkg);
     }
     void showGate(String type,String pkg){
         boolean ownsRead=budgetReads.get()==null;if(ownsRead)budgetReads.set(new BudgetRead());
@@ -567,6 +609,12 @@ public final class GuardService extends AccessibilityService {
         if(overlayWindow.getVisibility()!=View.VISIBLE)overlayWindow.setVisibility(View.VISIBLE);
         if(overlay.root.getVisibility()!=View.VISIBLE)overlay.root.setVisibility(View.VISIBLE);
         if(overlay.view.getVisibility()!=View.VISIBLE)overlay.view.setVisibility(View.VISIBLE);
+        // Show the cover immediately while JS installs this entry's app identity.
+        // The WebView itself remains VISIBLE to Chromium; input is still token-gated.
+        if(gateWaitingView!=null){
+            int shieldVisibility=waiting&&!error?View.VISIBLE:View.GONE;
+            if(gateWaitingView.getVisibility()!=shieldVisibility)gateWaitingView.setVisibility(shieldVisibility);
+        }
         int errorVisibility=error?View.VISIBLE:View.GONE;
         if(overlay.loadingView.getVisibility()!=errorVisibility)overlay.loadingView.setVisibility(errorVisibility);
         overlay.presentationActive=input||waiting;
@@ -574,7 +622,7 @@ public final class GuardService extends AccessibilityService {
         if(next==Exposure.HIDDEN||next==Exposure.SUSPENDED)cancelOverlayAttachRetry();
         overlayWindow.setImportantForAccessibility(input||error?View.IMPORTANT_FOR_ACCESSIBILITY_AUTO:View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
         if(overlayLayout!=null){
-            float alpha=input||error?1f:0f;
+            float alpha=input||waiting||error?1f:0f;
             int passive=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
             int flags=input?overlayLayout.flags&~passive:overlayLayout.flags|passive;
             if(waiting)flags&=~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
@@ -594,7 +642,7 @@ public final class GuardService extends AccessibilityService {
         overlay.notifyGateExposure(next);
         // The retained engine is already running. Only the not-yet-rendered
         // entry needs a wakeup and a visual request; hiding never pauses it.
-        if(waiting&&!overlay.frameReady){overlay.prepareOverlay();overlay.requestVisualState();}
+        if(waiting&&!overlay.frameReady)overlay.prepareOverlay();
     }
     JSONObject startWindowStatus() throws JSONException {
         return UnlockDiagnostics.get(this).windowStatus().put("status","activity").put("actual","activity");
