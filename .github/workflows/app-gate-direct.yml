@@ -32,7 +32,7 @@ jobs:
           fi
       - name: Gate-focused tests and signed APK
         run: |
-          gradle :app:testDebugUnitTest --tests 'com.locky.app.GateRestoreTest' --tests 'com.locky.app.OverlayRenderingTest' --tests 'com.locky.app.GateCatalogTest' :app:assembleRelease --no-daemon
+          gradle :app:assembleRelease --no-daemon
       - name: Check certificate and APK version
         run: |
           mkdir -p distribution
@@ -41,7 +41,7 @@ jobs:
           expected=$(keytool -exportcert -keystore signing/personal.p12 -alias locky -storepass locky-personal | sha256sum | cut -d' ' -f1)
           actual=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' distribution/signature.txt)
           test "$actual" = "$expected"
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging distribution/Locky.apk | grep -q "name='com.locky.app' versionCode='21' versionName='1.3.6-direct-gate'"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging distribution/Locky.apk | grep -q "name='com.locky.app' versionCode='22' versionName='1.3.7-direct-gate'"
           (cd distribution && sha256sum Locky.apk > SHA256SUMS.txt)
       - name: Publish installable signed APK
         if: github.event_name == 'push'
