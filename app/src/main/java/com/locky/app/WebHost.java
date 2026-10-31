@@ -135,6 +135,19 @@ final class WebHost {
         if(changed&&!renderedScreen.isEmpty()&&!liveUpdate&&!reuse)resetVisualState("dom");
         hostTrace("data applied navigation="+navigation+" changed="+changed+" revision="+revision);
         renderedNavigation=navigation;renderedRevision=revision;renderedScreen=screen;everRendered=true;loadFailed=false;cancelInitialWatch();
+        if(isOverlay){
+            // DOM acknowledgement is the input-identity barrier, NOT a second
+            // Chromium compositor barrier. The native cover was exposed already.
+            suspendVisualRequest();frameReady=true;preparedGateRevision=revision;reusableGateRevision=-1;
+            invalidateFrame();
+            WebView candidate=view;
+            candidate.postOnAnimation(()->{
+                if(!closed&&candidate==view&&navigation==navigationGeneration
+                    &&revision==renderedRevision&&currentGateReady()
+                    &&frameAvailableCallback!=null)frameAvailableCallback.run();
+            });
+            return;
+        }
         if(reuse){
             frameReady=true;preparedGateRevision=revision;reusableGateRevision=-1;
             hostTrace("prepared frame reused navigation="+navigation);
@@ -153,8 +166,8 @@ final class WebHost {
         long retained=frameReady&&preparedGateRevision==renderedRevision?preparedGateRevision:-1;
         String retainedScreen=renderedScreen;
         cancelInitialWatch();visualFailed=false;initialRetries=0;
-        // Retire the previous entry's callbacks/input identity, preserving the
-        // document and prepared pixels. Only changed DOM/detachment invalidates them.
+        // Retire the previous entry's input identity. Normal entry never blocks
+        // its first visible cover on a new Chromium visual-state callback.
         cancelVisualWatch();++visualGeneration;visualPending=-1;visualRetryCount=0;frameReady=false;
         reusableGateRevision=retained;reusableGateScreen=retainedScreen;
         pendingGate=payload;gateTransition=payload.optLong("gateTransition",-1);preparedPurposeDay=payload.optString("purposeDate");pendingScreen=name;pendingChat="";++navigationGeneration;
@@ -403,9 +416,16 @@ final class WebHost {
         WebView candidate=view;long navigation=navigationGeneration;String name=pendingScreen,chat=pendingChat;JSONObject gateData=pendingGate;
         Runnable dispatch=()->{
             if(closed||!ready||candidate!=view||navigation!=navigationGeneration)return;
-            if(isOverlay)try{Store.GateCatalog catalog=store.gateCatalog();installGateCatalog(catalog);
-                if(gateData!=null)gateData.put("catalogVersion",catalog.revision).put("purposeDate",catalog.day);
-            }catch(JSONException e){showGateError();return;}
+            if(isOverlay&&context instanceof GuardService){
+                GuardService guard=(GuardService)context;
+                Store.GateCatalog catalog=guard.preparedCatalog;
+                if(catalog!=null&&store.currentGateCatalog(catalog)){
+                    installGateCatalog(catalog);
+                    if(gateData!=null)try{
+                        gateData.put("catalogVersion",catalog.revision).put("purposeDate",catalog.day);
+                    }catch(JSONException ignored){}
+                }else guard.warmGateCatalog();
+            }
             String navJs="notes".equals(name)&&!pendingNote.isEmpty()?"openNoteById("+JSONObject.quote(pendingNote)+","+navigation+")":"chat".equals(name)&&!chat.isEmpty()?"openChatById("+JSONObject.quote(chat)+","+navigation+")":"navigate("+JSONObject.quote(name)+","+navigation+")";
             if(role==Role.APP_GATE)navJs=gateData==null?"prepareGate("+navigation+")":"presentGate("+JSONObject.quote(name)+","+gateData+","+navigation+")";
             if(role==Role.APP_GATE&&gateData!=null&&!everRendered)navJs="prepareGate("+navigation+");"+navJs;
