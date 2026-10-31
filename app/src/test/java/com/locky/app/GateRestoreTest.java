@@ -18,7 +18,9 @@ public class GateRestoreTest {
     @After public void cleanup(){g.main.removeCallbacksAndMessages(null);if(g.overlayWindow!=null&&g.overlayWindow.getParent()!=null)g.window.removeViewImmediate(g.overlayWindow);g.main.removeCallbacksAndMessages(null);if(g.overlay!=null)g.overlay.close();g.store.close();Store.instance=null;GuardService.live=null;}
     void concealed(android.view.View web){
         assertEquals("Chromium must retain a visible page",android.view.View.VISIBLE,web.getVisibility());
-        assertEquals("Window alpha must conceal stale content",0f,g.overlayLayout.alpha,0f);
+        assertEquals("The native transition cover must show immediately",1f,g.overlayLayout.alpha,0f);
+        assertEquals(android.view.View.VISIBLE,g.gateWaitingView.getVisibility());
+        assertFalse(g.acceptGateInput());
     }
     @Test public void onlyManagedAppGatesUseTheSingleAccessibilityWindow(){
         g.showGate("app","video");Object web=g.overlay.view;long nav=g.overlay.navigationGeneration;
