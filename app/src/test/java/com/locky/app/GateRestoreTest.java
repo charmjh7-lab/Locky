@@ -144,7 +144,7 @@ public class GateRestoreTest {
     }
 
     @Test public void immediateCoverBlocksInputUntilCurrentDomIdentityIsAcknowledged(){
-        g.showGate("app","video");WebHost h=g.overlay;
+        g.showGate("app","video");Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();WebHost h=g.overlay;
         assertEquals(GuardService.Exposure.WAITING,g.exposure);
         assertEquals(1f,g.overlayLayout.alpha,0f);
         assertEquals(android.view.View.VISIBLE,g.gateWaitingView.getVisibility());
@@ -157,7 +157,7 @@ public class GateRestoreTest {
         assertEquals(1,adds);
     }
     @Test public void newEntryRejectsOldNavigationAndPreservesSingleWindow(){
-        g.showGate("app","video");WebHost h=g.overlay;h.ready=true;
+        g.showGate("app","video");Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();WebHost h=g.overlay;h.ready=true;
         long old=h.navigationGeneration;
         h.rendered(h.view,"app",old,1);g.revealOverlay();
         g.foreground="social";g.showGate("app","social");
@@ -170,7 +170,7 @@ public class GateRestoreTest {
         assertEquals(1,adds);
     }
     @Test public void suspensionAndScreenOffKeepProtectedAppFromAcceptingInput(){
-        g.showGate("app","video");WebHost h=g.overlay;h.ready=true;
+        g.showGate("app","video");Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();WebHost h=g.overlay;h.ready=true;
         h.rendered(h.view,"app",h.navigationGeneration,1);g.revealOverlay();
         assertTrue(g.acceptGateInput());
         g.pauseSystem();assertFalse(g.acceptGateInput());
@@ -181,7 +181,7 @@ public class GateRestoreTest {
         assertEquals(0f,g.overlayLayout.alpha,0f);
     }
     @Test public void recoveredDocumentErrorPreservesNativeRecoveryActions(){
-        g.showGate("app","video");
+        g.showGate("app","video");Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
         g.overlay.showGateError();
         assertTrue(g.acceptGateErrorInput());
         assertFalse(g.acceptGateInput());
