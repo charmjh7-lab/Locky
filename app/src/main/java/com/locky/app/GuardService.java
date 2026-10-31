@@ -481,7 +481,7 @@ public final class GuardService extends AccessibilityService {
                 }
             });
             overlayLayout=new WindowManager.LayoutParams(-1,-1,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_SECURE|WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN|WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
                     |WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE|WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,PixelFormat.TRANSLUCENT);
             overlayLayout.gravity=Gravity.TOP|Gravity.START;overlayLayout.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;overlayLayout.setTitle("Locky app gate");
             // Conceal at the window, not at the WebView: INVISIBLE also hides
