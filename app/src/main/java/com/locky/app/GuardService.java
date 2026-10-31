@@ -560,6 +560,12 @@ public final class GuardService extends AccessibilityService {
             }
         }
         if(!same){gateDetectedUptimeSeen=foregroundDetectedUptime;UnlockDiagnostics.get(this).beginGate(gateTransition,detected);gateTrace("showGate hostReuse="+(overlay!=null)+" windowReuse="+overlayAttached);}
+        if(gateWaitingView!=null){
+            android.widget.TextView head=(android.widget.TextView)gateWaitingView.getChildAt(0);
+            android.widget.TextView detail=(android.widget.TextView)gateWaitingView.getChildAt(1);
+            head.setText("blocked".equals(type)?"사용 제한":"renew".equals(type)?"사용 연장":"앱 시작");
+            detail.setText("blocked".equals(type)?"사용 가능 여부를 확인하고 있어요.":"renew".equals(type)?"계속 사용할지 확인하고 있어요.":"무엇을 하러 들어가나요?");
+        }
         if(!same){cancelOverlayAttachRetry();overlayAttachRetries=0;overlayAttachFailed=false;}
         // The service preattaches this window. Do not re-run prewarm on every app
         // entry; only repair an actually absent/detached host/window.
