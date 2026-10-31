@@ -41,10 +41,16 @@ final class WebHost {
     // fresh acknowledgement from the new entry and no intervening DOM changes.
     long preparedGateRevision=-1,reusableGateRevision=-1;String reusableGateScreen="";
     long sentGateCatalog=-1;
+    boolean gateCatalogWaiting;
     void installGateCatalog(Store.GateCatalog catalog){
         if(closed||!isOverlay||!ready||catalog.revision==sentGateCatalog||!store.currentGateCatalog(catalog))return;
         sentGateCatalog=catalog.revision;preparedPurposeDay=catalog.day;
-        view.evaluateJavascript("installGateCatalog("+catalog.json+")",null);
+        view.evaluateJavascript("installGateCatalog("+catalog.json+")",ignored->{
+            if(!closed&&isOverlay&&gateCatalogWaiting&&ready){
+                gateCatalogWaiting=false;
+                dispatchScreen();
+            }
+        });
     }
     // Bounded Logcat plus opt-in private recording. Never log user content or package names.
     
@@ -419,12 +425,20 @@ final class WebHost {
             if(isOverlay&&context instanceof GuardService){
                 GuardService guard=(GuardService)context;
                 Store.GateCatalog catalog=guard.preparedCatalog;
-                if(catalog!=null&&store.currentGateCatalog(catalog)){
+                if(catalog==null||!store.currentGateCatalog(catalog)){
+                    gateCatalogWaiting=true;
+                    guard.warmGateCatalog();
+                    return; // Native cover is already visible; never render stale purpose buttons.
+                }
+                if(catalog.revision!=sentGateCatalog){
+                    gateCatalogWaiting=true;
                     installGateCatalog(catalog);
-                    if(gateData!=null)try{
-                        gateData.put("catalogVersion",catalog.revision).put("purposeDate",catalog.day);
-                    }catch(JSONException ignored){}
-                }else guard.warmGateCatalog();
+                    return; // Continue only after JS has installed the exact cached catalog.
+                }
+                gateCatalogWaiting=false;
+                if(gateData!=null)try{
+                    gateData.put("catalogVersion",catalog.revision).put("purposeDate",catalog.day);
+                }catch(JSONException ignored){}
             }
             String navJs="notes".equals(name)&&!pendingNote.isEmpty()?"openNoteById("+JSONObject.quote(pendingNote)+","+navigation+")":"chat".equals(name)&&!chat.isEmpty()?"openChatById("+JSONObject.quote(chat)+","+navigation+")":"navigate("+JSONObject.quote(name)+","+navigation+")";
             if(role==Role.APP_GATE)navJs=gateData==null?"prepareGate("+navigation+")":"presentGate("+JSONObject.quote(name)+","+gateData+","+navigation+")";
