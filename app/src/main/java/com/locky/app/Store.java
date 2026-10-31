@@ -14,6 +14,13 @@ final class Store extends SQLiteOpenHelper {
     final Context context;private long lastObservation;
     // Budget inputs change on charged usage and screen evidence; uncharged gate checkpoints cannot spend time.
     private volatile long usageRevision;
+    private static final class UsedSnapshot {
+        final long revision,dayStart,at,total;
+        UsedSnapshot(long revision,long dayStart,long at,long total){
+            this.revision=revision;this.dayStart=dayStart;this.at=at;this.total=total;
+        }
+    }
+    private final Map<String,UsedSnapshot> usedSnapshots=new HashMap<>();
     private JSONArray purposeRows;
     private String purposeDay="";
     private final Map<String,JSONArray> purposeOrders=new HashMap<>();
@@ -184,8 +191,14 @@ final class Store extends SQLiteOpenHelper {
     }
     synchronized long used(String pkg,long now) {
         if(UsageReader.excluded(context,pkg))return 0;
-        long start=Rules.dayStart(now,ZoneId.systemDefault()),total=0,cursor=start;
-        try{JSONArray rows=screenUsage(pkg,start,now);for(int n=0;n<rows.length();n++){JSONObject row=rows.getJSONObject(n);long a=Math.max(cursor,row.getLong("start")),b=Math.min(now,row.getLong("end"));total+=Math.max(0,b-a);cursor=Math.max(cursor,b);}}catch(JSONException e){throw new IllegalStateException(e);}return total;
+        long start=Rules.dayStart(now,ZoneId.systemDefault());
+        UsedSnapshot saved=usedSnapshots.get(pkg);
+        // Screen-state insertions and charged usage both advance usageRevision.
+        if(saved!=null&&saved.revision==usageRevision&&saved.dayStart==start&&now>=saved.at)return saved.total;
+        long total=0,cursor=start;
+        try{JSONArray rows=screenUsage(pkg,start,now);for(int n=0;n<rows.length();n++){JSONObject row=rows.getJSONObject(n);long a=Math.max(cursor,row.getLong("start")),b=Math.min(now,row.getLong("end"));total+=Math.max(0,b-a);cursor=Math.max(cursor,b);}}catch(JSONException e){throw new IllegalStateException(e);}
+        usedSnapshots.put(pkg,new UsedSnapshot(usageRevision,start,now,total));
+        return total;
     }
     long remaining(String pkg,long now) {return remaining(pkg,now,rule(pkg));}
     long remaining(String pkg,long now,JSONObject rule) {
