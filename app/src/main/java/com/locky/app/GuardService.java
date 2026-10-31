@@ -296,7 +296,8 @@ public final class GuardService extends AccessibilityService {
     void checkpoint(){
         if(store==null)return;long wall=System.currentTimeMillis(),elapsed=SystemClock.elapsedRealtime();
         // Observation logging is not part of the gate's critical path.
-        if(wall-lastCheckpointObservation>=30000){
+        if(lastCheckpointObservation==0)lastCheckpointObservation=wall;
+        else if(wall-lastCheckpointObservation>=30000){
             lastCheckpointObservation=wall;
             boolean observed=interactive;
             if(LockyApp.app!=null)LockyApp.app.backgroundWork.execute(()->store.observe("checkpoint",observed));
