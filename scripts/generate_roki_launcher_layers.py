@@ -1,101 +1,85 @@
 #!/usr/bin/env python3
-"""Generate ROKI's inset green background plus translucent door/L foreground.
-
-The green rounded rectangle is the icon BACKGROUND. The outer area is
-transparent, not a cream-colored image. The door and white L are the
-independent foreground. Sizes account for the 72dp viewport of a 108dp layer.
+"""Reconstruct ROKI adaptive icon layers from the original user-supplied illustration.
+The green gradient is the full, opaque background. The lime door and white L are the
+only foreground pixels. Avoid recycling intermediate artwork or colored masks.
 """
 from pathlib import Path
-import cv2
-import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+import numpy as np, cv2
+from PIL import Image, ImageDraw
 
-ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "scripts/assets/roki_full_bleed_source.webp"
-DEST = ROOT / "app/src/main/res/drawable-nodpi"
-SIZE = 432
-PANEL_FRAC = 0.500   # 54dp in 108dp layer -> ~75% of 72dp viewport
-SYMBOL_FRAC = 0.420  # 45.36dp -> separate mark with breathing room
-
-source = np.asarray(Image.open(SOURCE).convert("RGB").resize((SIZE, SIZE))).copy()
-r, g, b = (source[:, :, k].astype(np.int16) for k in range(3))
-
-lime = (g > 118) & (g-r > 34) & (g-b > 45) & (r > 36)
-white = (r > 142) & (g > 151) & (b > 139) & (abs(r-g) < 65) & (abs(g-b) < 70)
-
-def keep_components(mask, threshold):
-    n, labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype("uint8"), 8)
-    result = np.zeros((SIZE, SIZE), "uint8")
-    for i in range(1, n):
-        if stats[i, cv2.CC_STAT_AREA] > threshold:
-            result[labels == i] = 255
-    return result
-
-lime_mask = keep_components(lime, 80)
-lime_mask = cv2.morphologyEx(
-    lime_mask, cv2.MORPH_CLOSE,
-    cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11)))
-white_mask = keep_components(white, 25)
-door_alpha = cv2.GaussianBlur(
-    cv2.dilate(lime_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (33, 33))),
-    (0, 0), 7.0)
-letter_alpha = cv2.GaussianBlur(
-    cv2.dilate(white_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))),
-    (0, 0), 0.75)
-alpha = np.maximum(door_alpha, letter_alpha)
-
-# Create a clean dark forest-green texture without the original baked-in
-# doorway/letter: moving the baked image into the background leaves ghosts.
-y, x = np.mgrid[0:SIZE, 0:SIZE].astype(np.float32)
-xf, yf = x / (SIZE-1), y / (SIZE-1)
-c00 = np.array([35, 91, 49], np.float32)
-c10 = np.array([10, 60, 37], np.float32)
-c01 = np.array([14, 61, 29], np.float32)
-c11 = np.array([6, 45, 25], np.float32)
-base = ((1-xf)*(1-yf))[:, :, None] * c00
-base += (xf*(1-yf))[:, :, None] * c10
-base += ((1-xf)*yf)[:, :, None] * c01
-base += (xf*yf)[:, :, None] * c11
-bloom = np.exp(-((xf-.18)**2/.19 + (yf-.17)**2/.27))
-base += bloom[:, :, None] * np.array([4, 8, 2], np.float32)
-patch = source[316:421, 278:423]
-noise = cv2.cvtColor(patch, cv2.COLOR_RGB2GRAY).astype(np.float32)
-noise -= cv2.GaussianBlur(noise, (0, 0), 8.0)
-noise = cv2.resize(noise, (SIZE, SIZE), interpolation=cv2.INTER_CUBIC)
-base += noise[:, :, None] * 0.23
-background_rgb = np.uint8(np.clip(base, 0, 255))
-
-# Green art stays behind the symbol, but is itself inset from the launcher
-# mask. Transparent exterior reveals the user's wallpaper rather than being
-# forced into a device-specific, full-size dark-green rounded square.
-panel = round(SIZE * PANEL_FRAC)
-origin = (SIZE-panel)//2
-panel_mask = Image.new("L", (SIZE, SIZE), 0)
-draw = ImageDraw.Draw(panel_mask)
-draw.rounded_rectangle(
-    (origin, origin, origin+panel-1, origin+panel-1),
-    radius=round(panel*.22), fill=255)
-panel_mask = panel_mask.filter(ImageFilter.GaussianBlur(.45))
-background = Image.fromarray(background_rgb, "RGB").convert("RGBA")
-background.putalpha(panel_mask)
-
-# Foreground contains the luminous perspective door and white L only.
-mark = Image.fromarray(np.dstack([source, alpha]), "RGBA")
-mark_size = round(SIZE * SYMBOL_FRAC)
-mark = mark.resize((mark_size, mark_size), Image.Resampling.LANCZOS)
-pixels = np.asarray(mark).copy()
-for row in range(round(mark_size*.87), mark_size):
-    fade = max(0., (mark_size-1-row)/(mark_size*.13))
-    green = ((pixels[row, :, 1].astype(np.int16) >
-              pixels[row, :, 2].astype(np.int16)+15) &
-             (pixels[row, :, 1] > pixels[row, :, 0]+15))
-    pixels[row, green, 3] = np.uint8(
-        pixels[row, green, 3].astype(np.float32)*fade)
-mark = Image.fromarray(pixels, "RGBA")
-foreground = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-foreground.alpha_composite(
-    mark, ((SIZE-mark_size)//2, (SIZE-mark_size)//2))
-
-DEST.mkdir(parents=True, exist_ok=True)
-background.save(DEST/"roki_icon_background.png", optimize=True)
-foreground.save(DEST/"roki_icon_foreground.png", optimize=True)
+ROOT=Path(__file__).resolve().parents[1]
+IN=ROOT/'scripts/assets/roki_original_crop_lossless.webp'
+OUT=ROOT/'app/src/main/res/drawable-nodpi'
+OUT.mkdir(exist_ok=True)
+src=np.array(Image.open(IN).convert('RGB').resize((340,340),Image.Resampling.LANCZOS))
+S=340
+r,g,b=[src[:,:,i].astype('int16') for i in range(3)]
+# isolate bright green light; white L through connected component nearest center
+lime=(g>115)&(g-r>32)&(g-b>38)&(r>30)
+white=(r>140)&(g>148)&(b>130)&(abs(r-g)<65)&(abs(g-b)<65)
+def comps(mask,min_area,restrict=None):
+ n,lab,stats,_=cv2.connectedComponentsWithStats(mask.astype('uint8'),8)
+ out=np.zeros((S,S),'uint8')
+ for k in range(1,n):
+  x,y,w,h,a=stats[k]
+  if a>=min_area and (restrict is None or restrict(x,y,w,h)):
+   out[lab==k]=255
+ return out
+bright=comps(lime,500,lambda x,y,w,h:x<120 and y<130)
+letter=comps(white,300,lambda x,y,w,h:x>120 and y>100 and y<280)
+# Add original glow/shadow along the original green light path; keep L crisp.
+bright_close=cv2.morphologyEx(bright,cv2.MORPH_CLOSE,cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(5,5)))
+door=cv2.dilate(bright_close,cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(15,15)))
+door_alpha=cv2.GaussianBlur(door,(0,0),4.2)
+letter_mask=cv2.dilate(letter,cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(5,5)))
+letter_alpha=cv2.GaussianBlur(letter_mask,(0,0),0.9)
+# Spatially keep the actual door and L components, not stray bright pixels from
+# the original rounded border / antialiased exterior.
+yy,xx=np.mgrid[0:S,0:S]
+door_support=(xx<133) | (yy<143)
+letter_support=(xx>139)&(xx<285)&(yy>111)&(yy<266)
+alpha=np.maximum(door_alpha*door_support,letter_alpha*letter_support).astype('uint8')
+# Reconstruct continuous green background from exclusively GREEN pixels in the source.
+# This rejects every exterior cream corner AND all white glyphs, even if those
+# pixels touch the original crop edge. The gradient is estimated from source.
+green_valid=(r<115)&(g<152)&(b<116)&(g>r*1.1)&(g>b*1.15)
+# omit the door and white L when interpolating background colors
+repair=np.maximum(
+    cv2.dilate(bright,cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(29,29))),
+    cv2.dilate(letter,cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(17,17))))
+valid=(green_valid & (repair==0)).astype(np.float32)
+weighted=cv2.GaussianBlur(valid,(0,0),sigmaX=25.)
+model=np.zeros((S,S,3),dtype='float32')
+for channel in range(3):
+ model[:,:,channel]=cv2.GaussianBlur(src[:,:,channel].astype('float32')*valid,(0,0),sigmaX=25.)/np.maximum(weighted,.00001)
+# retain physical grain sampled from actual green in the image
+clean=src[172:238,273:337].astype('float32')
+noise=clean-cv2.GaussianBlur(clean,(0,0),sigmaX=2.2)
+texture=np.tile(noise,(6,6,1))[:S,:S,:]
+base=np.uint8(np.clip(model+texture*.85,0,255))
+# Alpha must not include screenshot's cream exterior, only door/letter shading.
+shape=Image.new('L',(S,S),0)
+ImageDraw.Draw(shape).rounded_rectangle((0,0,S-1,S-1),radius=69,fill=255)
+inside=np.asarray(shape)>0
+alpha[~inside]=0
+# The original left light extends off its card; end it with a subtle 4%-high
+# optical feather after insetting, rather than a flat horizontal cut.
+for row in range(325,S):
+    fraction = max(0.0, (S-1-row)/14.0)
+    alpha[row] = (alpha[row].astype(np.float32)*fraction).astype('uint8')
+# The entire Android background drawable is opaque. Keep almost the original full gradient
+# visible within the 72dp launcher viewport by a ~300px original-gradient view centered.
+bg_core=Image.fromarray(base,'RGB').resize((302,302),Image.Resampling.LANCZOS)
+# Extend clean original gradient to invisible overscan margins by edge replication.
+bg_numpy=np.array(bg_core)
+bg_full=cv2.copyMakeBorder(bg_numpy,65,65,65,65,cv2.BORDER_REPLICATE)
+assert bg_full.shape==(432,432,3)
+Image.fromarray(bg_full,'RGB').save(OUT/'roki_icon_background.png',optimize=True)
+# Foreground only: keep original source RGB, with a subtle feather at the old bottom cut.
+# Artwork lives well within the 72dp visible region (central 288px of 432px).
+fg_src=Image.fromarray(np.dstack([src,alpha]).astype('uint8'),'RGBA')
+fg_size=234  # 54.2% of 108dp; leaves real margins after central 72dp crop
+fg_res=fg_src.resize((fg_size,fg_size),Image.Resampling.LANCZOS)
+fg_canvas=Image.new('RGBA',(432,432),(0,0,0,0))
+fg_canvas.alpha_composite(fg_res,((432-fg_size)//2,(432-fg_size)//2))
+fg_canvas.save(OUT/'roki_icon_foreground.png',optimize=True)
