@@ -49,6 +49,8 @@ jobs:
         with:
           gradle-version: '8.11.1'
           cache-disabled: true
+      - name: Prepare launcher-image build dependency
+        run: python3 -m pip install --quiet Pillow numpy opencv-python-headless
       - name: Focused theme unit checks (no APK)
         run: gradle :app:testDebugUnitTest --tests 'com.locky.app.UiThemeTest' --no-daemon
   requested-release:
@@ -75,6 +77,8 @@ jobs:
         with:
           gradle-version: '8.11.1'
           cache-disabled: true
+      - name: Prepare launcher-image build dependency
+        run: python3 -m pip install --quiet Pillow numpy opencv-python-headless
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -100,9 +104,9 @@ jobs:
           actual=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' distribution/signature.txt)
           test "$actual" = "$expected"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging distribution/Locky.apk > distribution/package.txt
-          grep -q "name='com.locky.app' versionCode='32' versionName='1.3.8-roki-icon'" distribution/package.txt
+          grep -q "name='com.locky.app' versionCode='33' versionName='1.3.9-roki-layers'" distribution/package.txt
           unzip -t distribution/Locky.apk > /dev/null
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump resources distribution/Locky.apk | grep -q 'roki_launcher_foreground'
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump resources distribution/Locky.apk | grep -q 'roki_icon_foreground'
           (cd distribution && sha256sum Locky.apk > SHA256SUMS.txt)
           version_name=$(bash scripts/apk-version-name.sh distribution/Locky.apk)
           gh release create "locky-build-${GITHUB_RUN_NUMBER}" distribution/Locky.apk distribution/SHA256SUMS.txt distribution/signature.txt --target "$GITHUB_SHA" --title "Locky ${version_name} · build ${GITHUB_RUN_NUMBER}" --notes-file scripts/release-notes.md
@@ -166,6 +170,8 @@ jobs:
         with:
           gradle-version: '8.11.1'
           cache-disabled: true
+      - name: Prepare launcher-image build dependency
+        run: python3 -m pip install --quiet Pillow numpy opencv-python-headless
       - name: Policy tests, lint and signed APK
         id: policy
         if: ${{ !cancelled() }}

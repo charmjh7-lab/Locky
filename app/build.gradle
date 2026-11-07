@@ -2,7 +2,7 @@ plugins { id 'com.android.application' }
 android {
     namespace 'com.locky.app'
     compileSdk 36
-    defaultConfig { applicationId 'com.locky.app'; minSdk 26; targetSdk 35; versionCode 32; versionName '1.3.8-roki-icon'; buildConfigField 'String', 'APP_SCHEME', '"locky"'; testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner' }
+    defaultConfig { applicationId 'com.locky.app'; minSdk 26; targetSdk 35; versionCode 33; versionName '1.3.9-roki-layers'; buildConfigField 'String', 'APP_SCHEME', '"locky"'; testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner' }
     signingConfigs { personal { storeFile file('../signing/personal.p12'); storePassword 'locky-personal'; keyAlias 'locky'; keyPassword 'locky-personal' } }
     buildTypes { debug { signingConfig signingConfigs.personal }; release { signingConfig signingConfigs.personal; minifyEnabled false } }
     buildFeatures { buildConfig true }
@@ -25,3 +25,11 @@ dependencies {
     androidTestImplementation 'androidx.test.uiautomator:uiautomator:2.3.0'
 }
 
+
+ // Generate the real transparent foreground and green background before Android
+ // resource packaging, using the retained source artwork (not a full-bleed icon foreground).
+tasks.register('generateRokiLauncherAssets', Exec) {
+    workingDir rootProject.projectDir
+    commandLine 'python3', 'scripts/generate_roki_launcher_layers.py'
+}
+tasks.named('preBuild') { dependsOn tasks.named('generateRokiLauncherAssets') }

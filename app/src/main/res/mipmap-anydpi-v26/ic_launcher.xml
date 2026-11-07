@@ -1,5 +1,5 @@
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/icon_background"/>
-    <foreground android:drawable="@drawable/roki_launcher_foreground"/>
+    <background android:drawable="@drawable/roki_icon_background"/>
+    <foreground android:drawable="@drawable/roki_icon_foreground"/>
     <monochrome android:drawable="@drawable/icon_mono"/>
 </adaptive-icon>
