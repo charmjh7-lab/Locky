@@ -9,7 +9,9 @@ import org.json.*;
 
 final class Notices {
     static final String BRIEF_CHANNEL="brief_alert_v2";
-    static void channels(Context c) {NotificationManager n=c.getSystemService(NotificationManager.class);n.createNotificationChannel(new NotificationChannel("timer","남은 사용 시간",NotificationManager.IMPORTANCE_LOW));n.createNotificationChannel(new NotificationChannel("brief","사용 브리핑",NotificationManager.IMPORTANCE_DEFAULT));n.createNotificationChannel(new NotificationChannel(BRIEF_CHANNEL,"브리핑 배너 알림",NotificationManager.IMPORTANCE_HIGH));n.createNotificationChannel(new NotificationChannel("reminder","집중 시간 알림",NotificationManager.IMPORTANCE_DEFAULT));}
+    // The old DEFAULT channel cannot be raised after installation. Use a new channel once.
+    static final String FOCUS_CHANNEL="focus_alert_v2";
+    static void channels(Context c) {NotificationManager n=c.getSystemService(NotificationManager.class);n.createNotificationChannel(new NotificationChannel("timer","남은 사용 시간",NotificationManager.IMPORTANCE_LOW));n.createNotificationChannel(new NotificationChannel("brief","사용 브리핑",NotificationManager.IMPORTANCE_DEFAULT));n.createNotificationChannel(new NotificationChannel(BRIEF_CHANNEL,"브리핑 배너 알림",NotificationManager.IMPORTANCE_HIGH));n.createNotificationChannel(new NotificationChannel(FOCUS_CHANNEL,"집중 시간 배너 알림",NotificationManager.IMPORTANCE_HIGH));}
     static PendingIntent open(Context c,String screen) {return PendingIntent.getActivity(c,screen.hashCode(),MainActivity.launchIntent(c).setData(android.net.Uri.parse("locky://record/"+android.net.Uri.encode(screen))).putExtra("screen",screen).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);}
     static boolean allowed(Context c){return Build.VERSION.SDK_INT<33||c.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)==android.content.pm.PackageManager.PERMISSION_GRANTED;}
     static void timer(Context c,String label,long daily,long session) {
@@ -66,6 +68,19 @@ final class Notices {
         return new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,c.getPackageName());
     }
     static void cancelTimer(Context c){c.getSystemService(NotificationManager.class).cancel(11);}
+    static void focus(Context c,String title,String body,boolean started) {
+        channels(c);NotificationManager n=c.getSystemService(NotificationManager.class);
+        // Replace previews with one start notice, including previews left by an older APK.
+        if(started)for(var entry:n.getActiveNotifications()){
+            String channel=entry.getNotification().getChannelId();
+            if("reminder".equals(channel)||FOCUS_CHANNEL.equals(channel))n.cancel(entry.getTag(),entry.getId());
+        }
+        if(!allowed(c))return;
+        n.notify(30,new NotificationCompat.Builder(c,FOCUS_CHANNEL).setSmallIcon(R.drawable.icon_mono)
+            .setContentTitle(title).setContentText(body).setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+            .setContentIntent(open(c,"settings")).setAutoCancel(true).setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).build());
+    }
     static void send(Context c,int id,String channel,String title,String body,String screen) {if(Build.VERSION.SDK_INT>=33&&c.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)return;c.getSystemService(NotificationManager.class).notify(id,new Notification.Builder(c,channel).setSmallIcon(R.drawable.icon_mono).setContentTitle(title).setContentText(body).setStyle(new Notification.BigTextStyle().bigText(body)).setContentIntent(open(c,screen)).setAutoCancel(true).setVisibility(Notification.VISIBILITY_PRIVATE).build());}
     static JSONObject briefingStatus(Context c) throws JSONException {
         channels(c);NotificationManager n=c.getSystemService(NotificationManager.class);NotificationChannel channel=n.getNotificationChannel(BRIEF_CHANNEL);

@@ -13,6 +13,8 @@ final class Scheduler {
         long next=Math.min(Rules.nextBoundary(now,start,end,z),Rules.nextDay(now,z));
         if(s.settings.getBoolean("enabled",true)&&!s.managed(now))try {
             long begin=Rules.nextBoundary(now,start,end,z);JSONArray reminders=new JSONArray(s.settings.getString("reminders","[30,20,10,5,1]"));
+            // Retain the intended start so an idle-delayed alarm can still announce it once.
+            if(s.settings.getLong("focus-alert-scheduled-start",-1)!=begin)s.settings.edit().putLong("focus-alert-scheduled-start",begin).apply();
             for(int i=0;i<reminders.length();i++){long at=begin-reminders.getInt(i)*60000L;if(at>now)next=Math.min(next,at);}
         }catch(JSONException ignored){}
         int delivery=s.settings.getInt("dailyBriefTime",540);LocalDate date=LocalDate.now(z);long at=date.atTime(delivery/60,delivery%60).atZone(z).toInstant().toEpochMilli();
@@ -23,6 +25,7 @@ final class Scheduler {
     static synchronized void fire(Context c) {
         Store s=Store.get(c);long now=System.currentTimeMillis();s.observe("scheduler-fired",c.getSystemService(PowerManager.class).isInteractive());s.syncFocusZone();ZoneId z=ZoneId.systemDefault();LocalDate today=LocalDate.now(z);int minute=Rules.minute(now,z);
         try {
+            focusAlerts(c,now);
             JSONArray windows=FocusPeriods.windows(s,now-2*86400000L,now);
             for(int i=0;i<windows.length();i++){JSONObject w=windows.getJSONObject(i);if(!w.getBoolean("complete"))continue;
                 String key=w.getString("key");if(delivered(s,key))continue;
@@ -41,14 +44,37 @@ final class Scheduler {
                     JSONObject b=Briefing.build(c,7,1);deliver(c,week,"지난 7일의 사용 기록이 정리됐어요",b.getString("summary"),"brief|week|"+day);
                 }
             }
-            if(s.settings.getBoolean("enabled",true)&&!s.managed(now)){
-                long boundary=Rules.nextBoundary(now,s.settings.getInt("start",540),s.settings.getInt("end",1260),z),remaining=boundary-now;
-                JSONArray reminders=new JSONArray(s.settings.getString("reminders","[30,20,10,5,1]"));for(int j=0;j<reminders.length();j++){int m=reminders.getInt(j);String key=today+":"+m;
-                    if(remaining<=m*60000L&&remaining>Math.max(0,m*60000L-90000)&&!key.equals(s.settings.getString("reminder-sent-"+m,""))){s.settings.edit().putString("reminder-sent-"+m,key).apply();Notices.send(c,30+m,"reminder","집중 시간이 "+m+"분 뒤 시작돼요","지금 하던 일을 마무리할 여유를 남겨 주세요.","settings");}
-                }
-            }
         }catch(Exception e){android.util.Log.w("LockyBriefing","Briefing scheduling failed",e);}
         finally{if(GuardService.live!=null)GuardService.live.policyChanged();schedule(c);}
+    }
+    static void focusAlerts(Context c,long now) throws JSONException {
+        Store s=Store.get(c);if(!s.settings.getBoolean("enabled",true))return;
+        ZoneId z=ZoneId.systemDefault();int start=s.settings.getInt("start",540),end=s.settings.getInt("end",1260);
+        if(start==end)return; // All-day focus has no free-to-focus transition.
+        if(s.managed(now)){
+            LocalDate date=Instant.ofEpochMilli(now).atZone(z).toLocalDate();
+            if(Rules.minute(now,z)<start)date=date.minusDays(1);
+            long begin=date.atTime(start/60,start%60).atZone(z).toInstant().toEpochMilli();
+            if(s.settings.getLong("focus-alert-started",-1)==begin)return;
+            // Do not invent a start alert when opening/installing the app halfway through a window.
+            boolean due=s.settings.getLong("focus-alert-scheduled-start",-1)==begin;
+            if(!s.settings.edit().putLong("focus-alert-started",begin).remove("focus-alert-scheduled-start").commit())return;
+            if(due)Notices.focus(c,"집중시간이 시작됐어요","설정한 집중시간이 적용돼요.",true);
+            return;
+        }
+        long boundary=Rules.nextBoundary(now,start,end,z),remaining=boundary-now;
+        if(s.settings.getLong("focus-alert-scheduled-start",-1)!=boundary)s.settings.edit().putLong("focus-alert-scheduled-start",boundary).apply();
+        boolean interactive=c.getSystemService(PowerManager.class).isInteractive();int preview=Integer.MAX_VALUE;
+        JSONArray reminders=new JSONArray(s.settings.getString("reminders","[30,20,10,5,1]"));
+        for(int j=0;j<reminders.length();j++){
+            int m=reminders.getInt(j);String key=Instant.ofEpochMilli(now).atZone(z).toLocalDate()+":"+m;
+            if(remaining<=m*60000L&&remaining>Math.max(0,m*60000L-90000)&&!key.equals(s.settings.getString("reminder-sent-"+m,""))){
+                // Consume screen-off previews too: waking must not replay a skipped reminder.
+                if(s.settings.edit().putString("reminder-sent-"+m,key).commit()&&interactive)preview=Math.min(preview,m);
+            }
+        }
+        if(preview!=Integer.MAX_VALUE&&c.getSystemService(PowerManager.class).isInteractive())
+            Notices.focus(c,"집중 시간이 "+preview+"분 뒤 시작돼요","지금 하던 일을 마무리할 여유를 남겨 주세요.",false);
     }
     private static boolean delivered(Store s,String key) throws JSONException {
         JSONArray rows=s.rows("SELECT state FROM briefing_delivery WHERE key=?",key);if(rows.length()==0)return false;
