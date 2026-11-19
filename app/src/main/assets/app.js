@@ -632,13 +632,27 @@ function briefReplaceSection(id,html){
  const opened=new Set([...old.querySelectorAll('details[open]')].map(d=>d.id));if(old.open)opened.add(id);
  const template=document.createElement('template');template.innerHTML=html;const next=template.content.firstElementChild;next.briefMarkup=next.outerHTML;next.briefKey=next.id;old.replaceWith(next);if(opened.has(next.id)){next.open=true;briefHydrate(next);}bind(next);briefKeepDetails(next,opened);
 }
+// Split presentation spans at actual phone choices and local dates, including legacy saved reports.
+// These are clipped views of one observation, never additional observed time or inferred intent.
+const briefUsageViews=new WeakMap();
+function briefUsageSlices(b){
+ let slices=briefUsageViews.get(b);if(slices)return slices;
+ const cuts=new Set();for(const e of [...(b.events||[]),...(b.purposeContexts||[]),...(b.flows||[]).map(f=>f.event)])if(e?.kind==='unlock')cuts.add(e.time);
+ let date='';for(const h of b.hours||[]){const key=briefDateKey(h.start,b.timeZone);if(key!==date){cuts.add(h.start);date=key;}}
+ const boundaries=[...cuts].sort((a,b)=>a-b);slices=[];
+ for(const t of b.timeline||b.intervals||[]){let lo=0,hi=boundaries.length;while(lo<hi){const mid=(lo+hi)>>>1;if(boundaries[mid]<=t.start)lo=mid+1;else hi=mid;}let start=t.start;
+  for(let i=lo;i<boundaries.length&&boundaries[i]<t.end;i++){const end=boundaries[i];slices.push({...t,start,end,ms:end-start,sourceStart:t.sourceStart??t.start,sourceEnd:t.sourceEnd??t.end,technicalResume:!!t.technicalResume&&start===t.start});start=end;}
+  slices.push({...t,start,ms:t.end-start,sourceStart:t.sourceStart??t.start,sourceEnd:t.sourceEnd??t.end,technicalResume:!!t.technicalResume&&start===t.start});
+ }
+ briefUsageViews.set(b,slices);return slices;
+}
 function briefModel(b){
  let m=briefModels.get(b);if(m)return m;
  const events=new Map();for(const e of [...(b.purposeContexts||[]),...(b.flows||[]).map(f=>f.event),...(b.events||[])])if(e)events.set(String(e.id),e);
  const scope=new Map(),choices=[...events.values()].filter(e=>['unlock','app'].includes(e.kind)).sort((a,b)=>a.time-b.time||a.id-b.id);
  for(const event of choices)scope.set(String(event.id),{event,start:event.time,end:event.time,steps:[],keys:new Set(),directMillis:0,otherMillis:0});
  const purposeUsage=new Map(),phoneChoices=choices.filter(e=>e.kind==='unlock');let phoneCursor=-1;
- for(const [i,t] of (b.timeline||b.intervals||[]).entries()){
+ for(const [i,t] of briefUsageSlices(b).entries()){
   while(phoneCursor+1<phoneChoices.length&&phoneChoices[phoneCursor+1].time<=t.start)phoneCursor++;const phone=phoneChoices[phoneCursor];
   const ancestors=[],seen=new Set();let event=events.get(String(t.parent||t.eventId));
   if(!event)event=events.get(String(t.eventId));
@@ -669,9 +683,7 @@ function briefBoundaryRecords(b){
 }
 function briefTimelineModel(b){
  const model=briefModel(b);if(model.timeline)return model.timeline;
- const rawUsage=b.timeline||b.intervals||[],ranges=new Map();
- for(const h of b.hours||[]){const date=briefDateKey(h.start,b.timeZone),range=ranges.get(date);if(range)range.end=h.end;else ranges.set(date,{start:h.start,end:h.end});}
- const usage=rawUsage.flatMap(t=>{const slices=[];for(const range of ranges.values()){const start=Math.max(t.start,range.start),end=Math.min(t.end,range.end);if(end>start)slices.push({...t,start,end,ms:end-start,sourceStart:t.start,sourceEnd:t.end});}return slices.length?slices:[t];});
+ const usage=briefUsageSlices(b);
  const events=(b.events||[]).filter(e=>['unlock','app','utility','extend','dismiss','cancel'].includes(e.kind));
  const markers=[...usage.map((t,i)=>({...t,time:t.start,type:'usage',recordKey:'u'+t.start+'-'+encodeURIComponent(t.pkg||'')+'-'+(t.eventId||0)})),...events.map(e=>({...e,type:briefEventType(e),recordKey:'e'+e.id})),...briefBoundaryRecords(b)].sort((a,b)=>a.time-b.time||(a.type==='usage'?1:-1));
  const days=new Map(),locations=new Map(),pendingVisits=new Map();
@@ -702,7 +714,6 @@ function briefTimelineModel(b){
    locations.set(t.recordKey,[...parents,visit.id]);
   }else{owner.push({kind:'event',time:t.time,record:t});locations.set(t.recordKey,parents);}
  }
- for(const day of days.values()){day.spans=usage.filter(t=>t.start<day.end&&t.end>day.start);day.ms=day.spans.reduce((n,t)=>n+Math.max(0,Math.min(t.end,day.end)-Math.max(t.start,day.start)),0);}
  const counts=new Map();for(const t of markers)counts.set(t.type,(counts.get(t.type)||0)+1);
  model.timeline={markers,days:[...days.values()].filter(d=>d.markers.length).sort((a,b)=>a.start-b.start),locations,counts};return model.timeline;
 }

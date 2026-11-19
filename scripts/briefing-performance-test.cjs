@@ -26,6 +26,10 @@ const native=JSON.parse(fs.readFileSync('app/build/briefing-review/native.json',
   await page.locator('#brief-phone-2026-11-17-3 > summary').click();assert.equal(await child.isVisible(),true);
   await page.evaluate(()=>themeChanged(true));if(out)await page.screenshot({path:out+'/phone-group-open-dark.png',fullPage:true});
   await show(native.weekly);const week=await page.evaluate(()=>{const m=briefTimelineModel(briefData);return {total:m.days.reduce((s,d)=>s+d.ms,0),afterMidnight:m.days.find(d=>d.key==='2026-11-18').nodes.filter(n=>n.kind==='phone').map(n=>[n.event.id,n.nodes.reduce((s,v)=>s+(v.ms||0),0)])};});assert.equal(week.total,native.weekly.total);assert.deepEqual(week.afterMidnight,[[3,60000]]);
+  // One legacy/recovered observation can cross a newer phone selection without an app transition.
+  const crossing=structuredClone(native.displayDaily);crossing.timeline=[{start:Date.parse('2026-11-17T00:05:00Z'),end:Date.parse('2026-11-17T00:15:00Z'),pkg:'video',label:'동영상',parent:0,eventId:0,relation:'unconfirmed',focusState:'focus'}];crossing.flows=[];await show(crossing);
+  assert.deepEqual(await page.evaluate(()=>briefTimelineModel(briefData).days.flatMap(d=>d.nodes).filter(n=>n.kind==='phone').map(n=>n.nodes.reduce((s,v)=>s+(v.ms||0),0))),[300000,300000]);
+  assert.deepEqual(await page.evaluate(()=>briefModel(briefData).purposes.filter(p=>p.total>0).map(p=>p.total)),[300000,300000]);
   // A report and the next state response can both remain pending while home paints.
   await show(native.displayDaily);
   results.navigation=await page.evaluate(async()=>{
