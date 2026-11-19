@@ -36,7 +36,7 @@ public class BriefingDisplayContractTest {
         assertEquals(500000L,daily.getLong("total"));assertEquals(560000L,weekly.getLong("total"));
         boolean unknown=false;JSONArray timeline=daily.getJSONArray("timeline");for(int i=0;i<timeline.length();i++){JSONObject t=timeline.getJSONObject(i);if(t.getLong("parent")==2&&t.getLong("start")==at("2026-11-17T09:11")){assertEquals(0,t.getLong("eventId"));assertEquals("unconfirmed",t.getString("relation"));unknown=true;}}assertTrue(unknown);
         assertEquals(4,daily.getJSONArray("purposeContexts").length());
-        File dir=new File("build/briefing-review");assertTrue(dir.isDirectory()||dir.mkdirs());try(Writer w=new OutputStreamWriter(new FileOutputStream(new File(dir,"native.json")),StandardCharsets.UTF_8)){w.write(new JSONObject().put("daily",daily).put("weekly",weekly).put("shortUse",analyze(at("2026-11-17T09:00"),at("2026-11-17T09:01"),raw,1)).toString());}
+        File dir=new File("build/briefing-review");assertTrue(dir.isDirectory()||dir.mkdirs());try(Writer w=new OutputStreamWriter(new FileOutputStream(new File(dir,"native.json")),StandardCharsets.UTF_8)){w.write(new JSONObject().put("daily",daily).put("weekly",weekly).put("shortUse",analyze(at("2026-11-17T09:00"),at("2026-11-17T09:01"),raw,1)).put("boundaryUse",analyze(at("2026-11-17T20:50"),at("2026-11-17T21:10"),new JSONArray().put(span("2026-11-17T20:50","2026-11-17T21:10","video",0)),1)).toString());}
     }
     @Test public void adjacentUnknownIntentSpansKeepTheirDifferentRecordedParents() throws Exception{
         event(1,"2026-11-17T08:00","unlock","처음 목적","","",0);

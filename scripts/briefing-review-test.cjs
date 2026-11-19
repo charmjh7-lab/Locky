@@ -22,6 +22,9 @@ const native=JSON.parse(fs.readFileSync('app/build/briefing-review/native.json',
   assert.equal(await purpose().locator('summary strong').count(),1);
   assert.equal(await purpose().locator('.brief-purpose-choice').count(),2);
   if(out)await page.screenshot({path:out+'/purpose-open-light.png',fullPage:true});
+  await openId('brief-flows');await openId('brief-flow-1');assert.match(await page.locator('#brief-flow-1 .brief-app-totals').innerText(),/6분/);assert.match(await page.locator('#brief-flow-1 .brief-app-totals').innerText(),/1분 20초/);assert(!/목적 (연결 )?미확인/.test(await page.locator('#brief-flow-1').innerText()));
+  if(out)await page.screenshot({path:out+'/flow-open-light.png',fullPage:true});
+  await page.evaluate(()=>{document.getElementById('brief-flows').open=false;});
   await page.locator('[data-brief-filter=free]').click();assert.deepEqual(await page.locator('#brief-apps .usage-row strong').allTextContents(),['브라우저']);
   await page.locator('[data-brief-filter=focus]').click();assert.deepEqual(await page.locator('#brief-apps .usage-row strong').allTextContents(),['ChatGPT','동영상','브라우저']);
   await page.locator('[data-brief-sort=apps]').click();assert.deepEqual(await page.locator('#brief-apps .usage-row strong').allTextContents(),['브라우저','동영상','ChatGPT']);
@@ -36,6 +39,7 @@ const native=JSON.parse(fs.readFileSync('app/build/briefing-review/native.json',
   });
   assert.deepEqual(tree.outside,['video']);assert.equal(tree.ms,440000);
   assert.equal(await page.locator('#brief-phone-2026-11-17-1 > div > .brief-phone-children > .brief-visit-unit').count(),4);
+  await page.locator('[data-brief-sort=timeline]').click();assert.equal(await page.locator('#briefTimeline').getAttribute('open'),'');await page.locator('[data-brief-sort=timeline]').click();
   const firstApp='brief-visit-2026-11-17-e2';await openId(firstApp);assert.equal(await page.locator('[id="'+firstApp+'"]').count(),1);
   assert.match(await page.locator('[id="'+firstApp+'"] .brief-visit-records').innerText(),/5분/);
   assert(!/목적 (연결 )?미확인/.test(await page.locator('#briefTimeline').innerText()));
@@ -56,6 +60,7 @@ const native=JSON.parse(fs.readFileSync('app/build/briefing-review/native.json',
   if(out){await page.setViewportSize({width:390,height:844});await page.screenshot({path:out+'/purpose-timeline-dark.png',fullPage:true});}
   await show(native.shortUse);assert.match(await purpose().locator(':scope>summary').innerText(),/1분 미만/);assert.match(await page.locator('.brief-overview .stat').first().innerText(),/1분 미만/);
   assert.equal(await page.evaluate(()=>briefModel(briefData).purposes.find(p=>p.purpose==='자료 확인').total),20000);
+  await show(native.boundaryUse);const boundary=await page.evaluate(()=>briefTimelineModel(briefData).days.flatMap(d=>d.nodes).filter(n=>n.kind==='visit').map(v=>({steps:v.steps.length,ms:v.ms})));assert.deepEqual(boundary,[{steps:2,ms:1200000}],'focus boundary must not create a second app entry');
   await show(native.weekly);const week=await page.evaluate(()=>{const m=briefTimelineModel(briefData);return {total:m.days.reduce((s,d)=>s+d.ms,0),day:m.days.find(d=>d.key==='2026-11-18')?.ms,duplicates:m.markers.filter(t=>t.type==='usage').map(t=>t.recordKey)};});
   assert.equal(week.total,native.weekly.total);assert.equal(week.day,60000);assert.equal(new Set(week.duplicates).size,week.duplicates.length);
   const midnight=native.weekly.hours.find(h=>new Date(h.start).toISOString().startsWith('2026-11-17T15:00:00'));assert(midnight);
