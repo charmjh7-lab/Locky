@@ -22,7 +22,7 @@ const native=JSON.parse(fs.readFileSync('app/build/briefing-review/native.json',
   assert.equal(await purpose().locator('summary strong').count(),1);
   assert.equal(await purpose().locator('.brief-purpose-choice').count(),2);
   if(out)await page.screenshot({path:out+'/purpose-open-light.png',fullPage:true});
-  await openId('brief-flows');await openId('brief-flow-1');assert.match(await page.locator('#brief-flow-1 .brief-app-totals').innerText(),/6분/);assert.match(await page.locator('#brief-flow-1 .brief-app-totals').innerText(),/1분 20초/);assert(!/목적 (연결 )?미확인/.test(await page.locator('#brief-flow-1').innerText()));
+  await openId('brief-flows');await openId('brief-flow-1');assert.match(await page.locator('#brief-flow-1 .brief-app-totals').innerText(),/6분/);assert.match(await page.locator('#brief-flow-1 .brief-app-totals').innerText(),/1분 20초/);assert(!/목적 (연결 )?미확인/.test(await page.locator('#brief-flow-1').innerText()));assert(!/외부 앱 관측 공백/.test(await page.locator('#brief-flow-1').innerText()),'a gap in one purpose can contain other observed use');assert.match(await page.locator('#brief-flow-1 .brief-sequence-gap').first().innerText(),/선택 기록 사이 간격/);
   if(out)await page.screenshot({path:out+'/flow-open-light.png',fullPage:true});
   await page.evaluate(()=>{document.getElementById('brief-flows').open=false;});
   await page.locator('[data-brief-filter=free]').click();assert.deepEqual(await page.locator('#brief-apps .usage-row strong').allTextContents(),['브라우저']);

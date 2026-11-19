@@ -711,7 +711,7 @@ function briefPhoneView(group,b){
  return briefLazyDetails(group.id,summary,()=>`<div class="brief-phone-children">${(briefSort.timeline==='desc'?[...group.nodes].reverse():group.nodes).map(n=>n.kind==='visit'?briefVisitView(n,b):briefRecordView(n.record,b)).join('')}</div>`,'brief-phone-unit');
 }
 function briefTimelineView(b){
- const m=briefTimelineModel(b),desc=briefSort.timeline==='desc',options=[['all','전체'],['usage','앱 사용'],['choices','목적 선택'],['cancels','취소'],['extensions','연장'],['tools','도구'],['boundary','집중·자유 전환']];
+ const m=briefTimelineModel(b),desc=briefSort.timeline==='desc',options=[['all','전체'],['usage','앱 사용'],['choices','목적 선택'],['cancels','취소'],['extensions','연장'],['tools','도구'],['boundary','집중·자유시간']];
  const filters=`<div class="brief-filters brief-record-filters" aria-label="기록 유형">${options.map(([key,label])=>`<button data-brief-record-filter="${key}" class="${briefRecordFilter===key?'selected':''}" aria-pressed="${briefRecordFilter===key}">${label}<small>${key==='all'?m.markers.length:m.counts.get(key)||0}</small></button>`).join('')}</div>`;
  const days=desc?[...m.days].reverse():m.days;
  const groups=days.map(day=>{
@@ -778,7 +778,7 @@ function briefFlowView(f,b){
  return briefLazyDetails('brief-flow-'+key,summary,()=>{
   const focused=steps.filter(t=>t.focusState==='focus').reduce((n,t)=>n+briefMs(t),0),free=steps.filter(t=>t.focusState==='free').reduce((n,t)=>n+briefMs(t),0),unknown=Math.max(0,total-focused-free);let last=Math.max(b.start,f.start);
   const sequence=steps.map(t=>{
-   const gap=t.start>last?`<div class="brief-sequence-gap"><time>${briefClock(last,b.timeZone)}–${briefClock(t.start,b.timeZone)}</time><span>외부 앱 관측 공백 · ${briefPrecise(t.start-last)}</span></div>`:'';last=Math.max(last,t.end);
+   const gap=t.start>last?`<div class="brief-sequence-gap"><time>${briefClock(last,b.timeZone)}–${briefClock(t.start,b.timeZone)}</time><span>선택 기록 사이 간격 · ${briefPrecise(t.start-last)}</span></div>`:'';last=Math.max(last,t.end);
    const relation=t.relation==='direct'?'대상 앱':t.relation==='other-app'?'다른 앱':'';
    return gap+`<div class="brief-sequence-step"><time>${b.days===7?briefDateLabel(t.start,b.timeZone)+'<br>':''}${briefExactTime(t.start,b)}<small>–${briefDateKey(t.start,b.timeZone)!==briefDateKey(t.end,b.timeZone)?briefDateLabel(t.end,b.timeZone)+' ':''}${briefExactTime(t.end,b)}</small></time><div><strong>${esc(t.label)}</strong><span>${[relation,t.focusState==='focus'?'집중시간':t.focusState==='free'?'자유시간':'시간대 이력 없음'].filter(Boolean).join(' · ')}</span>${t.source==='usage-access'?'<small>Android 사용 정보로 보완</small>':''}${t.sourceStart!==undefined&&(t.sourceStart!==t.start||t.sourceEnd!==t.end)?`<small>원본 구간 ${briefRange(t.sourceStart,t.sourceEnd,b)}</small>`:''}${t.excludedTransitionMillis?`<small>전환 ${briefPrecise(t.excludedTransitionMillis)} 제외</small>`:''}</div><b>${briefPrecise(briefMs(t))}</b></div>`;
   }).join('');
