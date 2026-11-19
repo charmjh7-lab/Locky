@@ -189,6 +189,24 @@
 .briefing-page .brief-highlight>small{grid-column:1;font-size:.75rem;color:var(--ink)}.briefing-page .brief-highlight>time{font-size:.6875rem}.briefing-page .brief-highlight>svg{grid-column:2;grid-row:1/5}
 @media(max-width:360px){.brief-sequence-step{grid-template-columns:54px minmax(0,1fr) 52px;gap:6px}.brief-sequence-gap{margin-left:60px}.brief-record{grid-template-columns:52px minmax(0,1fr) 52px;gap:6px}.brief-flow-total{font-size:.875rem}.brief-flow-unit>summary{gap:8px}.brief-legend{grid-template-columns:1fr 1fr}}
 
+/* The All timeline follows recorded phone-purpose parents; app purposes stay under their app visit. */
+.briefing-page #briefContent .brief-phone-unit{margin:14px 0 20px;border-top:2px solid var(--green);padding:12px 0 0}
+.brief-phone-unit>summary,.brief-visit-unit>summary{display:flex;align-items:center;gap:12px;list-style:none;padding:10px 0;min-height:56px}
+.brief-phone-unit>summary::-webkit-details-marker,.brief-visit-unit>summary::-webkit-details-marker{display:none}
+.brief-phone-unit>summary:after,.brief-visit-unit>summary:after{content:'›';color:var(--green);flex-shrink:0}
+.brief-phone-unit[open]>summary:after,.brief-visit-unit[open]>summary:after{transform:rotate(90deg)}
+.brief-phone-heading{display:flex;flex-direction:column;gap:5px;flex:1;min-width:0}.brief-phone-heading>time{font-size:.75rem;color:var(--muted);font-weight:400}
+.brief-phone-heading>strong{font-size:1.0625rem;font-weight:650;line-height:1.5;overflow-wrap:anywhere;min-height:1em}
+.brief-phone-heading>small{font-size:.6875rem;color:var(--muted);font-weight:400}.brief-phone-unit>summary>b{font-size:1rem;font-weight:650;white-space:nowrap;font-variant-numeric:tabular-nums}
+.brief-phone-children{margin:6px 0 12px 10px;padding-left:14px;border-left:2px solid var(--line)}
+.briefing-page #briefContent .brief-visit-unit{margin:0;border-top:1px solid var(--line);padding:4px 0}
+.brief-visit-heading{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}.brief-visit-heading>strong{font-size:.9375rem;font-weight:600;overflow-wrap:anywhere}
+.brief-visit-heading>time{font-size:.6875rem;color:var(--muted);font-weight:400}.brief-visit-unit>summary>b{font-size:.8125rem;white-space:nowrap;font-weight:600;font-variant-numeric:tabular-nums}
+.brief-app-purpose{font-size:.875rem;font-weight:500;line-height:1.5;overflow-wrap:anywhere;padding:4px 0 4px 12px;margin:2px 0 0 2px;border-left:2px solid var(--brief-free)}
+.brief-app-purpose>small{display:block;font-size:.6875rem;color:var(--muted);font-weight:400;margin-bottom:3px}
+.brief-visit-records{padding-left:8px}.brief-visit-records .brief-record{grid-template-columns:62px minmax(0,1fr) auto;gap:8px}.brief-visit-records .brief-record strong{font-size:.8125rem}
+@media(max-width:360px){.brief-phone-children{margin-left:4px;padding-left:10px}.brief-visit-records{padding-left:0}.brief-visit-records .brief-record{grid-template-columns:50px minmax(0,1fr) 48px;gap:5px}}
+
 /* Compact memo density only; the shared tools and purpose geometry stay fixed. */
 .compact-note .mini-head{min-height:35px;height:35px;flex-shrink:0}
 .compact-note .mini-head button,.compact-note .mini-head .iconbtn{min-height:35px;height:35px}

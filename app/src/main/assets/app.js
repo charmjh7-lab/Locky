@@ -593,21 +593,146 @@ function briefSortButton(key){
  return `<button type="button" class="textbtn brief-sort" data-brief-sort="${key}" aria-label="${name}: ${order}, 정렬 전환" title="${order}"><span>${order}</span>${icon(desc?'sortDown':'sortUp')}</button>`;
 }
 function briefDuration(ms){return ms>0&&ms<60000?'1분 미만':`${mins(ms)}분`;}
-function briefFold(key,items,paint,count=5){const first=items.slice(0,count).map(paint).join('');return first+(items.length>count?`<details id="brief-${key}"><summary>전체 ${items.length}개 보기</summary>${items.slice(count).map((item,i)=>paint(item,i+count)).join('')}</details>`:'');}
+function briefFold(key,items,paint,count=5){return items.slice(0,count).map(paint).join('')+(items.length>count?briefLazyDetails('brief-'+key,`전체 ${items.length}개 보기`,()=>items.slice(count).map((item,i)=>paint(item,i+count)).join('')):'');}
 // Presentation only: keep native observed durations, explicit purpose links and unknown intervals intact.
 let briefRecordFilter='all',briefSelectedHour=null;
 const briefMs=t=>Math.max(0,Number(t.ms??(t.end-t.start))||0);
 const briefPercent=(part,total)=>total>0?Math.round(part/total*100):0;
-function briefDateKey(at,zone){return new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));}
-function briefDateLabel(at,zone){return new Date(at).toLocaleDateString('ko-KR',{timeZone:zone,month:'numeric',day:'numeric',weekday:'short'});}
-function briefExactTime(at,b){return new Date(at).toLocaleTimeString('ko-KR',{timeZone:b.timeZone,hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});}
-function briefWhen(at,b){return `${b.days===7?briefDateLabel(at,b.timeZone)+' · ':''}${dateTime(at,b.timeZone)}`;}
-function briefRange(start,end,b){return `${briefWhen(start,b)}–${briefDateKey(start,b.timeZone)!==briefDateKey(Math.max(start,end-1),b.timeZone)?briefWhen(end,b):dateTime(end,b.timeZone)}`;}
+const briefFormats=new Map(),briefModels=new WeakMap(),briefLazyViews=new Map();
+let briefViewRevision=0;
+function briefFormat(at,zone,kind){
+ const key=(zone||'')+'|'+kind;let formatter=briefFormats.get(key);
+ if(!formatter){const options=kind==='date'?{year:'numeric',month:'2-digit',day:'2-digit'}:kind==='label'?{month:'numeric',day:'numeric',weekday:'short'}:{hour:'2-digit',minute:'2-digit',hour12:false,...(kind==='exact'?{second:'2-digit'}:{})};formatter=new Intl.DateTimeFormat(kind==='date'?'en-CA':'ko-KR',{timeZone:zone,...options});briefFormats.set(key,formatter);}
+ return formatter.format(at);
+}
+function briefKnownPurpose(value){return ['목적 미확인','목적 연결 미확인','대상 연결 미확인'].includes(value)?'':value||'';}
+function briefLazyDetails(id,summary,paint,classes=''){
+ briefLazyViews.set(id,paint);
+ return `<details id="${esc(id)}" class="${classes}" data-brief-revision="${briefViewRevision}"><summary>${summary}</summary><div data-brief-lazy="${esc(id)}"></div></details>`;
+}
+function briefHydrate(details){
+ if(!details?.open)return;
+ const body=[...details.children].find(el=>el.dataset?.briefLazy===details.id);
+ if(!body||body.briefReady)return;
+ const paint=briefLazyViews.get(details.id);if(!paint)return;
+ body.briefReady=true;body.innerHTML=paint();bind(body);
+}
+function briefKeepDetails(root,opened){
+ let changed=true;while(changed){changed=false;for(const d of root.querySelectorAll('details'))if(opened.has(d.id)&&!d.open){d.open=true;briefHydrate(d);changed=true;}}
+}
+function briefInstallLazy(){
+ const area=$('#briefContent');if(!area||area.briefLazyInstalled)return;area.briefLazyInstalled=true;
+ area.addEventListener('toggle',e=>{if(e.target.tagName==='DETAILS'&&e.target.open)briefHydrate(e.target);},true);
+}
+function briefReplaceSection(id,html){
+ const old=document.getElementById(id);if(!old)return;
+ const opened=new Set([...old.querySelectorAll('details[open]')].map(d=>d.id));if(old.open)opened.add(id);
+ const template=document.createElement('template');template.innerHTML=html;const next=template.content.firstElementChild;old.replaceWith(next);if(opened.has(next.id)){next.open=true;briefHydrate(next);}bind(next);briefKeepDetails(next,opened);
+}
+function briefModel(b){
+ let m=briefModels.get(b);if(m)return m;
+ const flows=briefFlowUnits(b),events=new Map(),byPurpose=new Map();
+ for(const e of [...(b.purposeContexts||[]),...flows.map(f=>f.event),...(b.events||[])])if(e)events.set(String(e.id),e);
+ for(const f of flows){f.apps=briefAppTotals(f.steps);f.total=f.steps.reduce((n,t)=>n+briefMs(t),0);const p=f.event.purpose;if(!byPurpose.has(p))byPurpose.set(p,[]);byPurpose.get(p).push(f);}
+ m={flows,events,byPurpose,timeline:null};briefModels.set(b,m);return m;
+}
+function briefPhoneContext(id,m){
+ const seen=new Set();let e=m.events.get(String(id));while(e&&!seen.has(String(e.id))){seen.add(String(e.id));if(e.kind==='unlock')return e;e=m.events.get(String(e.parent));}return null;
+}
+function briefTimelineModel(b){
+ const model=briefModel(b);if(model.timeline)return model.timeline;
+ const usage=b.timeline||b.intervals||[],events=(b.events||[]).filter(e=>['unlock','app','utility','extend','dismiss','cancel'].includes(e.kind));
+ const markers=[...usage.map((t,i)=>({...t,time:t.start,type:'usage',recordKey:'u'+t.start+'-'+encodeURIComponent(t.pkg||'')+'-'+(t.eventId||0)})),...events.map(e=>({...e,type:briefEventType(e),recordKey:'e'+e.id})),...(b.focus?.periods||[]).filter(p=>p.known).map((p,i)=>({time:p.start,type:'boundary',text:p.focus?'집중시간 시작':'자유시간 시작',recordKey:'b'+i}))].sort((a,b)=>a.time-b.time||(a.type==='usage'?1:-1));
+ const phones=[...model.events.values()].filter(e=>e.kind==='unlock').sort((a,b)=>a.time-b.time||a.id-b.id),days=new Map(),locations=new Map();
+ for(const h of b.hours||[]){const key=briefDateKey(h.start,b.timeZone);let day=days.get(key);if(!day){day={key,start:h.start,end:h.end,ms:0,markers:[],nodes:[],phoneGroups:new Map(),spans:[]};days.set(key,day);}day.end=h.end;}
+ let phoneIndex=-1;
+ for(const t of markers){
+  while(phoneIndex+1<phones.length&&phones[phoneIndex+1].time<=t.time)phoneIndex++;
+  const latestPhone=phones[phoneIndex],dayKey=briefDateKey(t.time,b.timeZone);let day=days.get(dayKey);
+  if(!day){day={key:dayKey,start:t.time,end:t.end||t.time+1,ms:0,markers:[],nodes:[],phoneGroups:new Map(),spans:[]};days.set(dayKey,day);}day.markers.push(t);
+  if(t.type==='usage'){day.spans.push(t);day.ms+=briefMs(t);}
+  let phone=t.kind==='unlock'?t:briefPhoneContext(t.type==='usage'?(t.parent||t.eventId):t.parent,model);
+  // Only explicit recorded parents establish the purpose hierarchy. Later phone choices end the old parent scope.
+  if(phone&&latestPhone&&String(phone.id)!==String(latestPhone.id))phone=null;
+  let owner=day.nodes,parents=['brief-record-day-'+dayKey];
+  if(phone){let group=day.phoneGroups.get(String(phone.id));if(!group){group={kind:'phone',event:phone,time:Math.max(phone.time,day.start),nodes:[],id:'brief-phone-'+dayKey+'-'+phone.id};day.phoneGroups.set(String(phone.id),group);day.nodes.push(group);}owner=group.nodes;parents.push(group.id);}
+  if(t.kind==='unlock'){locations.set(t.recordKey,parents);continue;}
+  if(t.type==='usage'||t.kind==='app'){
+   const choice=t.kind==='app'?t:model.events.get(String(t.eventId));
+   const appChoice=choice?.kind==='app'&&(!choice.pkg||choice.pkg===t.pkg)?choice:null;
+   const pkg=t.pkg||t.target||'',label=t.label||b.apps?.find(a=>a.pkg===pkg)?.label||pkg;
+   const previous=owner.at(-1),sameChoice=String(previous?.choice?.id||'')===String(appChoice?.id||'');
+   const canJoin=t.type==='usage'&&previous?.kind==='visit'&&previous.pkg===pkg&&sameChoice&&(!previous.steps.length||t.start<=previous.end||t.technicalResume&&t.start-previous.end<=1500);
+   let visit=canJoin?previous:{kind:'visit',pkg,label,choice:appChoice,time:t.time,end:t.time,steps:[],id:'brief-visit-'+dayKey+'-'+t.recordKey};
+   if(!canJoin)owner.push(visit);if(t.type==='usage'){visit.steps.push(t);visit.end=t.end;visit.ms=(visit.ms||0)+briefMs(t);}else visit.event=t;
+   locations.set(t.recordKey,[...parents,visit.id]);
+  }else{owner.push({kind:'event',time:t.time,record:t});locations.set(t.recordKey,parents);}
+ }
+ for(const day of days.values()){day.spans=usage.filter(t=>t.start<day.end&&t.end>day.start);day.ms=day.spans.reduce((n,t)=>n+Math.max(0,Math.min(t.end,day.end)-Math.max(t.start,day.start)),0);}
+ const counts=new Map();for(const t of markers)counts.set(t.type,(counts.get(t.type)||0)+1);
+ model.timeline={markers,days:[...days.values()].filter(d=>d.markers.length).sort((a,b)=>a.start-b.start),locations,counts};return model.timeline;
+}
+function briefVisitView(v,b){
+ const purpose=briefKnownPurpose(v.choice?.purpose),summary=`<span class="brief-visit-heading"><strong>${esc(v.label)}</strong><time>${briefWhen(v.time,b)}${v.end>v.time?'–'+briefClock(v.end,b.timeZone):''}</time>${purpose?`<span class="brief-app-purpose"><small>앱 진입 목적</small>${esc(purpose)}</span>`:''}</span><b>${briefNumber(v.ms||0)}</b>`;
+ return briefLazyDetails(v.id,summary,()=>`<div class="brief-visit-records">${v.steps.map(t=>briefRecordView({...t,hidePurpose:true},b)).join('')||'<p class="small muted">연결된 앱 사용 구간 없음</p>'}</div>`,'brief-visit-unit');
+}
+function briefPhoneView(group,b){
+ const visits=group.nodes.filter(n=>n.kind==='visit'),total=visits.reduce((n,v)=>n+(v.ms||0),0),purpose=briefKnownPurpose(group.event.purpose);
+ const summary=`<span class="brief-phone-heading"><time>${briefWhen(group.event.time,b)}${group.event.time<b.start?' · 기간 이전 선택':''}</time><strong>${esc(purpose)}</strong><small>휴대폰 시작 목적 · ${visits.length}번 앱 진입</small></span><b>${briefNumber(total)}</b>`;
+ return briefLazyDetails(group.id,summary,()=>`<div class="brief-phone-children">${(briefSort.timeline==='desc'?[...group.nodes].reverse():group.nodes).map(n=>n.kind==='visit'?briefVisitView(n,b):briefRecordView(n.record,b)).join('')}</div>`,'brief-phone-unit');
+}
+function briefTimelineView(b){
+ const m=briefTimelineModel(b),desc=briefSort.timeline==='desc',options=[['all','전체'],['usage','앱 사용'],['choices','목적 선택'],['cancels','취소'],['extensions','연장'],['tools','도구'],['boundary','집중·자유 전환']];
+ const filters=`<div class="brief-filters brief-record-filters" aria-label="기록 유형">${options.map(([key,label])=>`<button data-brief-record-filter="${key}" class="${briefRecordFilter===key?'selected':''}" aria-pressed="${briefRecordFilter===key}">${label}<small>${key==='all'?m.markers.length:m.counts.get(key)||0}</small></button>`).join('')}</div>`;
+ const days=desc?[...m.days].reverse():m.days;
+ const groups=days.map(day=>{
+  const items=day.markers.filter(t=>briefRecordFilter==='all'||t.type===briefRecordFilter);if(!items.length)return '';
+  const summary=`<span>${briefDateLabel(day.start,b.timeZone)}<small>${items.length}개 기록 · 외부 앱 ${briefDuration(day.ms)}</small></span>${icon('arrow')}`;
+  const filter=briefRecordFilter;
+  return briefLazyDetails('brief-record-day-'+day.key,summary,()=>{
+   const track=`<div class="brief-day-track" aria-label="실제 사용 구간, 빈 곳은 외부 앱 관측 없음">${day.spans.map(t=>`<i style="left:${Math.max(0,(t.start-day.start)/(day.end-day.start)*100)}%;width:${Math.max(0,(Math.min(t.end,day.end)-Math.max(t.start,day.start))/(day.end-day.start)*100)}%"></i>`).join('')}</div><div class="brief-chart-axis"><span>${briefClock(day.start,b.timeZone)}</span><span>${briefClock(day.end,b.timeZone)}</span></div>`;
+   if(filter==='all')return track+(desc?[...day.nodes].reverse():day.nodes).map(n=>n.kind==='phone'?briefPhoneView(n,b):n.kind==='visit'?briefVisitView(n,b):briefRecordView(n.record,b)).join('');
+   const buckets=new Map();for(const t of(desc?[...items].reverse():items)){const hour=briefClock(t.time,b.timeZone).split(':')[0];if(!buckets.has(hour))buckets.set(hour,[]);buckets.get(hour).push(t);}
+   return track+[...buckets].map(([hour,rows])=>briefLazyDetails('brief-record-'+day.key+'-'+hour,`<strong>${hour}시</strong><span>${rows.length}개 기록</span>`,()=>`<div class="brief-record-list">${rows.map(t=>briefRecordView(t,b)).join('')}</div>`,'brief-record-hour')).join('');
+  },'brief-day-unit');
+ }).join('');
+ return filters+'<p class="small muted">'+(briefRecordFilter==='all'?'휴대폰 목적 → 앱 → 앱 진입 목적 순서로 확인합니다.':'날짜와 시간대를 펼쳐 확인합니다.')+' 사용 막대의 빈 곳은 미사용 또는 미관측 구간입니다.</p>'+ (groups||'<p class="empty">선택한 유형의 기록 없음</p>');
+}
+function briefTimelineSection(b){return `<details class="card brief-timeline" id="briefTimeline"><summary><span>시간선과 행동 기록</span>${briefSortButton('timeline')}</summary><div id="briefTimelineBody">${briefTimelineView(b)}</div></details>`;}
+function briefAppsSection(b){
+ const hasFocus=Number(b.focus?.knownMillis)>0,field=!hasFocus||briefAppFilter==='all'?'ms':briefAppFilter,apps=[...(b.apps||[])].sort((a,b)=>(briefSort.apps==='desc'?-1:1)*((a[field]||0)-(b[field]||0))||a.label.localeCompare(b.label,'ko')),sum=apps.reduce((n,a)=>n+(a[field]||0),0);
+ const rows=briefFold('apps',apps.filter(a=>a[field]>0),a=>`<div class="usage-row"><div class="row"><strong>${esc(a.label)}</strong><span>${briefNumber(a[field])} <small>${briefPercent(a[field],sum)}%</small></span></div><div class="meter"><span style="width:${sum?a[field]/sum*100:0}%"></span></div><p class="small muted">${field==='ms'?(hasFocus?`집중 ${briefDuration(a.focus)} · 자유 ${briefDuration(a.free)}`:'시간대 이력 없음'):`전체 ${briefDuration(a.ms)}`}${a.unknown?' · 시간대 미확인 '+briefDuration(a.unknown):''}</p></div>`);
+ return `<section class="section" id="brief-apps"><div class="sectionhead"><h2>앱 사용 구성</h2>${briefSortButton('apps')}</div><div class="brief-filters">${[['all','전체'],['focus','집중시간'],['free','자유시간']].map(([key,label])=>`<button data-brief-filter="${key}" class="${(field==='ms'?'all':field)===key?'selected':''}" aria-pressed="${(field==='ms'?'all':field)===key}" ${!hasFocus&&key!=='all'?'disabled':''}>${label}</button>`).join('')}</div><p class="small muted brief-filter-total">${field==='ms'?'전체':field==='focus'?'집중시간':'자유시간'} ${briefDuration(sum)} 기준</p>${rows||'<p class="empty">해당 시간대의 사용 기록 없음</p>'}</section>`;
+}
+function briefHourSelection(b,selected){
+ const spans=(b.timeline||[]).filter(t=>t.start<selected.end&&t.end>selected.start).map(t=>({...t,ms:Math.max(0,Math.min(t.end,selected.end)-Math.max(t.start,selected.start))}));
+ return `<div class="row"><strong>${briefRange(selected.start,selected.end,b)}</strong><b>${briefPrecise(selected.ms)}</b></div><div class="brief-app-totals">${briefAppTotals(spans).map(a=>`<div><span>${esc(a.label)}</span><b>${briefPrecise(a.ms)}</b></div>`).join('')||'<p class="small muted">외부 앱 사용 관측 없음</p>'}</div><button class="textbtn" data-brief-jump="${selected.start}">시간선에서 보기</button>`;
+}
+function briefSelectHour(at){
+ const b=briefData,selected=b?.hours?.find(h=>h.start===at);if(!selected)return;briefSelectedHour=at;
+ const section=$('#brief-hours');for(const el of section.querySelectorAll('.brief-hour-cell')){const active=Number(el.dataset.briefHour)===at;el.classList.toggle('selected',active);el.setAttribute('aria-pressed',String(active));}
+ const panel=section.querySelector('.brief-hour-selection');panel.innerHTML=briefHourSelection(b,selected);bind(panel);panel.scrollIntoView({block:'nearest',behavior:'smooth'});
+}
+function briefJump(at){
+ const b=briefData;if(!b)return;
+ if(briefRecordFilter!=='all'){briefRecordFilter='all';briefReplaceSection('briefTimeline',briefTimelineSection(b));}
+ const timeline=$('#briefTimeline');timeline.open=true;const m=briefTimelineModel(b);
+ const target=m.markers.find(t=>t.type==='usage'&&t.start<=at&&t.end>at)||m.markers.find(t=>t.time>=at)||m.markers.at(-1);if(!target)return;
+ for(const id of m.locations.get(target.recordKey)||[]){const detail=document.getElementById(id);if(detail){detail.open=true;briefHydrate(detail);}}
+ const candidates=[...timeline.querySelectorAll('[data-timeline-start]')];
+ const row=candidates.find(el=>Number(el.dataset.timelineStart)===target.time)||document.getElementById((m.locations.get(target.recordKey)||[]).at(-1));row?.scrollIntoView({block:'center',behavior:'smooth'});
+}
+function briefClock(at,zone){return briefFormat(at,zone,'clock');}
+function briefDateKey(at,zone){return briefFormat(at,zone,'date');}
+function briefDateLabel(at,zone){return briefFormat(at,zone,'label');}
+function briefExactTime(at,b){return briefFormat(at,b.timeZone,'exact');}
+function briefWhen(at,b){return `${b.days===7?briefDateLabel(at,b.timeZone)+' · ':''}${briefClock(at,b.timeZone)}`;}
+function briefRange(start,end,b){return `${briefWhen(start,b)}–${briefDateKey(start,b.timeZone)!==briefDateKey(Math.max(start,end-1),b.timeZone)?briefWhen(end,b):briefClock(end,b.timeZone)}`;}
 function briefPrecise(ms){const seconds=Math.floor(Math.max(0,ms||0)/1000);return seconds<60?`${seconds}초`:`${Math.floor(seconds/60)}분${seconds%60?' '+seconds%60+'초':''}`;}
 function briefNumber(ms){return `<span title="${briefPrecise(ms)}">${briefDuration(ms)}</span>`;}
 function briefParts(parts,label){
  const values=parts.filter(p=>p.ms>0),total=values.reduce((n,p)=>n+p.ms,0);
- return `<div class="brief-parts" role="img" aria-label="${esc(label+': '+parts.map(p=>p.label+' '+briefPrecise(p.ms)).join(', '))}">${values.map(p=>`<i class="${p.tone||''}" style="width:${p.ms/total*100}%"></i>`).join('')}</div><div class="brief-legend">${parts.map(p=>`<span><i class="${p.tone||''}"></i>${esc(p.label)} <b>${briefDuration(p.ms)}</b>${total?`<small>${briefPercent(p.ms,total)}%</small>`:''}</span>`).join('')}</div>`;
+ return `<div class="brief-parts" role="img" aria-label="${esc(label+': '+parts.map(p=>p.label+' '+briefPrecise(p.ms)).join(', '))}">${values.map(p=>`<i class="${p.tone||''}" style="width:${p.ms/total*100}%"></i>`).join('')}</div><div class="brief-legend">${parts.filter(p=>p.label||p.ms>0).map(p=>`<span><i class="${p.tone||''}"></i>${esc(p.label)} <b>${briefDuration(p.ms)}</b>${total?`<small>${briefPercent(p.ms,total)}%</small>`:''}</span>`).join('')}</div>`;
 }
 function briefAppTotals(steps){
  const byApp=new Map();for(const t of steps){const key=t.pkg||t.label,app=byApp.get(key)||{label:t.label||t.pkg||'앱 미확인',ms:0};app.ms+=briefMs(t);byApp.set(key,app);}
@@ -619,23 +744,29 @@ function briefFlowUnits(b){
  return units.sort((a,b)=>b.start-a.start);
 }
 function briefFlowView(f,b){
- const event=f.event||{},steps=f.steps||[],total=steps.reduce((n,t)=>n+briefMs(t),0),apps=briefAppTotals(steps),key=event.id??f.start;
- const unknown=Math.max(0,total-(f.directMillis||0)-(f.otherMillis||0));
- let last=Math.max(b.start,f.start);
- const sequence=steps.map((t,i)=>{
-  const gap=t.start>last?`<div class="brief-sequence-gap"><time>${dateTime(last,b.timeZone)}–${dateTime(t.start,b.timeZone)}</time><span>외부 앱 관측 공백 · ${briefPrecise(t.start-last)}</span></div>`:'';last=Math.max(last,t.end);
-  return gap+`<div class="brief-sequence-step"><time>${b.days===7?briefDateLabel(t.start,b.timeZone)+'<br>':''}${briefExactTime(t.start,b)}<small>–${briefDateKey(t.start,b.timeZone)!==briefDateKey(t.end,b.timeZone)?briefDateLabel(t.end,b.timeZone)+' ':''}${briefExactTime(t.end,b)}</small></time><div><strong>${esc(t.label)}</strong><span>${t.relation==='direct'?'대상 앱':t.relation==='other-app'?'다른 앱':'대상 연결 미확인'} · ${t.focusState==='focus'?'집중시간':t.focusState==='free'?'자유시간':'시간대 이력 없음'}</span>${t.source==='usage-access'?'<small>Android 사용 정보로 보완 · 목적 미확인</small>':''}${t.excludedTransitionMillis?`<small>전환 ${briefPrecise(t.excludedTransitionMillis)} 제외</small>`:''}</div><b>${briefPrecise(briefMs(t))}</b></div>`;
- }).join('');
- return `<details class="brief-flow-unit" id="brief-flow-${esc(key)}"><summary><span class="brief-flow-heading"><time>${briefWhen(f.start,b)}${f.start<b.start?' · 기간 이전 선택':''}</time><strong>${esc(event.purpose||'목적 미확인')}</strong><small>${apps.length?apps.slice(0,3).map(a=>esc(a.label)).join(' · ')+(apps.length>3?` 외 ${apps.length-3}개`:''):'연결된 앱 사용 기록 없음'}</small></span><span class="brief-flow-total">${briefNumber(total)}<small>${apps.length}개 앱 · ${steps.length}개 구간</small></span></summary><div class="brief-flow-body">${total?briefParts([{label:'대상 앱',ms:f.directMillis||0},{label:'다른 앱',ms:f.otherMillis||0,tone:'free'},{label:'연결 미확인',ms:unknown,tone:'unknown'}],'선택 이후 관측된 사용'):''}${apps.length?`<div class="brief-app-totals">${apps.map(a=>`<div><span>${esc(a.label)}</span><b>${briefPrecise(a.ms)}</b></div>`).join('')}</div>`:''}<h3>실제 사용 순서</h3>${sequence||'<p class="small muted">이 선택에 연결된 외부 앱 사용은 관측되지 않았습니다.</p>'}${(f.newChoices||[]).length?`<p class="small muted">구간 안 새 목적 선택 ${(f.newChoices||[]).length}회 · 시간선에서 확인</p>`:''}<button class="textbtn" data-brief-jump="${f.start}">해당 시간선 보기 ${icon('arrow')}</button></div></details>`;
+ const event=f.event||{},steps=f.steps||[],total=f.total??steps.reduce((n,t)=>n+briefMs(t),0),apps=f.apps||briefAppTotals(steps),key=event.id??f.start;
+ const summary=`<span class="brief-flow-heading"><time>${briefWhen(f.start,b)}${f.start<b.start?' · 기간 이전 선택':''}</time><strong>${esc(briefKnownPurpose(event.purpose))}</strong><small>${apps.length?apps.slice(0,3).map(a=>esc(a.label)).join(' · ')+(apps.length>3?` 외 ${apps.length-3}개`:''):'연결된 앱 사용 기록 없음'}</small></span><span class="brief-flow-total">${briefNumber(total)}<small>${apps.length}개 앱 · ${steps.length}개 구간</small></span>`;
+ return briefLazyDetails('brief-flow-'+key,summary,()=>{
+  const unknown=Math.max(0,total-(f.directMillis||0)-(f.otherMillis||0));let last=Math.max(b.start,f.start);
+  const sequence=steps.map(t=>{
+   const gap=t.start>last?`<div class="brief-sequence-gap"><time>${briefClock(last,b.timeZone)}–${briefClock(t.start,b.timeZone)}</time><span>외부 앱 관측 공백 · ${briefPrecise(t.start-last)}</span></div>`:'';last=Math.max(last,t.end);
+   const relation=t.relation==='direct'?'대상 앱':t.relation==='other-app'?'다른 앱':'';
+   return gap+`<div class="brief-sequence-step"><time>${b.days===7?briefDateLabel(t.start,b.timeZone)+'<br>':''}${briefExactTime(t.start,b)}<small>–${briefDateKey(t.start,b.timeZone)!==briefDateKey(t.end,b.timeZone)?briefDateLabel(t.end,b.timeZone)+' ':''}${briefExactTime(t.end,b)}</small></time><div><strong>${esc(t.label)}</strong><span>${[relation,t.focusState==='focus'?'집중시간':t.focusState==='free'?'자유시간':'시간대 이력 없음'].filter(Boolean).join(' · ')}</span>${t.source==='usage-access'?'<small>Android 사용 정보로 보완</small>':''}${t.excludedTransitionMillis?`<small>전환 ${briefPrecise(t.excludedTransitionMillis)} 제외</small>`:''}</div><b>${briefPrecise(briefMs(t))}</b></div>`;
+  }).join('');
+  return `<div class="brief-flow-body">${total?briefParts([{label:'대상 앱',ms:f.directMillis||0},{label:'다른 앱',ms:f.otherMillis||0,tone:'free'},{label:'',ms:unknown,tone:'unknown'}],'선택 이후 관측된 사용'):''}${apps.length?`<div class="brief-app-totals">${apps.map(a=>`<div><span>${esc(a.label)}</span><b>${briefPrecise(a.ms)}</b></div>`).join('')}</div>`:''}<h3>실제 사용 순서</h3>${sequence||'<p class="small muted">이 선택에 연결된 외부 앱 사용은 관측되지 않았습니다.</p>'}${(f.newChoices||[]).length?`<p class="small muted">구간 안 새 목적 선택 ${f.newChoices.length}회 · 시간선에서 확인</p>`:''}<button class="textbtn" data-brief-jump="${f.start}">해당 시간선 보기 ${icon('arrow')}</button></div>`;
+ },'brief-flow-unit');
 }
 function briefFlowGroups(flows,b){
  const days=new Map();for(const f of flows){const key=briefDateKey(f.start,b.timeZone);if(!days.has(key))days.set(key,[]);days.get(key).push(f);}
  return [...days].map(([key,items])=>`<div class="brief-record-day"><h3>${briefDateLabel(items[0].start,b.timeZone)}<span>${items.length}번 선택</span></h3>${briefFold('flows-'+key,items,f=>briefFlowView(f,b),4)}</div>`).join('')||'<p class="empty">목적 선택 기록 없음</p>';
 }
 function briefPurposeView(p,flows,b,index){
- index=encodeURIComponent(p.purpose);
- const related=flows.filter(f=>f.event?.purpose===p.purpose),steps=related.flatMap(f=>f.steps||[]),apps=briefAppTotals(steps),linked=(p.directMillis||0)+(p.otherMillis||0),unconfirmed=Math.max(0,steps.reduce((n,t)=>n+briefMs(t),0)-linked);
- return `<details class="brief-purpose-unit" id="brief-purpose-${index}"><summary><span><strong>${esc(p.purpose)}</strong><small>${p.priorSelection?'기간 이전 선택':(p.count||0)+'번 선택'} · ${apps.length}개 앱</small></span><b>${briefNumber(linked)}<small>연결 사용</small></b></summary>${briefParts([{label:'대상 앱',ms:p.directMillis||0},{label:'다른 앱',ms:p.otherMillis||0,tone:'free'}],'목적에 연결된 사용')}${unconfirmed?`<p class="small muted">대상 연결 미확인 관측 ${briefPrecise(unconfirmed)} · 연결 사용 합계에서 제외</p>`:''}${apps.length?`<div class="brief-app-totals">${apps.map(a=>`<div><span>${esc(a.label)}</span><b>${briefPrecise(a.ms)}</b></div>`).join('')}</div>`:''}<p class="small muted">선택과 앱 사용의 연결 기록이며 목적 달성 여부를 뜻하지 않습니다.</p>${related.length?briefFold('purpose-flows-'+index,related,f=>briefFlowView({...f,event:{...f.event,id:'purpose-'+index+'-'+f.event.id}},b),3):'<p class="small muted">이 목적에 연결된 사용 흐름 없음</p>'}</details>`;
+ index=encodeURIComponent(p.purpose);const m=briefModel(b),related=m.byPurpose.get(p.purpose)||[],linked=(p.directMillis||0)+(p.otherMillis||0),appNames=new Set();for(const f of related)for(const a of f.apps||[])appNames.add(a.label);
+ const summary=`<span><strong>${esc(briefKnownPurpose(p.purpose))}</strong><small>${p.priorSelection?'기간 이전 선택':(p.count||0)+'번 선택'} · ${appNames.size}개 앱</small></span><b>${briefNumber(linked)}<small>연결 사용</small></b>`;
+ return briefLazyDetails('brief-purpose-'+index,summary,()=>{
+  const apps=briefAppTotals(related.flatMap(f=>f.steps));
+  return `${briefParts([{label:'대상 앱',ms:p.directMillis||0},{label:'다른 앱',ms:p.otherMillis||0,tone:'free'}],'목적에 연결된 사용')}${apps.length?`<div class="brief-app-totals">${apps.map(a=>`<div><span>${esc(a.label)}</span><b>${briefPrecise(a.ms)}</b></div>`).join('')}</div>`:''}<p class="small muted">선택과 앱 사용의 연결 기록이며 목적 달성 여부를 뜻하지 않습니다.</p>${related.length?briefFold('purpose-flows-'+index,related,f=>briefFlowView({...f,event:{...f.event,id:'purpose-'+index+'-'+f.event.id}},b),3):'<p class="small muted">이 목적에 연결된 사용 흐름 없음</p>'}`;
+ },'brief-purpose-unit');
 }
 function briefHoursView(b){
  const hours=b.hours||[],days=new Map();for(const h of hours){const key=briefDateKey(h.start,b.timeZone);if(!days.has(key))days.set(key,[]);days.get(key).push(h);}
@@ -643,33 +774,19 @@ function briefHoursView(b){
  const max=Math.max(1,...hours.map(h=>h.ms||0)),peak=hours.reduce((a,h)=>h.ms>a.ms?h:a,hours[0]);
  const selected=hours.find(h=>h.start===briefSelectedHour)||peak;
  const cell=h=>`<button type="button" data-brief-hour="${h.start}" class="brief-hour-cell ${selected.start===h.start?'selected':''} ${h.ms?'has-use':''}" style="--level:${h.ms?Math.max(.15,h.ms/max):0}" aria-pressed="${selected.start===h.start}" aria-label="${esc(briefRange(h.start,h.end,b)+' · '+briefPrecise(h.ms))}">${b.days===7?'':`<i style="height:${h.ms?Math.max(2,h.ms/max*100):0}%"></i>`}</button>`;
- const chart=b.days===7?`<div class="brief-heat-scroll"><div class="brief-heat"><div class="brief-heat-axis"><span></span>${[0,6,12,18].map(h=>`<span>${h}시</span>`).join('')}</div>${[...days].map(([key,items])=>`<div class="brief-heat-row"><span>${briefDateLabel(items[0].start,b.timeZone)}<small>${briefDuration(items.reduce((n,h)=>n+h.ms,0))}</small></span><div>${items.map(cell).join('')}</div></div>`).join('')}</div></div>`:`<div class="brief-hour-chart">${hours.map(cell).join('')}</div><div class="brief-chart-axis"><span>${dateTime(hours[0].start,b.timeZone)}</span><span>${dateTime(hours[Math.floor(hours.length/2)].start,b.timeZone)}</span><span>${dateTime(hours.at(-1).end,b.timeZone)}</span></div>`;
+ const chart=b.days===7?`<div class="brief-heat-scroll"><div class="brief-heat"><div class="brief-heat-axis"><span></span>${[0,6,12,18].map(h=>`<span>${h}시</span>`).join('')}</div>${[...days].map(([key,items])=>`<div class="brief-heat-row"><span>${briefDateLabel(items[0].start,b.timeZone)}<small>${briefDuration(items.reduce((n,h)=>n+h.ms,0))}</small></span><div>${items.map(cell).join('')}</div></div>`).join('')}</div></div>`:`<div class="brief-hour-chart">${hours.map(cell).join('')}</div><div class="brief-chart-axis"><span>${briefClock(hours[0].start,b.timeZone)}</span><span>${briefClock(hours[Math.floor(hours.length/2)].start,b.timeZone)}</span><span>${briefClock(hours.at(-1).end,b.timeZone)}</span></div>`;
  const dayTotals=[...days.values()].map(items=>({start:items[0].start,ms:items.reduce((n,h)=>n+h.ms,0)})),busyDay=dayTotals.reduce((a,d)=>d.ms>a.ms?d:a,dayTotals[0]);
- const intervals=(b.timeline||[]).filter(t=>t.start<selected.end&&t.end>selected.start).map(t=>({...t,ms:Math.max(0,Math.min(t.end,selected.end)-Math.max(t.start,selected.start))}));
- return `<div class="brief-pattern-lead"><div><span>${b.days===7?'가장 사용이 많았던 날':'가장 사용이 많았던 시간'}</span><strong>${(b.days===7?busyDay.ms:peak.ms)>0?(b.days===7?briefDateLabel(busyDay.start,b.timeZone):dateTime(peak.start,b.timeZone)+'–'+dateTime(peak.end,b.timeZone)):'관측된 사용 없음'}</strong></div><b>${briefDuration(b.days===7?busyDay.ms:peak.ms)}</b></div>${chart}<p class="small muted brief-chart-note">${b.days===7?'진할수록 관측 사용량이 많습니다.':'막대 높이는 시간별 관측 사용량입니다.'} 시간대를 누르면 앱별 내역을 볼 수 있습니다.</p><div class="brief-hour-selection" aria-live="polite"><div class="row"><strong>${briefRange(selected.start,selected.end,b)}</strong><b>${briefPrecise(selected.ms)}</b></div><div class="brief-app-totals">${briefAppTotals(intervals).map(a=>`<div><span>${esc(a.label)}</span><b>${briefPrecise(a.ms)}</b></div>`).join('')||'<p class="small muted">외부 앱 사용 관측 없음</p>'}</div><button class="textbtn" data-brief-jump="${selected.start}">시간선에서 보기</button></div><details id="brief-hours-values"><summary>모든 시간대의 수치</summary>${[...days].map(([key,items])=>`<details id="brief-hours-${key}"><summary>${briefDateLabel(items[0].start,b.timeZone)} · ${briefDuration(items.reduce((n,h)=>n+h.ms,0))}</summary><div class="brief-hour-values">${items.map(h=>`<button data-brief-hour="${h.start}"><time>${dateTime(h.start,b.timeZone)}–${dateTime(h.end,b.timeZone)}</time><b>${briefPrecise(h.ms)}</b></button>`).join('')}</div></details>`).join('')}</details>`;
+ return `<div class="brief-pattern-lead"><div><span>${b.days===7?'가장 사용이 많았던 날':'가장 사용이 많았던 시간'}</span><strong>${(b.days===7?busyDay.ms:peak.ms)>0?(b.days===7?briefDateLabel(busyDay.start,b.timeZone):briefClock(peak.start,b.timeZone)+'–'+briefClock(peak.end,b.timeZone)):'관측된 사용 없음'}</strong></div><b>${briefDuration(b.days===7?busyDay.ms:peak.ms)}</b></div>${chart}<p class="small muted brief-chart-note">${b.days===7?'진할수록 관측 사용량이 많습니다.':'막대 높이는 시간별 관측 사용량입니다.'} 시간대를 누르면 앱별 내역을 볼 수 있습니다.</p><div class="brief-hour-selection" aria-live="polite">${briefHourSelection(b,selected)}</div>${briefLazyDetails('brief-hours-values','모든 시간대의 수치',()=>[...days].map(([key,items])=>briefLazyDetails('brief-hours-'+key,`${briefDateLabel(items[0].start,b.timeZone)} · ${briefDuration(items.reduce((n,h)=>n+h.ms,0))}`,()=>`<div class="brief-hour-values">${items.map(h=>`<button data-brief-hour="${h.start}"><time>${briefClock(h.start,b.timeZone)}–${briefClock(h.end,b.timeZone)}</time><b>${briefPrecise(h.ms)}</b></button>`).join('')}</div>`)).join(''))}`;
 }
 function briefEventType(e){return ['unlock','app'].includes(e.kind)?'choices':['dismiss','cancel'].includes(e.kind)?'cancels':e.kind==='extend'?'extensions':'tools';}
 function briefEventLabel(e){return e.kind==='unlock'?'휴대폰 목적 선택':e.kind==='app'?'앱 목적 선택':e.kind==='extend'?'사용 연장':e.kind==='utility'?'로키 도구':'사용 취소';}
 function briefRecordView(t,b){
- if(t.type==='usage')return `<div class="brief-record usage" data-timeline-start="${t.start}" data-timeline-end="${t.end}"><time>${briefExactTime(t.start,b)}<small>–${briefDateKey(t.start,b.timeZone)!==briefDateKey(t.end,b.timeZone)?briefDateLabel(t.end,b.timeZone)+' ':''}${briefExactTime(t.end,b)}</small></time><div><strong>${esc(t.label)}</strong><span>${esc(t.purpose||'목적 미확인')}</span><small>${t.focusState==='focus'?'집중시간':t.focusState==='free'?'자유시간':'시간대 이력 없음'} · ${t.relation==='direct'?'대상 앱':t.relation==='other-app'?'다른 앱':'목적 연결 미확인'}${t.source==='usage-access'?' · Android 정보로 보완':t.source==='legacy'?' · 관측 출처 미확인':''}</small>${t.excludedTransitionMillis?`<small>전환 ${briefPrecise(t.excludedTransitionMillis)} 제외</small>`:''}</div><b>${briefPrecise(briefMs(t))}</b></div>`;
+ if(t.type==='usage'){
+  const purpose=t.hidePurpose?'':briefKnownPurpose(t.purpose),relation=t.relation==='direct'?'대상 앱':t.relation==='other-app'?'다른 앱':'';
+  return `<div class="brief-record usage" data-timeline-start="${t.start}" data-timeline-end="${t.end}"><time>${briefExactTime(t.start,b)}<small>–${briefDateKey(t.start,b.timeZone)!==briefDateKey(t.end,b.timeZone)?briefDateLabel(t.end,b.timeZone)+' ':''}${briefExactTime(t.end,b)}</small></time><div><strong>${esc(t.label)}</strong>${purpose?`<span>${esc(purpose)}</span>`:''}<small>${[t.focusState==='focus'?'집중시간':t.focusState==='free'?'자유시간':'시간대 이력 없음',relation,t.source==='usage-access'?'Android 정보로 보완':t.source==='legacy'?'관측 출처 미확인':''].filter(Boolean).join(' · ')}</small>${t.excludedTransitionMillis?`<small>전환 ${briefPrecise(t.excludedTransitionMillis)} 제외</small>`:''}</div><b>${briefPrecise(briefMs(t))}</b></div>`;
+ }
  if(t.type==='boundary')return `<div class="brief-record boundary" data-timeline-start="${t.time}"><time>${briefExactTime(t.time,b)}</time><div><strong>${esc(t.text)}</strong></div></div>`;
- return `<div class="brief-record action" data-timeline-start="${t.time}"><time>${briefExactTime(t.time,b)}</time><div><small>${briefEventLabel(t)}</small><strong>${esc(t.purpose||t.label||t.name||'내용 기록 없음')}</strong>${t.label||t.pkg||t.target?`<span>${esc(t.label||b.apps?.find(a=>a.pkg===(t.target||t.pkg))?.label||t.target||t.pkg)}</span>`:''}${t.minutes||t.extra?`<small>추가 ${esc(t.minutes||t.extra)}분</small>`:''}</div></div>`;
-}
-function briefTimelineView(b){
- const timeline=b.timeline||b.intervals||[],events=(b.events||[]).filter(e=>['unlock','app','utility','extend','dismiss','cancel'].includes(e.kind));
- let markers=[...timeline.map(t=>({...t,time:t.start,type:'usage'})),...events.map(e=>({...e,type:briefEventType(e)})),...(b.focus?.periods||[]).filter(p=>p.known).map(p=>({time:p.start,type:'boundary',text:p.focus?'집중시간 시작':'자유시간 시작'}))];
- const options=[['all','전체'],['usage','앱 사용'],['choices','목적 선택'],['cancels','취소'],['extensions','연장'],['tools','도구'],['boundary','집중·자유 전환']];
- const filters=`<div class="brief-filters brief-record-filters" aria-label="기록 유형">${options.map(([key,label])=>`<button data-brief-record-filter="${key}" class="${briefRecordFilter===key?'selected':''}" aria-pressed="${briefRecordFilter===key}">${label}<small>${key==='all'?markers.length:markers.filter(t=>t.type===key).length}</small></button>`).join('')}</div>`;
- markers=markers.filter(t=>briefRecordFilter==='all'||t.type===briefRecordFilter).sort((a,b)=>(briefSort.timeline==='desc'?-1:1)*(a.time-b.time));
- const days=new Map();for(const t of markers){const key=briefDateKey(t.time,b.timeZone);if(!days.has(key))days.set(key,[]);days.get(key).push(t);}
- const groups=[...days].map(([key,items],dayIndex)=>{
-  const hours=(b.hours||[]).filter(h=>briefDateKey(h.start,b.timeZone)===key),start=hours[0]?.start??Math.min(...items.map(t=>t.time)),end=hours.at(-1)?.end??Math.max(...items.map(t=>t.end||t.time))+1;
-  const spans=timeline.filter(t=>t.start<end&&t.end>start),total=spans.reduce((n,t)=>n+Math.max(0,Math.min(t.end,end)-Math.max(t.start,start)),0);
-  const track=`<div class="brief-day-track" aria-label="${esc(briefDateLabel(start,b.timeZone))} 실제 사용 구간, 빈 곳은 외부 앱 관측 없음">${spans.map(t=>`<i style="left:${Math.max(0,(t.start-start)/(end-start)*100)}%;width:${(Math.min(t.end,end)-Math.max(t.start,start))/(end-start)*100}%" title="${esc(t.label+' '+briefRange(t.start,t.end,b))}"></i>`).join('')}</div><div class="brief-chart-axis"><span>${dateTime(start,b.timeZone)}</span><span>${dateTime(end,b.timeZone)}</span></div>`;
-  const buckets=new Map();for(const t of items){const hour=dateTime(t.time,b.timeZone).split(':')[0],id=hour;if(!buckets.has(id))buckets.set(id,[]);buckets.get(id).push(t);}
-  return `<details class="brief-day-unit" id="brief-record-day-${key}"><summary><span>${briefDateLabel(items[0].time,b.timeZone)}<small>${items.length}개 기록 · 외부 앱 ${briefDuration(total)}</small></span>${icon('arrow')}</summary>${track}${[...buckets].map(([hour,rows])=>`<details class="brief-record-hour" id="brief-record-${key}-${hour}"><summary><strong>${hour}시</strong><span>${rows.filter(t=>t.type==='usage').length}개 사용 구간 · ${rows.filter(t=>!['usage','boundary'].includes(t.type)).length}개 행동</span></summary><div class="brief-record-list">${rows.map(t=>briefRecordView(t,b)).join('')}</div></details>`).join('')}</details>`;
- }).join('');
- return `${filters}<p class="small muted">날짜 → 시간대를 펼쳐 확인합니다. 사용 막대의 빈 구간은 미사용 또는 미관측 구간입니다.</p>${groups||'<p class="empty">선택한 유형의 기록 없음</p>'}`;
+ return `<div class="brief-record action" data-timeline-start="${t.time}"><time>${briefExactTime(t.time,b)}</time><div><small>${briefEventLabel(t)}</small><strong>${esc(briefKnownPurpose(t.purpose||t.label||t.name))}</strong>${t.label||t.pkg||t.target?`<span>${esc(t.label||b.apps?.find(a=>a.pkg===(t.target||t.pkg))?.label||t.target||t.pkg)}</span>`:''}</div></div>`;
 }
 function briefComparisonView(b){
  if(!b.previous&&!b.comparison)return '';
@@ -691,23 +808,21 @@ function briefHighlightsView(b){
 function renderBrief(b){
  const area=$('#briefContent');if(!area)return;
  const opened=new Set([...area.querySelectorAll('details[open]')].map(d=>d.id)),position=window.scrollY;
- const focus=b.focus||{},hasFocus=Number(focus.knownMillis)>0,field=!hasFocus||briefAppFilter==='all'?'ms':briefAppFilter;
- const apps=[...(b.apps||[])].sort((a,b)=>(briefSort.apps==='desc'?-1:1)*((a[field]||0)-(b[field]||0))||a.label.localeCompare(b.label,'ko'));
- const appSum=apps.reduce((n,a)=>n+(a[field]||0),0),flows=briefFlowUnits(b),highlights=briefHighlightsView(b);
+ briefViewRevision++;briefLazyViews.clear();
+ const focus=b.focus||{},hasFocus=Number(focus.knownMillis)>0,flows=briefModel(b).flows,highlights=briefHighlightsView(b);
  const active=(b.focusResults||[]).find(w=>!w.complete&&w.start<=Date.now()&&w.end>Date.now());
  const stateLine=b.complete?'기록 종료':`진행 중 · ${!hasFocus?'집중시간 이력 없음':active?'집중시간 · '+briefDuration(active.end-Date.now())+' 남음':'자유시간'}`;
- const appBars=briefFold('apps',apps.filter(a=>a[field]>0),a=>`<div class="usage-row"><div class="row"><strong>${esc(a.label)}</strong><span>${briefNumber(a[field])} <small>${briefPercent(a[field],appSum)}%</small></span></div><div class="meter"><span style="width:${appSum?a[field]/appSum*100:0}%"></span></div><p class="small muted">${field==='ms'?(hasFocus?`집중 ${briefDuration(a.focus)} · 자유 ${briefDuration(a.free)}`:'시간대 이력 없음'):`전체 ${briefDuration(a.ms)}`}${a.unknown?' · 시간대 미확인 '+briefDuration(a.unknown):''}</p></div>`);
  const purposeRows=[...(b.purposes||[])].sort((a,b)=>(b.directMillis+b.otherMillis)-(a.directMillis+a.otherMillis)||(b.count||0)-(a.count||0));
  const html=`<section class="brief-overview" id="brief-overview">${b.kind==='focus'?'<h1>집중시간 결과</h1>':''}<p class="brief-state">${esc(stateLine)}</p><div class="statgrid"><div class="stat"><span>외부 앱 사용</span><b>${mins(b.total)}<small>분</small></b></div><div class="stat"><span>집중시간 중 사용</span><b>${hasFocus?mins(focus.observedMillis):'—'}<small>${hasFocus?'분':'기록 없음'}</small></b></div><div class="stat"><span>사용 취소</span><b>${b.cancels??0}<small>회</small></b></div></div><p class="small muted brief-metric-note">${hasFocus?'집중시간은 설정한 시간대 기준입니다.':'집중시간 이력이 없어 시간대별로 구분할 수 없습니다.'}${focus.unknownMillis&&hasFocus?' 일부 시간대 이력 없음':''}</p></section>
  ${highlights?`<section class="section" id="brief-highlights"><div class="sectionhead"><h2>눈여겨볼 기록</h2></div><div class="brief-highlights">${highlights}</div></section>`:''}
  <section class="section brief-pattern" id="brief-hours"><div class="sectionhead"><h2>시간대별 사용</h2><span class="small muted">${b.days===7?'날짜 × 시간':'시간별 분포'}</span></div>${briefHoursView(b)}</section>
  <section class="section" id="brief-focus"><div class="sectionhead"><h2>집중시간과 자유시간</h2></div>${hasFocus?briefParts([{label:'집중시간',ms:focus.observedMillis||0},{label:'자유시간',ms:focus.freeObservedMillis||0,tone:'free'},{label:'시간대 미확인',ms:focus.unknownObservedMillis||0,tone:'unknown'}],'외부 앱 사용 시간대'):'<p class="small muted">이 기간에는 집중시간 이력이 없습니다.</p>'}<details id="brief-focus-policy"><summary>집중시간 중 앱 관리 구성</summary>${hasFocus?briefParts([{label:'관리 앱',ms:focus.managedAppMillis||0},{label:'비관리 앱',ms:focus.unmanagedAppMillis||0,tone:'free'},{label:'관리 여부 미확인',ms:focus.unknownAppPolicyMillis||0,tone:'unknown'}],'집중시간 중 앱 관리 구성'):''}<div class="brief-facts"><div><span>설정된 집중시간</span><b>${hasFocus?briefDuration(focus.configuredMillis):'기록 없음'}</b></div><div><span>집중시간 중 목적 선택</span><b>${focus.choices||0}회</b></div><div><span>집중시간 중 사용 취소</span><b>${focus.cancels||0}회</b></div></div></details>${(b.focusResults||[]).length?`<details id="brief-focus-windows"><summary>집중시간별 종료 결과</summary>${b.focusResults.map(w=>`<div class="brief-window"><span>${briefRange(w.start,w.end,b)}</span>${w.complete?`<button class="textbtn" data-brief-focus="${esc(w.key)}">결과 보기</button>`:'<small>진행 중</small>'}</div>`).join('')}</details>`:''}</section>
- <section class="section" id="brief-apps"><div class="sectionhead"><h2>앱 사용 구성</h2>${briefSortButton('apps')}</div><div class="brief-filters">${[['all','전체'],['focus','집중시간'],['free','자유시간']].map(([key,label])=>`<button data-brief-filter="${key}" class="${(field==='ms'?'all':field)===key?'selected':''}" aria-pressed="${(field==='ms'?'all':field)===key}" ${!hasFocus&&key!=='all'?'disabled':''}>${label}</button>`).join('')}</div><p class="small muted brief-filter-total">${field==='ms'?'전체':field==='focus'?'집중시간':'자유시간'} ${briefDuration(appSum)} 기준</p>${appBars||'<p class="empty">해당 시간대의 사용 기록 없음</p>'}</section>
+ ${briefAppsSection(b)}
  <section class="section" id="brief-purposes"><div class="sectionhead"><h2>목적과 연결된 사용</h2><strong class="brief-count">${(b.unlocks||0)+(b.appStarts||0)}번 선택</strong></div>${briefFold('purposes',purposeRows,(p,i)=>briefPurposeView(p,flows,b,i),5)||'<p class="empty">목적 선택 기록 없음</p>'}<details id="brief-purpose-counts"><summary>선택 횟수 상세</summary><div class="brief-facts">${[['휴대폰',b.unlocks],['관리 앱',b.appStarts],['명시적 무목적',b.aimless],['같은 목적 반복',b.repeatedPurposeChoices],['연장',b.extensions]].map(([label,count])=>`<div><span>${label}</span><b>${count||0}회</b></div>`).join('')}</div></details></section>
  ${briefComparisonView(b)}
  <div class="brief-records-heading" id="brief-records-heading"><h2>구체적인 사용 기록</h2><p>목적 선택별 흐름과 날짜별 시간선</p></div>
- <details class="card" id="brief-flows"><summary><span>목적 선택 후 사용 흐름</span><small>${flows.length}건</small></summary>${briefFlowGroups(flows,b)}</details>
- <details class="card brief-timeline" id="briefTimeline"><summary><span>시간선과 행동 기록</span>${briefSortButton('timeline')}</summary>${briefTimelineView(b)}</details>
+ ${briefLazyDetails('brief-flows',`<span>목적 선택 후 사용 흐름</span><small>${flows.length}건</small>`,()=>briefFlowGroups(flows,b),'card')}
+ ${briefTimelineSection(b)}
  <details class="card" id="brief-quality"><summary>기록 범위와 관측 정보</summary><p class="small">${esc(b.quality?.note||'')}</p><p class="small">집중시간은 설정된 시간대이며 실제 집중 여부를 뜻하지 않습니다. 현재 설정을 과거 기록에 적용하지 않습니다.</p><p class="small">목적 선택과 연결 앱 사용은 목적 달성 여부를 나타내지 않습니다. 다른 앱은 같은 선택에 연결된 앱입니다.</p><div class="brief-facts"><div><span>시각 기준</span><b>${esc(b.timeZone||'기기 시간대')}</b></div><div><span>서비스·일정 실행 관측</span><b>${(focus.observations||[]).length}회</b></div><div><span>로키 내부 화면 · 합계 제외</span><b>${briefDuration(b.internalMillis||0)}</b></div><div><span>사전 도구 · 합계 제외</span><b>${briefDuration(b.toolMillis||0)}</b></div><div><span>Android 정보로 보완 · 목적 미확인</span><b>${briefDuration(b.recovered||0)}</b></div></div><p class="small">관측 시점 사이의 연속 작동은 보장하지 않습니다. 집중시간 이력 시작 ${focus.reliableSince?esc(new Date(focus.reliableSince).toLocaleString('ko-KR',{timeZone:b.timeZone})):'기록 없음'}</p>${!b.usageAccess?'<p class="small">사용 정보 접근이 꺼져 있어 중단 구간을 보완할 수 없습니다.</p>':''}${b.finalizedAt?`<p class="small">종료 결과 확정 ${esc(new Date(b.finalizedAt).toLocaleString('ko-KR',{timeZone:b.timeZone}))}</p>`:''}</details>`;
  if(area.briefMarkup===html)return;area.briefMarkup=html;
  const template=document.createElement('template');template.innerHTML=html;
@@ -718,7 +833,7 @@ function renderBrief(b){
   if(area.children[i]!==node)area.insertBefore(node,area.children[i]||null);
   if(previous&&previous!==node)previous.remove();
  });for(const node of old.values())node.remove();
- for(const d of area.querySelectorAll('details'))if(opened.has(d.id))d.open=true;bind(area);window.scrollTo(0,position);
+ briefInstallLazy();bind(area);briefKeepDetails(area,opened);window.scrollTo(0,position);
 }
 
 function sheet(content){$('#sheet').innerHTML=`<section class="sheet" role="dialog" aria-modal="true">${content}</section>`;$('#sheet').onclick=e=>{if(e.target===$('#sheet')){if(state?.purposeEditor)back();else closeSheet();}};bind($('#sheet'));viewportChanged();}
@@ -947,18 +1062,11 @@ function bind(root=$('#app')){
  root.querySelectorAll('[data-pickapp]').forEach(el=>el.onclick=()=>{const selected=$('#purposeApp');if(!selected||selected.disabled)return;selected.value=el.dataset.pickapp;renderPurposeAppResults();});
   root.querySelectorAll('[data-url]').forEach(el=>el.onclick=()=>safe(()=>api('linkTest',{uri:el.dataset.url})));
   root.querySelectorAll('[data-brief-focus]').forEach(el=>el.onclick=()=>safe(()=>openBriefRoute('brief|focus|'+el.dataset.briefFocus)));
- root.querySelectorAll('[data-brief-jump]').forEach(el=>el.onclick=()=>{
-  const at=Number(el.dataset.briefJump);briefRecordFilter='all';if(briefData)renderBrief(briefData);
-  const details=$('#briefTimeline');if(!details)return;details.open=true;
-  const rows=[...details.querySelectorAll('[data-timeline-start]')].sort((a,b)=>Number(a.dataset.timelineStart)-Number(b.dataset.timelineStart));
-  const target=rows.find(row=>Number(row.dataset.timelineStart)<=at&&Number(row.dataset.timelineEnd)>at)||rows.find(row=>Number(row.dataset.timelineStart)>=at)||rows.at(-1);
-  for(let parent=target?.parentElement;parent&&parent!==details;parent=parent.parentElement)if(parent.tagName==='DETAILS')parent.open=true;
-  target?.scrollIntoView({block:'center',behavior:'smooth'});
- });
- root.querySelectorAll('[data-brief-record-filter]').forEach(el=>el.onclick=()=>{briefRecordFilter=el.dataset.briefRecordFilter;if(briefData)renderBrief(briefData);});
- root.querySelectorAll('[data-brief-hour]').forEach(el=>el.onclick=()=>{briefSelectedHour=Number(el.dataset.briefHour);if(briefData)renderBrief(briefData);$('.brief-hour-selection')?.scrollIntoView({block:'nearest',behavior:'smooth'});});
- root.querySelectorAll('[data-brief-filter]').forEach(el=>el.onclick=()=>{briefAppFilter=el.dataset.briefFilter;if(briefData)renderBrief(briefData);});
- root.querySelectorAll('[data-brief-sort]').forEach(el=>el.onclick=e=>{e.preventDefault();e.stopPropagation();const key=el.dataset.briefSort;briefSort[key]=briefSort[key]==='desc'?'asc':'desc';if(briefData){renderBrief(briefData);$(`[data-brief-sort="${key}"]`)?.focus({preventScroll:true});}});
+ root.querySelectorAll('[data-brief-jump]').forEach(el=>el.onclick=()=>briefJump(Number(el.dataset.briefJump)));
+ root.querySelectorAll('[data-brief-record-filter]').forEach(el=>el.onclick=()=>{briefRecordFilter=el.dataset.briefRecordFilter;if(briefData)briefReplaceSection('briefTimeline',briefTimelineSection(briefData));});
+ root.querySelectorAll('[data-brief-hour]').forEach(el=>el.onclick=()=>briefSelectHour(Number(el.dataset.briefHour)));
+ root.querySelectorAll('[data-brief-filter]').forEach(el=>el.onclick=()=>{briefAppFilter=el.dataset.briefFilter;if(briefData)briefReplaceSection('brief-apps',briefAppsSection(briefData));});
+ root.querySelectorAll('[data-brief-sort]').forEach(el=>el.onclick=e=>{e.preventDefault();e.stopPropagation();const key=el.dataset.briefSort;briefSort[key]=briefSort[key]==='desc'?'asc':'desc';if(briefData){if(key==='apps')briefReplaceSection('brief-apps',briefAppsSection(briefData));else briefReplaceSection('briefTimeline',briefTimelineSection(briefData));$(`[data-brief-sort="${key}"]`)?.focus({preventScroll:true});}});
  root.querySelectorAll('[data-source-toggle]').forEach(el=>el.onclick=()=>{
    const panel=document.getElementById(el.dataset.sourceToggle);if(!panel)return;
    panel.hidden=!panel.hidden;el.setAttribute('aria-expanded',String(!panel.hidden));
