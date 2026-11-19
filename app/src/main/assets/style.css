@@ -105,7 +105,7 @@
 .brief-metric-note{margin:14px 0 0}.briefing-page #briefContent>.section{margin:0;padding:24px 0}
 .briefing-page .sectionhead{margin:0 0 12px;flex-wrap:wrap;gap:4px 12px}
 .briefing-page #briefContent>details{background:transparent;border:0;border-top:1px solid var(--line);border-radius:0;padding:8px 0;margin:0}
-.briefing-page summary{cursor:pointer;min-height:44px;font-weight:600}.briefing-page #briefContent>details>summary{display:flex;align-items:center;justify-content:space-between;gap:8px;list-style:none;color:var(--ink)}
+.briefing-page summary{cursor:pointer;min-height:44px;font-weight:600}.briefing-page #briefContent>details>summary{display:flex;align-items:center;justify-content:flex-start;gap:8px;list-style:none;color:var(--ink)}
 .briefing-page #briefContent>details>summary::-webkit-details-marker{display:none}
 .briefing-page #briefContent>details>summary:before{content:'›';color:var(--green)}
 .briefing-page #briefContent>details[open]>summary:before{transform:rotate(90deg)}
