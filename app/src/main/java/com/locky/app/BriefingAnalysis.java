@@ -15,7 +15,7 @@ final class BriefingAnalysis {
         // Fix all seven local-date ranges before fetching any comparisons (including DST days).
         List<LocalDate> dates=new ArrayList<>();List<long[]> ranges=new ArrayList<>();
         if(days==1)for(int d=1;d<=7;d++){LocalDate date=first.minusDays(d);dates.add(date);ranges.add(new long[]{date.atStartOfDay(z).toInstant().toEpochMilli(),date.plusDays(1).atStartOfDay(z).toInstant().toEpochMilli()});}
-        JSONObject previous=request.range(prior,start);result.put("previous",new JSONObject().put("available",previous.getJSONArray("timeline").length()>0).put("total",previous.getLong("total")).put("start",prior).put("end",start));
+        JSONObject previous=request.range(prior,start);result.put("previous",new JSONObject().put("available",previous.getJSONArray("timeline").length()>0).put("comparisonEligible",previous.getJSONObject("quality").optBoolean("comparisonEligible")).put("total",previous.getLong("total")).put("start",prior).put("end",start));
         if(days!=1)return;
         JSONArray dayTotals=new JSONArray();Map<String,Long> sums=new HashMap<>();int comparable=0;long recentTotal=0,recentEvening=0;
         for(int d=0;d<ranges.size();d++){
