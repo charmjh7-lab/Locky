@@ -643,28 +643,28 @@ function briefTimelineModel(b){
  const model=briefModel(b);if(model.timeline)return model.timeline;
  const usage=b.timeline||b.intervals||[],events=(b.events||[]).filter(e=>['unlock','app','utility','extend','dismiss','cancel'].includes(e.kind));
  const markers=[...usage.map((t,i)=>({...t,time:t.start,type:'usage',recordKey:'u'+t.start+'-'+encodeURIComponent(t.pkg||'')+'-'+(t.eventId||0)})),...events.map(e=>({...e,type:briefEventType(e),recordKey:'e'+e.id})),...(b.focus?.periods||[]).filter(p=>p.known).map((p,i)=>({time:p.start,type:'boundary',text:p.focus?'집중시간 시작':'자유시간 시작',recordKey:'b'+i}))].sort((a,b)=>a.time-b.time||(a.type==='usage'?1:-1));
- const phones=[...model.events.values()].filter(e=>e.kind==='unlock').sort((a,b)=>a.time-b.time||a.id-b.id),days=new Map(),locations=new Map();
+ const days=new Map(),locations=new Map(),pendingVisits=new Map();
  for(const h of b.hours||[]){const key=briefDateKey(h.start,b.timeZone);let day=days.get(key);if(!day){day={key,start:h.start,end:h.end,ms:0,markers:[],nodes:[],phoneGroups:new Map(),spans:[]};days.set(key,day);}day.end=h.end;}
- let phoneIndex=-1;
  for(const t of markers){
-  while(phoneIndex+1<phones.length&&phones[phoneIndex+1].time<=t.time)phoneIndex++;
-  const latestPhone=phones[phoneIndex],dayKey=briefDateKey(t.time,b.timeZone);let day=days.get(dayKey);
+  const dayKey=briefDateKey(t.time,b.timeZone);let day=days.get(dayKey);
   if(!day){day={key:dayKey,start:t.time,end:t.end||t.time+1,ms:0,markers:[],nodes:[],phoneGroups:new Map(),spans:[]};days.set(dayKey,day);}day.markers.push(t);
   if(t.type==='usage'){day.spans.push(t);day.ms+=briefMs(t);}
-  let phone=t.kind==='unlock'?t:briefPhoneContext(t.type==='usage'?(t.parent||t.eventId):t.parent,model);
-  // Only explicit recorded parents establish the purpose hierarchy. Later phone choices end the old parent scope.
-  if(phone&&latestPhone&&String(phone.id)!==String(latestPhone.id))phone=null;
+  // Group by the recorded parent, even when a later phone choice made the current intent unknown.
+  // This is the original entry context, not a reassignment of usage intent.
+  const phone=t.kind==='unlock'?t:t.type==='usage'?(briefPhoneContext(t.parent,model)||briefPhoneContext(t.eventId,model)):briefPhoneContext(t.parent,model);
   let owner=day.nodes,parents=['brief-record-day-'+dayKey];
   if(phone){let group=day.phoneGroups.get(String(phone.id));if(!group){group={kind:'phone',event:phone,time:Math.max(phone.time,day.start),nodes:[],id:'brief-phone-'+dayKey+'-'+phone.id};day.phoneGroups.set(String(phone.id),group);day.nodes.push(group);}owner=group.nodes;parents.push(group.id);}
   if(t.kind==='unlock'){locations.set(t.recordKey,parents);continue;}
   if(t.type==='usage'||t.kind==='app'){
-   const choice=t.kind==='app'?t:model.events.get(String(t.eventId));
+   const choice=t.kind==='app'?t:model.events.get(String(t.parent))?.kind==='app'?model.events.get(String(t.parent)):model.events.get(String(t.eventId));
    const appChoice=choice?.kind==='app'&&(!choice.pkg||choice.pkg===t.pkg)?choice:null;
    const pkg=t.pkg||t.target||'',label=t.label||b.apps?.find(a=>a.pkg===pkg)?.label||pkg;
-   const previous=owner.at(-1),sameChoice=String(previous?.choice?.id||'')===String(appChoice?.id||'');
+   const visitKey=appChoice?dayKey+'|'+appChoice.id+'|'+pkg:null;
+   const pending=visitKey?pendingVisits.get(visitKey):null;
+   const previous=pending?.owner===owner&&!pending.visit.steps.length?pending.visit:owner.at(-1),sameChoice=String(previous?.choice?.id||'')===String(appChoice?.id||'');
    const canJoin=t.type==='usage'&&previous?.kind==='visit'&&previous.pkg===pkg&&sameChoice&&(!previous.steps.length||t.start<=previous.end||t.technicalResume&&t.start-previous.end<=1500);
    let visit=canJoin?previous:{kind:'visit',pkg,label,choice:appChoice,time:t.time,end:t.time,steps:[],id:'brief-visit-'+dayKey+'-'+t.recordKey};
-   if(!canJoin)owner.push(visit);if(t.type==='usage'){visit.steps.push(t);visit.end=t.end;visit.ms=(visit.ms||0)+briefMs(t);}else visit.event=t;
+   if(!canJoin)owner.push(visit);if(t.type==='usage'){visit.steps.push(t);visit.end=t.end;visit.ms=(visit.ms||0)+briefMs(t);if(visitKey)pendingVisits.delete(visitKey);}else{visit.event=t;if(visitKey)pendingVisits.set(visitKey,{visit,owner});}
    locations.set(t.recordKey,[...parents,visit.id]);
   }else{owner.push({kind:'event',time:t.time,record:t});locations.set(t.recordKey,parents);}
  }
