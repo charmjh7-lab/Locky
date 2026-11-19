@@ -12,9 +12,10 @@ const native=JSON.parse(fs.readFileSync('app/build/briefing-review/native.json',
   const openId=async id=>{await page.evaluate(id=>{const d=document.getElementById(id);if(!d)throw Error('Missing '+id);d.open=true;briefHydrate(d);},id);};
   await show(native.displayDaily);
   // A compact bridge response must retain all raw observations and purpose totals.
-  assert.equal(await page.evaluate(()=>briefModel(briefData).purposes.find(p=>p.purpose==='자료 확인').total),440000);
+  assert.equal(await page.evaluate(()=>briefModel(briefData).purposes.find(p=>p.purpose==='자료 확인').total),320000);
+  assert.equal(await page.evaluate(()=>briefModel(briefData).purposes.find(p=>p.purpose==='메모 확인').total),180000,'phone-purpose statistics must match the same chronological container');
   await openId('briefTimeline');await openId('brief-record-day-2026-11-17');
-  const tree=await page.evaluate(()=>briefTimelineModel(briefData).days.find(d=>d.key==='2026-11-17').nodes.map(n=>({kind:n.kind,id:n.event?.id,ms:n.nodes?.reduce((s,v)=>s+(v.ms||0),0),apps:n.nodes?.filter(v=>v.kind==='visit').map(v=>({pkg:v.pkg,purpose:v.choice?.purpose||''}))})));
+  const tree=await page.evaluate(()=>briefTimelineModel(briefData).days.find(d=>d.key==='2026-11-17').nodes.filter(n=>n.kind!=='event').map(n=>({kind:n.kind,id:n.event?.id,ms:n.nodes?.reduce((s,v)=>s+(v.ms||0),0),apps:n.nodes?.filter(v=>v.kind==='visit').map(v=>({pkg:v.pkg,purpose:v.choice?.purpose||''}))})));
   assert.deepEqual(tree.map(n=>[n.kind,n.id,n.ms]),[['phone',1,320000],['phone',3,180000]],'every later app, including parent=0 recovery, belongs inside the chronological phone opening');
   assert.equal(tree[1].apps.find(v=>v.pkg==='video').purpose,'');assert.equal(tree[1].apps.find(v=>v.pkg==='chat').purpose,'','an older app choice must not be repeated under a new phone opening');
   assert.equal(await page.locator('#brief-record-day-2026-11-17 > div > .brief-day-records > .brief-visit-unit').count(),0);

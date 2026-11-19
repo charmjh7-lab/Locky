@@ -13,16 +13,16 @@ const native=JSON.parse(fs.readFileSync('app/build/briefing-review/native.json',
   const openId=async id=>{await page.evaluate(id=>{const d=document.getElementById(id);if(!d)throw Error('Missing details '+id);d.open=true;briefHydrate(d);},id);};
   await show(native.daily);assert.match(await page.evaluate(()=>briefBoundaryRecords(briefData)[0].text),/기간 시작/);assert.equal(await page.evaluate(()=>briefBoundaryRecords({start:0,focus:{periods:[{start:0,known:true,focus:true},{start:1000,known:true,focus:true}]}}).length),1,'same-state settings must not invent a transition');
   const stats=await page.evaluate(()=>briefModel(briefData).purposes.map(p=>({purpose:p.purpose,total:p.total,apps:p.apps})));
-  assert.equal(stats.find(p=>p.purpose==='자료 확인').total,440000,'same phone/app purpose must count every interval only once');
-  assert.deepEqual(stats.find(p=>p.purpose==='자료 확인').apps.map(a=>[a.label,a.ms]),[['ChatGPT',360000],['브라우저',80000]]);
+  assert.equal(stats.find(p=>p.purpose==='자료 확인').total,320000,'same phone/app purpose must count every interval only once');
+  assert.deepEqual(stats.find(p=>p.purpose==='자료 확인').apps.map(a=>[a.label,a.ms]),[['ChatGPT',300000],['브라우저',20000]]);
   await purpose().locator(':scope > summary').click();
   await purpose().locator('.brief-purpose-apps').waitFor();
-  assert.match(await purpose().innerText(),/6분/);assert.match(await purpose().innerText(),/1분 20초/);
+  assert.match(await purpose().innerText(),/5분/);assert.match(await purpose().innerText(),/20초/);
   assert.equal(await purpose().locator('.brief-flow-unit').count(),0,'do not nest the same purpose heading again');
   assert.equal(await purpose().locator('summary strong').count(),1);
   assert.equal(await purpose().locator('.brief-purpose-choice').count(),2);
   if(out)await page.screenshot({path:out+'/purpose-open-light.png',fullPage:true});
-  await openId('brief-flows');await openId('brief-flow-1');assert.match(await page.locator('#brief-flow-1 .brief-app-totals').innerText(),/6분/);assert.match(await page.locator('#brief-flow-1 .brief-app-totals').innerText(),/1분 20초/);assert(!/목적 (연결 )?미확인/.test(await page.locator('#brief-flow-1').innerText()));assert(!/외부 앱 관측 공백/.test(await page.locator('#brief-flow-1').innerText()),'a gap in one purpose can contain other observed use');assert.match(await page.locator('#brief-flow-1 .brief-sequence-gap').first().innerText(),/선택 기록 사이 간격/);
+  await openId('brief-flows');await openId('brief-flow-1');assert.match(await page.locator('#brief-flow-1 .brief-app-totals').innerText(),/5분/);assert.match(await page.locator('#brief-flow-1 .brief-app-totals').innerText(),/20초/);assert(!/목적 (연결 )?미확인/.test(await page.locator('#brief-flow-1').innerText()));assert(!/외부 앱 관측 공백/.test(await page.locator('#brief-flow-1').innerText()),'a gap in one purpose can contain other observed use');assert.match(await page.locator('#brief-flow-1 .brief-sequence-gap').first().innerText(),/선택 기록 사이 간격/);
   if(out)await page.screenshot({path:out+'/flow-open-light.png',fullPage:true});
   await page.evaluate(()=>{document.getElementById('brief-flows').open=false;});
   await page.locator('[data-brief-filter=free]').click();assert.deepEqual(await page.locator('#brief-apps .usage-row strong').allTextContents(),['브라우저']);
@@ -31,7 +31,7 @@ const native=JSON.parse(fs.readFileSync('app/build/briefing-review/native.json',
   assert.equal(await purpose().getAttribute('open'),'','app controls preserve opened purpose details');
   const nine=native.daily.hours.find(h=>new Date(h.start).toISOString().includes('T00:00:00'));
   assert(nine);await page.locator('.brief-hour-cell[data-brief-hour="'+nine.start+'"]').click();
-  assert.match(await page.locator('.brief-hour-selection').innerText(),/7분 20초/);assert.match(await page.locator('.brief-hour-selection').innerText(),/6분/);
+  assert.match(await page.locator('.brief-hour-selection').innerText(),/7분 20초/);assert.match(await page.locator('.brief-hour-selection').innerText(),/5분/);
   await openId('briefTimeline');await openId('brief-record-day-2026-11-17');await openId('brief-phone-2026-11-17-1');
   const tree=await page.evaluate(()=>{
    const d=briefTimelineModel(briefData).days.find(d=>d.key==='2026-11-17'),phone=d.nodes.find(n=>n.event?.id===1);
@@ -71,7 +71,7 @@ const native=JSON.parse(fs.readFileSync('app/build/briefing-review/native.json',
   assert.match(await page.locator('#brief-comparison .brief-change').innerText(),/↑ 60분/);
   await page.evaluate(()=>{briefData.comparison.records.pop();renderBrief(briefData);});assert.equal(await page.locator('.brief-change').count(),0);
   // Older saved snapshots retain explicit contexts without requiring a database migration.
-  const legacy=structuredClone(native.daily);delete legacy.purposeContexts;await show(legacy);assert.equal(await page.evaluate(()=>briefModel(briefData).purposes.find(p=>p.purpose==='자료 확인').total),440000);
+  const legacy=structuredClone(native.daily);delete legacy.purposeContexts;await show(legacy);assert.equal(await page.evaluate(()=>briefModel(briefData).purposes.find(p=>p.purpose==='자료 확인').total),320000);
   await page.evaluate(()=>{briefData={...briefData,focus:{},highlights:[]};renderBrief(briefData);});assert.equal(await page.locator('[data-brief-filter=focus]').isDisabled(),true);
   // Scale check: input controls must not regenerate unrelated timeline or purpose DOM.
   const large=structuredClone(native.daily);large.events=[];large.purposeContexts=[];large.flows=[];large.purposes=[];large.timeline=Array.from({length:3000},(_,i)=>({start:large.start+i*2000,end:large.start+i*2000+1000,pkg:'app'+(i%30),label:'앱 '+(i%30),parent:0,eventId:0,purpose:'목적 미확인',focusState:i%2?'focus':'free',relation:'unconfirmed'}));large.apps=Array.from({length:30},(_,i)=>({pkg:'app'+i,label:'앱 '+i,ms:100000,focus:i%2?100000:0,free:i%2?0:100000}));large.total=3000000;

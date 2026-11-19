@@ -637,16 +637,18 @@ function briefModel(b){
  const events=new Map();for(const e of [...(b.purposeContexts||[]),...(b.flows||[]).map(f=>f.event),...(b.events||[])])if(e)events.set(String(e.id),e);
  const scope=new Map(),choices=[...events.values()].filter(e=>['unlock','app'].includes(e.kind)).sort((a,b)=>a.time-b.time||a.id-b.id);
  for(const event of choices)scope.set(String(event.id),{event,start:event.time,end:event.time,steps:[],keys:new Set(),directMillis:0,otherMillis:0});
- const purposeUsage=new Map();
+ const purposeUsage=new Map(),phoneChoices=choices.filter(e=>e.kind==='unlock');let phoneCursor=-1;
  for(const [i,t] of (b.timeline||b.intervals||[]).entries()){
+  while(phoneCursor+1<phoneChoices.length&&phoneChoices[phoneCursor+1].time<=t.start)phoneCursor++;const phone=phoneChoices[phoneCursor];
   const ancestors=[],seen=new Set();let event=events.get(String(t.parent||t.eventId));
   if(!event)event=events.get(String(t.eventId));
-  while(event&&!seen.has(String(event.id))){seen.add(String(event.id));if(scope.has(String(event.id)))ancestors.push(scope.get(String(event.id)));event=events.get(String(event.parent));}
+  while(event&&!seen.has(String(event.id))){seen.add(String(event.id));if(event.kind==='app'&&(!phone||event.time>=phone.time)&&scope.has(String(event.id)))ancestors.push(scope.get(String(event.id)));event=events.get(String(event.parent));}
+  if(phone)ancestors.push(scope.get(String(phone.id)));
   const purposes=new Set();for(const f of ancestors){f.steps.push(t);f.keys.add(i);f.end=Math.max(f.end,t.end);if(String(t.eventId)===String(f.event.id)){if(t.relation==='direct')f.directMillis+=briefMs(t);else if(t.relation==='other-app')f.otherMillis+=briefMs(t);}const purpose=briefKnownPurpose(f.event.purpose);if(purpose)purposes.add(purpose);}
   for(const purpose of purposes){if(!purposeUsage.has(purpose))purposeUsage.set(purpose,[]);purposeUsage.get(purpose).push(t);}
  }
  // Older saved focus snapshots may lack parent contexts. Use only their explicit flow records as a fallback.
- for(const f of b.flows||[]){let target=scope.get(String(f.event.id));if(!target)continue;if(!target.steps.length&&(f.steps||f.blocks||[]).length){target.steps=[...(f.steps||f.blocks)];target.end=f.end;target.directMillis=f.directMillis||0;target.otherMillis=f.otherMillis||0;const p=briefKnownPurpose(f.event.purpose);if(p){const list=purposeUsage.get(p)||[],known=new Set(list.map(t=>[t.start,t.end,t.pkg,t.parent].join('|')));for(const t of target.steps){const key=[t.start,t.end,t.pkg,t.parent].join('|');if(!known.has(key)){known.add(key);list.push(t);}}purposeUsage.set(p,list);}}}
+ if(!b.purposeContexts)for(const f of b.flows||[]){let target=scope.get(String(f.event.id));if(!target)continue;if(!target.steps.length&&(f.steps||f.blocks||[]).length){target.steps=[...(f.steps||f.blocks)];target.end=f.end;target.directMillis=f.directMillis||0;target.otherMillis=f.otherMillis||0;const p=briefKnownPurpose(f.event.purpose);if(p){const list=purposeUsage.get(p)||[],known=new Set(list.map(t=>[t.start,t.end,t.pkg,t.parent].join('|')));for(const t of target.steps){const key=[t.start,t.end,t.pkg,t.parent].join('|');if(!known.has(key)){known.add(key);list.push(t);}}purposeUsage.set(p,list);}}}
  const flows=[...scope.values()].filter(f=>f.steps.length||(f.event.time>=b.start&&f.event.time<b.end)).map(f=>{f.steps.sort((a,b)=>a.start-b.start);f.apps=briefAppTotals(f.steps);f.total=f.steps.reduce((n,t)=>n+briefMs(t),0);return f;}).sort((a,b)=>b.start-a.start);
  const byPurpose=new Map();for(const f of flows){const p=briefKnownPurpose(f.event.purpose);if(!p)continue;if(!byPurpose.has(p))byPurpose.set(p,[]);byPurpose.get(p).push(f);}
  const nativePurposes=new Map((b.purposes||[]).map(p=>[p.purpose,p])),purposes=[];
@@ -730,7 +732,7 @@ function briefTimelineView(b){
  }).join('');
  return filters+'<p class="small muted">'+(briefRecordFilter==='all'?'휴대폰 목적 → 앱 → 앱 진입 목적 순서로 확인합니다.':'날짜와 시간대를 펼쳐 확인합니다.')+' 사용 막대의 빈 곳은 미사용 또는 미관측 구간입니다.</p>'+ (groups||'<p class="empty">선택한 유형의 기록 없음</p>');
 }
-function briefTimelineSection(b){return `<details class="card brief-timeline" id="briefTimeline"><summary><span>시간선과 행동 기록</span>${briefSortButton('timeline')}</summary><div id="briefTimelineBody">${briefTimelineView(b)}</div></details>`;}
+function briefTimelineSection(b){return briefLazyDetails('briefTimeline',`<span>시간선과 행동 기록</span>${briefSortButton('timeline')}`,()=>`<div id="briefTimelineBody">${briefTimelineView(b)}</div>`,'card brief-timeline');}
 function briefAppsSection(b){
  const hasFocus=Number(b.focus?.knownMillis)>0,field=!hasFocus||briefAppFilter==='all'?'ms':briefAppFilter,apps=[...(b.apps||[])].sort((a,b)=>(briefSort.apps==='desc'?-1:1)*((a[field]||0)-(b[field]||0))||a.label.localeCompare(b.label,'ko')),sum=apps.reduce((n,a)=>n+(a[field]||0),0);
  const rows=briefFold('apps',apps.filter(a=>a[field]>0),a=>`<div class="usage-row"><div class="row"><strong>${esc(a.label)}</strong><span>${briefNumber(a[field])} <small>${briefPercent(a[field],sum)}%</small></span></div><div class="meter"><span style="width:${sum?a[field]/sum*100:0}%"></span></div><p class="small muted">${field==='ms'?(hasFocus?`집중 ${briefDuration(a.focus)} · 자유 ${briefDuration(a.free)}`:'시간대 이력 없음'):`전체 ${briefDuration(a.ms)}`}${a.unknown?' · 시간대 미확인 '+briefDuration(a.unknown):''}</p></div>`);
@@ -748,7 +750,7 @@ function briefSelectHour(at){
 function briefJump(at){
  const b=briefData;if(!b)return;
  if(briefRecordFilter!=='all'){briefRecordFilter='all';briefReplaceSection('briefTimeline',briefTimelineSection(b));}
- const timeline=$('#briefTimeline');timeline.open=true;const m=briefTimelineModel(b);
+ const timeline=$('#briefTimeline');timeline.open=true;briefHydrate(timeline);const m=briefTimelineModel(b);
  const target=m.markers.find(t=>t.type==='usage'&&t.start<=at&&t.end>at)||m.markers.find(t=>t.time>=at)||m.markers.at(-1);if(!target)return;
  for(const id of m.locations.get(target.recordKey)||[]){const detail=document.getElementById(id);if(detail){detail.open=true;briefHydrate(detail);}}
  const candidates=[...timeline.querySelectorAll('[data-timeline-start]')];
