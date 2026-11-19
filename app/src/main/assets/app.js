@@ -629,7 +629,7 @@ function briefInstallLazy(){
 function briefReplaceSection(id,html){
  const old=document.getElementById(id);if(!old)return;
  const opened=new Set([...old.querySelectorAll('details[open]')].map(d=>d.id));if(old.open)opened.add(id);
- const template=document.createElement('template');template.innerHTML=html;const next=template.content.firstElementChild;old.replaceWith(next);if(opened.has(next.id)){next.open=true;briefHydrate(next);}bind(next);briefKeepDetails(next,opened);
+ const template=document.createElement('template');template.innerHTML=html;const next=template.content.firstElementChild;next.briefMarkup=next.outerHTML;next.briefKey=next.id;old.replaceWith(next);if(opened.has(next.id)){next.open=true;briefHydrate(next);}bind(next);briefKeepDetails(next,opened);
 }
 function briefModel(b){
  let m=briefModels.get(b);if(m)return m;
