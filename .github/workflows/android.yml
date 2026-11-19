@@ -91,6 +91,16 @@ jobs:
         if: ${{ !contains(github.event.head_commit.message, '[briefing-only]') }}
         run: |
           gradle :app:testDebugUnitTest --tests 'com.locky.app.FocusAlertsTest' --tests 'com.locky.app.NoticesTest' --tests 'com.locky.app.FocusBriefingTest' :app:assembleRelease --no-daemon
+      - name: Review briefing data and browser interactions
+        if: ${{ contains(github.event.head_commit.message, '[briefing-review]') }}
+        run: |
+          gradle :app:testDebugUnitTest --tests 'com.locky.app.FocusBriefingTest' --tests 'com.locky.app.BriefingDisplayContractTest' --no-daemon
+          mkdir -p distribution/briefing-review
+          cp app/build/briefing-review/native.json distribution/briefing-review/native.json
+          npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright
+          export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="$(command -v google-chrome || command -v chromium)"
+          if ! fc-list :lang=ko | head -1 | grep -q .; then sudo apt-get update -qq; sudo apt-get install -y fonts-noto-cjk; fi
+          LOCKY_CAPTURE_DIR=distribution/briefing-review node scripts/briefing-review-test.cjs
       - name: Build signed briefing APK
         if: ${{ contains(github.event.head_commit.message, '[briefing-only]') }}
         run: |
@@ -107,7 +117,7 @@ jobs:
           actual=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' distribution/signature.txt)
           test "$actual" = "$expected"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging distribution/Locky.apk > distribution/package.txt
-          grep -q "name='com.locky.app' versionCode='40' versionName='1.3.16-timeline-parent'" distribution/package.txt
+          grep -q "name='com.locky.app' versionCode='41' versionName='1.3.17-briefing-review'" distribution/package.txt
           unzip -t distribution/Locky.apk > /dev/null
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump resources distribution/Locky.apk | grep -q 'locky_icon_foreground'
           (cd distribution && sha256sum Locky.apk > SHA256SUMS.txt)

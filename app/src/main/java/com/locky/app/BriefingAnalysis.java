@@ -77,7 +77,7 @@ final class BriefingAnalysis {
                     .put("initialPurpose",initial==null?"":initial.optString("purpose")).put("relation",direct?"direct":linked?"other-app":"unconfirmed").put("focusState",category).put("ruleMode",u.optString("rule_mode","unknown"));
                 // Only exactly adjacent same-app spans with the same explicit context can merge.
                 JSONObject previous=timeline.length()==0?null:timeline.getJSONObject(timeline.length()-1);
-                if(previous!=null&&previous.getLong("end")==from&&same(previous,t,"pkg","source","eventId","focusState","ruleMode","relation"))previous.put("end",to);else timeline.put(t);
+                if(previous!=null&&previous.getLong("end")==from&&same(previous,t,"pkg","source","parent","eventId","focusState","ruleMode","relation"))previous.put("end",to);else timeline.put(t);
                 total+=ms;if(category.equals("focus")){focusMs+=ms;String mode=u.optString("rule_mode","unknown");if(mode.equals("unknown"))unknownRuleMs+=ms;else if(mode.equals("none"))unmanagedMs+=ms;else managedMs+=ms;}else if(category.equals("free"))freeMs+=ms;else unknownMs+=ms;
                 if(direct)directMs+=ms;else if(linked)otherMs+=ms;
                 JSONObject app=apps.get(pkg);if(app==null){app=new JSONObject().put("pkg",pkg).put("label",u.getString("label")).put("ms",0).put("focus",0).put("free",0).put("unknown",0);apps.put(pkg,app);}app.put("ms",app.getLong("ms")+ms).put(category,app.getLong(category)+ms);
@@ -132,7 +132,7 @@ final class BriefingAnalysis {
     private static JSONArray blocks(JSONArray spans) throws JSONException {
         JSONArray out=new JSONArray();for(int i=0;i<spans.length();i++){
             JSONObject t=spans.getJSONObject(i),last=out.length()==0?null:out.getJSONObject(out.length()-1);long ms=duration(t);
-            if(last!=null&&t.optBoolean("technicalResume")&&t.getLong("start")>last.getLong("end")&&t.getLong("start")-last.getLong("end")<=1500&&same(last,t,"pkg","eventId","focusState","source","ruleMode","relation")){
+            if(last!=null&&t.optBoolean("technicalResume")&&t.getLong("start")>last.getLong("end")&&t.getLong("start")-last.getLong("end")<=1500&&same(last,t,"pkg","parent","eventId","focusState","source","ruleMode","relation")){
                 last.put("excludedTransitionMillis",last.optLong("excludedTransitionMillis")+t.getLong("start")-last.getLong("end")).put("end",t.getLong("end")).put("ms",last.getLong("ms")+ms);
             }else out.put(new JSONObject(t.toString()).put("ms",ms).put("excludedTransitionMillis",0));
         }return out;

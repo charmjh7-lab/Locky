@@ -207,6 +207,10 @@
 .brief-visit-records{padding-left:8px}.brief-visit-records .brief-record{grid-template-columns:62px minmax(0,1fr) auto;gap:8px}.brief-visit-records .brief-record strong{font-size:.8125rem}
 @media(max-width:360px){.brief-phone-children{margin-left:4px;padding-left:10px}.brief-visit-records{padding-left:0}.brief-visit-records .brief-record{grid-template-columns:50px minmax(0,1fr) 48px;gap:5px}}
 
+/* Purpose summaries open directly to observed app totals and dated choices. */
+.brief-short-time{font-size:1.75rem;letter-spacing:-.04em}.brief-purpose-unit .brief-no-observation{font-size:.75rem;font-weight:500;color:var(--muted)}
+.brief-occurrence-heading{font-size:.8125rem;margin:18px 0 8px;font-weight:600}.brief-purpose-choice{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center;border-top:1px solid var(--line);padding:6px 0;font-size:.8125rem}
+.brief-purpose-choice>div{min-width:0;display:flex;flex-direction:column;gap:4px}.brief-purpose-choice time{font-variant-numeric:tabular-nums}.brief-purpose-choice small{font-size:.6875rem;color:var(--muted)}.brief-purpose-choice>b{font-size:.75rem;font-weight:500;text-align:right}.brief-purpose-choice .textbtn{font-size:.75rem;padding-right:0}
 /* Compact memo density only; the shared tools and purpose geometry stay fixed. */
 .compact-note .mini-head{min-height:35px;height:35px;flex-shrink:0}
 .compact-note .mini-head button,.compact-note .mini-head .iconbtn{min-height:35px;height:35px}
