@@ -79,6 +79,7 @@ jobs:
         with:
           node-version: '22'
       - name: APP_GATE, phone start, memo and quick chat smoke checks
+        if: ${{ !contains(github.event.head_commit.message, '[briefing-only]') }}
         run: |
           npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright
           export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="$(command -v google-chrome || command -v chromium)"
@@ -87,8 +88,17 @@ jobs:
           node scripts/phone-start-ui-test.cjs
           node scripts/quick-chat-ui-test.cjs
       - name: Relevant platform regression checks and signed release APK
+        if: ${{ !contains(github.event.head_commit.message, '[briefing-only]') }}
         run: |
           gradle :app:testDebugUnitTest --tests 'com.locky.app.FocusAlertsTest' --tests 'com.locky.app.NoticesTest' --tests 'com.locky.app.FocusBriefingTest' :app:assembleRelease --no-daemon
+      - name: Focused briefing check and signed release APK
+        if: ${{ contains(github.event.head_commit.message, '[briefing-only]') }}
+        run: |
+          npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright
+          export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="$(command -v google-chrome || command -v chromium)"
+          node --check app/src/main/assets/app.js
+          LOCKY_CAPTURE_DIR=distribution/briefing node scripts/briefing-layout-test.cjs
+          gradle :app:assembleRelease --no-daemon
       - name: Verify and publish directly installable APK
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -100,7 +110,7 @@ jobs:
           actual=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' distribution/signature.txt)
           test "$actual" = "$expected"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging distribution/Locky.apk > distribution/package.txt
-          grep -q "name='com.locky.app' versionCode='36' versionName='1.3.12-focus-alerts'" distribution/package.txt
+          grep -q "name='com.locky.app' versionCode='37' versionName='1.3.13-briefing'" distribution/package.txt
           unzip -t distribution/Locky.apk > /dev/null
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump resources distribution/Locky.apk | grep -q 'roki_icon_foreground'
           (cd distribution && sha256sum Locky.apk > SHA256SUMS.txt)

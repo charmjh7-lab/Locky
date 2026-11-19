@@ -92,18 +92,35 @@
 .diagnostic-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.diagnostic-actions button{min-height:48px}
 .diagnostic-log{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.75rem;line-height:1.65;user-select:text;padding:12px;background:var(--white);border:1px solid var(--line);border-radius:8px}
 
-/* Fact-based briefing; start-screen geometry intentionally remains unchanged. */
-.briefing-page .brief-overview{padding:18px 0 22px;border-bottom:1px solid var(--line)}
-.briefing-page h1{font-size:25px;margin:6px 0 20px}.briefing-page h2{font-size:18px;margin:20px 0 12px}
-.brief-state{color:var(--muted);font-size:13px}.brief-period{flex-wrap:wrap}.brief-period #briefDate{flex:1}
-.brief-highlights{display:grid;gap:10px}.brief-highlight{display:grid;gap:9px;text-align:left;width:100%;padding:16px;background:var(--white);color:var(--ink);border:1px solid var(--line);border-radius:12px}
-.brief-highlight time,.brief-highlight>span{font-size:12px;color:var(--muted)}.brief-highlight strong{font-size:15px;line-height:1.6}.brief-highlight svg{width:14px;height:14px;vertical-align:middle}
-.brief-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.brief-filters button{padding:10px 14px;border-radius:20px;background:var(--white);color:var(--ink);border:1px solid var(--line)}
-.brief-filters .selected{border-color:var(--green);font-weight:700}.briefing-page details{margin:14px 0}.briefing-page summary{cursor:pointer;min-height:44px;align-content:center;font-weight:600}
-.briefing-page .usage-row{padding:12px 0}.briefing-page .usage-row p{margin:6px 0 0}.brief-flow{padding:14px 0;border-bottom:1px solid var(--line)}.brief-flow p{margin:8px 0;font-size:14px}
-.brief-hour{display:grid;grid-template-columns:minmax(48px,auto) 1fr auto;align-items:center;gap:10px;margin:12px 0;font-size:12px}.brief-hour .meter{margin:0}
-.brief-boundary{font-size:12px;font-weight:700;color:var(--muted);padding:14px 0;border-top:1px dashed var(--line)}.briefing-page .app-row .info{min-width:0}.briefing-page .info p{overflow-wrap:anywhere}
-.briefing-page .stat b small{display:block;margin:3px 0 0}.briefing-page .brief-export{display:block;margin-top:24px}.briefing-page .setting-line{display:flex;justify-content:space-between}
+/* Briefing hierarchy and spacing, scoped to the records screen. */
+.briefing-page .brief-period{display:grid;grid-template-columns:44px minmax(0,1fr) 44px 44px 44px;gap:2px;align-items:center}
+.brief-period .iconbtn{width:44px;height:44px}.brief-period #briefDate{text-align:center;min-width:0;overflow-wrap:anywhere}
+.briefing-page .brief-overview{padding:20px 0 24px;border-bottom:1px solid var(--line)}
+.briefing-page h1{font-size:1.25rem;margin:0 0 8px}.briefing-page h2{font-size:1.0625rem;margin:0}
+.brief-state{color:var(--muted);font-size:.8125rem;margin:0 0 16px}
+.briefing-page .statgrid{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 16px;margin:0;padding:0;border:0}
+.briefing-page .stat{padding:0;border:0;gap:6px}.briefing-page .stat:first-child{grid-column:1/-1}
+.briefing-page .stat>span{white-space:normal;line-height:1.5}.briefing-page .stat b{font-size:1.5rem;letter-spacing:-.04em}
+.briefing-page .stat:first-child b{font-size:3rem}.briefing-page .stat b small{display:inline;margin:0 0 0 5px;font-size:.75rem}
+.brief-metric-note{margin:14px 0 0}.briefing-page #briefContent>.section{margin:0;padding:24px 0}
+.briefing-page .sectionhead{margin:0 0 12px;flex-wrap:wrap;gap:4px 12px}
+.briefing-page #briefContent>details{background:transparent;border:0;border-top:1px solid var(--line);border-radius:0;padding:8px 0;margin:0}
+.briefing-page summary{cursor:pointer;min-height:44px;font-weight:600}.briefing-page #briefContent>details>summary{display:flex;align-items:center;justify-content:space-between;gap:8px;list-style:none;color:var(--ink)}
+.briefing-page #briefContent>details>summary::-webkit-details-marker{display:none}
+.briefing-page #briefContent>details>summary:before{content:'›';color:var(--green)}
+.briefing-page #briefContent>details[open]>summary:before{transform:rotate(90deg)}
+.briefing-page #briefContent>details>summary>span{flex:1;min-width:0}.briefing-page .brief-timeline>summary>span:before{content:none}
+.briefing-page #briefContent details details{margin:8px 0}.briefing-page .brief-sort{display:inline-flex;align-items:center;gap:4px;white-space:normal;text-align:left;padding:6px 0;font-weight:500;font-size:.75rem}
+.brief-sort svg{width:16px;height:16px}.brief-count{font-size:1rem;font-variant-numeric:tabular-nums;font-weight:600}
+.brief-highlights{display:grid;gap:0}.brief-highlight{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;text-align:left;width:100%;padding:12px 0;color:var(--ink);border:0;border-radius:0}
+.brief-highlight+ .brief-highlight{border-top:1px solid var(--line)}.brief-highlight time{grid-column:1;font-size:.75rem;color:var(--muted)}
+.brief-highlight strong{grid-column:1;font-size:.9375rem;line-height:1.6;font-weight:550;overflow-wrap:anywhere}.brief-highlight svg{grid-column:2;grid-row:1/3;width:16px;height:16px;color:var(--green)}
+.brief-filters{display:flex;gap:4px;flex-wrap:wrap;margin:0 0 8px}.brief-filters button{min-height:44px;padding:8px 12px;border-radius:8px;color:var(--muted);font-size:.8125rem}
+.brief-filters .selected{background:var(--pale);color:var(--green);font-weight:650}.briefing-page .usage-row{padding:12px 0}.briefing-page .usage-row .row>strong{min-width:0;overflow-wrap:anywhere}.briefing-page .usage-row .row>span{flex-shrink:0}
+.briefing-page .usage-row p{margin:6px 0 0}.brief-flow{padding:14px 0;border-bottom:1px solid var(--line)}.brief-flow p{margin:8px 0;font-size:.875rem}
+.brief-hour{display:grid;grid-template-columns:minmax(48px,auto) 1fr auto;align-items:center;gap:10px;margin:12px 0;font-size:.75rem}.brief-hour .meter{margin:0}
+.brief-boundary{font-size:.75rem;font-weight:650;color:var(--muted);padding:14px 0;border-top:1px dashed var(--line)}.briefing-page .app-row .info{min-width:0}.briefing-page .info p{overflow-wrap:anywhere}
+.briefing-page .brief-export{display:block;margin-top:0;padding:8px 0;border-top:1px solid var(--line)}.briefing-page .setting-line{display:flex;justify-content:space-between}
 
 /* Compact memo density only; the shared tools and purpose geometry stay fixed. */
 .compact-note .mini-head{min-height:35px;height:35px;flex-shrink:0}
