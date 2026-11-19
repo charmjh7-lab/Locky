@@ -11,7 +11,7 @@ const native=JSON.parse(fs.readFileSync('app/build/briefing-review/native.json',
   async function show(data){await page.evaluate(b=>{state={overlay:false,prefs:{},gate:{},status:{}};screen='brief';briefData=b;briefRecordFilter='all';briefAppFilter='all';briefSort.apps='desc';briefSort.timeline='asc';document.querySelector('#app').innerHTML=brief();renderBrief(b);document.querySelector('#briefDate').textContent=b.date;},data);}
   const purpose=()=>page.locator('#brief-purposes .brief-purpose-unit').filter({has:page.locator('summary strong',{hasText:'자료 확인'})});
   const openId=async id=>{await page.evaluate(id=>{const d=document.getElementById(id);if(!d)throw Error('Missing details '+id);d.open=true;briefHydrate(d);},id);};
-  await show(native.daily);
+  await show(native.daily);assert.match(await page.evaluate(()=>briefBoundaryRecords(briefData)[0].text),/기간 시작/);assert.equal(await page.evaluate(()=>briefBoundaryRecords({start:0,focus:{periods:[{start:0,known:true,focus:true},{start:1000,known:true,focus:true}]}}).length),1,'same-state settings must not invent a transition');
   const stats=await page.evaluate(()=>briefModel(briefData).purposes.map(p=>({purpose:p.purpose,total:p.total,apps:p.apps})));
   assert.equal(stats.find(p=>p.purpose==='자료 확인').total,440000,'same phone/app purpose must count every interval only once');
   assert.deepEqual(stats.find(p=>p.purpose==='자료 확인').apps.map(a=>[a.label,a.ms]),[['ChatGPT',360000],['브라우저',80000]]);

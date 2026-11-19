@@ -657,13 +657,20 @@ function briefModel(b){
 function briefPhoneContext(id,m){
  const seen=new Set();let e=m.events.get(String(id));while(e&&!seen.has(String(e.id))){seen.add(String(e.id));if(e.kind==='unlock')return e;e=m.events.get(String(e.parent));}return null;
 }
+function briefBoundaryRecords(b){
+ const periods=b.focus?.periods||[],out=[];
+ for(let i=0;i<periods.length;i++){const p=periods[i],before=periods[i-1];if(!p.known||before?.known&&before.focus===p.focus)continue;
+  const phase=p.focus?'집중시간':'자유시간',text=p.start===b.start?`기간 시작 · ${phase}`:before&&!before.known?`이력 시작 · ${phase}`:`${phase} 시작`;
+  out.push({time:p.start,type:'boundary',text,recordKey:'b'+i});
+ }return out;
+}
 function briefTimelineModel(b){
  const model=briefModel(b);if(model.timeline)return model.timeline;
  const rawUsage=b.timeline||b.intervals||[],ranges=new Map();
  for(const h of b.hours||[]){const date=briefDateKey(h.start,b.timeZone),range=ranges.get(date);if(range)range.end=h.end;else ranges.set(date,{start:h.start,end:h.end});}
  const usage=rawUsage.flatMap(t=>{const slices=[];for(const range of ranges.values()){const start=Math.max(t.start,range.start),end=Math.min(t.end,range.end);if(end>start)slices.push({...t,start,end,ms:end-start,sourceStart:t.start,sourceEnd:t.end});}return slices.length?slices:[t];});
  const events=(b.events||[]).filter(e=>['unlock','app','utility','extend','dismiss','cancel'].includes(e.kind));
- const markers=[...usage.map((t,i)=>({...t,time:t.start,type:'usage',recordKey:'u'+t.start+'-'+encodeURIComponent(t.pkg||'')+'-'+(t.eventId||0)})),...events.map(e=>({...e,type:briefEventType(e),recordKey:'e'+e.id})),...(b.focus?.periods||[]).filter(p=>p.known).map((p,i)=>({time:p.start,type:'boundary',text:p.focus?'집중시간 시작':'자유시간 시작',recordKey:'b'+i}))].sort((a,b)=>a.time-b.time||(a.type==='usage'?1:-1));
+ const markers=[...usage.map((t,i)=>({...t,time:t.start,type:'usage',recordKey:'u'+t.start+'-'+encodeURIComponent(t.pkg||'')+'-'+(t.eventId||0)})),...events.map(e=>({...e,type:briefEventType(e),recordKey:'e'+e.id})),...briefBoundaryRecords(b)].sort((a,b)=>a.time-b.time||(a.type==='usage'?1:-1));
  const days=new Map(),locations=new Map(),pendingVisits=new Map();
  for(const h of b.hours||[]){const key=briefDateKey(h.start,b.timeZone);let day=days.get(key);if(!day){day={key,start:h.start,end:h.end,ms:0,markers:[],nodes:[],phoneGroups:new Map(),spans:[]};days.set(key,day);}day.end=h.end;}
  for(const t of markers){
