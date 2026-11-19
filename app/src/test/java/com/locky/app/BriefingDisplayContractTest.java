@@ -36,7 +36,7 @@ public class BriefingDisplayContractTest {
         assertEquals(500000L,daily.getLong("total"));assertEquals(560000L,weekly.getLong("total"));
         boolean unknown=false;JSONArray timeline=daily.getJSONArray("timeline");for(int i=0;i<timeline.length();i++){JSONObject t=timeline.getJSONObject(i);if(t.getLong("parent")==2&&t.getLong("start")==at("2026-11-17T09:11")){assertEquals(0,t.getLong("eventId"));assertEquals("unconfirmed",t.getString("relation"));unknown=true;}}assertTrue(unknown);
         assertEquals(4,daily.getJSONArray("purposeContexts").length());
-        File dir=new File("build/briefing-review");assertTrue(dir.isDirectory()||dir.mkdirs());try(Writer w=new OutputStreamWriter(new FileOutputStream(new File(dir,"native.json")),StandardCharsets.UTF_8)){w.write(new JSONObject().put("daily",daily).put("weekly",weekly).put("shortUse",analyze(at("2026-11-17T09:00"),at("2026-11-17T09:01"),raw,1)).put("boundaryUse",analyze(at("2026-11-17T20:50"),at("2026-11-17T21:10"),new JSONArray().put(span("2026-11-17T20:50","2026-11-17T21:10","video",0)),1)).toString());}
+        File dir=new File("build/briefing-review");assertTrue(dir.isDirectory()||dir.mkdirs());try(Writer w=new OutputStreamWriter(new FileOutputStream(new File(dir,"native.json")),StandardCharsets.UTF_8)){w.write(new JSONObject().put("daily",daily).put("displayDaily",Briefing.forDisplay(daily)).put("weekly",weekly).put("shortUse",analyze(at("2026-11-17T09:00"),at("2026-11-17T09:01"),raw,1)).put("boundaryUse",analyze(at("2026-11-17T20:50"),at("2026-11-17T21:10"),new JSONArray().put(span("2026-11-17T20:50","2026-11-17T21:10","video",0)),1)).toString());}
     }
     @Test public void adjacentUnknownIntentSpansKeepTheirDifferentRecordedParents() throws Exception{
         event(1,"2026-11-17T08:00","unlock","처음 목적","","",0);
@@ -46,4 +46,21 @@ public class BriefingDisplayContractTest {
         JSONObject b=analyze(at("2026-11-17T09:00"),at("2026-11-17T10:00"),new JSONArray().put(span("2026-11-17T09:00","2026-11-17T09:05","browser",2)).put(span("2026-11-17T09:05","2026-11-17T09:10","browser",3)),1);
         assertEquals(600000L,b.getLong("total"));assertEquals(2,b.getJSONArray("timeline").length());assertEquals(2,b.getJSONArray("intervals").length());assertEquals(2,b.getJSONArray("timeline").getJSONObject(0).getLong("parent"));assertEquals(3,b.getJSONArray("timeline").getJSONObject(1).getLong("parent"));
     }
+    @Test public void largeReportComparisonAndCompactPayloadKeepObservedTotals() throws Exception {
+        long start=at("2026-11-17T00:00"),end=at("2026-11-18T00:00");JSONArray usage=new JSONArray(),events=new JSONArray();long parent=0,phone=0;
+        for(int i=0;i<6000;i++){
+            long time=start+i*12000L;
+            if(i%4==0){parent=events.length()+1;if(i%80==0)phone=parent;events.put(new JSONObject().put("id",parent).put("time",time).put("kind",i%80==0?"unlock":"app").put("purpose","목적 "+i).put("pkg",i%80==0?"":"app"+(i%17)).put("target","").put("parent",i%80==0?0:phone));}
+            usage.put(new JSONObject().put("start",time).put("end",time+8000).put("pkg","app"+(i%17)).put("label","앱 "+(i%17)).put("parent",i%7==0?0:parent).put("source","accessibility").put("rule_mode","none"));
+        }
+        JSONObject schedule=FocusPeriods.data(s,start,end);JSONArray observations=new JSONArray();for(int i=0;i<4;i++)observations.put(new JSONObject().put("time",start+i*3*3600000L));schedule.put("observations",observations);
+        long began=System.nanoTime();JSONObject full=BriefingAnalysis.analyze(s,start,end,usage,events,ScreenHistory.copy(schedule));long fullMs=(System.nanoTime()-began)/1000000;
+        began=System.nanoTime();JSONObject summary=BriefingAnalysis.comparisonSummary(start,end,usage,schedule);long summaryMs=(System.nanoTime()-began)/1000000;
+        assertEquals(48000000L,full.getLong("total"));assertEquals(full.getLong("total"),summary.getLong("total"));assertEquals(full.getLong("eveningMillis"),summary.getLong("eveningMillis"));assertEquals(full.getJSONObject("quality").getBoolean("comparisonEligible"),summary.getJSONObject("quality").getBoolean("comparisonEligible"));
+        Map<String,Long> totals=new HashMap<>();JSONArray apps=full.getJSONArray("apps");for(int i=0;i<apps.length();i++)totals.put(apps.getJSONObject(i).getString("pkg"),apps.getJSONObject(i).getLong("ms"));apps=summary.getJSONArray("apps");for(int i=0;i<apps.length();i++)assertEquals(totals.get(apps.getJSONObject(i).getString("pkg")).longValue(),apps.getJSONObject(i).getLong("ms"));
+        JSONObject compact=Briefing.forDisplay(full);assertSame(full.getJSONArray("timeline"),compact.getJSONArray("timeline"));assertFalse(compact.has("intervals"));assertTrue(full.has("intervals"));int fullBytes=full.toString().length(),compactBytes=compact.toString().length();assertTrue(compactBytes<fullBytes*.65);
+        File dir=new File("build/briefing-review");assertTrue(dir.isDirectory()||dir.mkdirs());try(Writer w=new FileWriter(new File(dir,"native-performance.json"))){w.write(new JSONObject().put("records",6000).put("selections",events.length()).put("analysisMs",fullMs).put("comparisonSummaryMs",summaryMs).put("fullJsonChars",fullBytes).put("displayJsonChars",compactBytes).toString());}
+        System.out.println("Briefing 6000 records: full="+fullMs+"ms summary="+summaryMs+"ms payload="+compactBytes+"/"+fullBytes);
+    }
+
 }

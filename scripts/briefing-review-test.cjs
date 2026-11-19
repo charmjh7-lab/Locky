@@ -37,8 +37,8 @@ const native=JSON.parse(fs.readFileSync('app/build/briefing-review/native.json',
    const d=briefTimelineModel(briefData).days.find(d=>d.key==='2026-11-17'),phone=d.nodes.find(n=>n.event?.id===1);
    return {outside:d.nodes.filter(n=>n.kind==='visit').map(n=>n.pkg),ms:phone.nodes.filter(n=>n.kind==='visit').reduce((s,v)=>s+v.ms,0),locations:[...briefTimelineModel(briefData).locations].filter(([k])=>k==='e2'||k.startsWith('u')).map(([k,v])=>[k,v])};
   });
-  assert.deepEqual(tree.outside,['video']);assert.equal(tree.ms,440000);
-  assert.equal(await page.locator('#brief-phone-2026-11-17-1 > div > .brief-phone-children > .brief-visit-unit').count(),4);
+  assert.deepEqual(tree.outside,[]);assert.equal(tree.ms,320000);
+  assert.equal(await page.locator('#brief-phone-2026-11-17-1 > div > .brief-phone-children > .brief-visit-unit').count(),2);
   await page.locator('[data-brief-sort=timeline]').click();assert.equal(await page.locator('#briefTimeline').getAttribute('open'),'');await page.locator('[data-brief-sort=timeline]').click();
   const firstApp='brief-visit-2026-11-17-e2';await openId(firstApp);assert.equal(await page.locator('[id="'+firstApp+'"]').count(),1);
   assert.match(await page.locator('[id="'+firstApp+'"] .brief-visit-records').innerText(),/5분/);
@@ -60,12 +60,12 @@ const native=JSON.parse(fs.readFileSync('app/build/briefing-review/native.json',
   if(out){await page.setViewportSize({width:390,height:844});await page.screenshot({path:out+'/purpose-timeline-dark.png',fullPage:true});}
   await show(native.shortUse);assert.match(await purpose().locator(':scope>summary').innerText(),/1분 미만/);assert.match(await page.locator('.brief-overview .stat').first().innerText(),/1분 미만/);
   assert.equal(await page.evaluate(()=>briefModel(briefData).purposes.find(p=>p.purpose==='자료 확인').total),20000);
-  await show(native.boundaryUse);const boundary=await page.evaluate(()=>briefTimelineModel(briefData).days.flatMap(d=>d.nodes).filter(n=>n.kind==='visit').map(v=>({steps:v.steps.length,ms:v.ms})));assert.deepEqual(boundary,[{steps:2,ms:1200000}],'focus boundary must not create a second app entry');
+  await show(native.boundaryUse);const boundary=await page.evaluate(()=>briefTimelineModel(briefData).days.flatMap(d=>d.nodes.flatMap(n=>n.kind==='phone'?n.nodes:[n])).filter(n=>n.kind==='visit').map(v=>({steps:v.steps.length,ms:v.ms})));assert.deepEqual(boundary,[{steps:2,ms:1200000}],'focus boundary must not create a second app entry');
   await show(native.weekly);const week=await page.evaluate(()=>{const m=briefTimelineModel(briefData);return {total:m.days.reduce((s,d)=>s+d.ms,0),day:m.days.find(d=>d.key==='2026-11-18')?.ms,duplicates:m.markers.filter(t=>t.type==='usage').map(t=>t.recordKey)};});
   assert.equal(week.total,native.weekly.total);assert.equal(week.day,60000);assert.equal(new Set(week.duplicates).size,week.duplicates.length);
   const midnight=native.weekly.hours.find(h=>new Date(h.start).toISOString().startsWith('2026-11-17T15:00:00'));assert(midnight);
   await page.locator('.brief-hour-cell[data-brief-hour="'+midnight.start+'"]').click();assert.match(await page.locator('.brief-hour-selection').innerText(),/브라우저/);assert.match(await page.locator('.brief-hour-selection').innerText(),/1분/);
-  await openId('briefTimeline');await openId('brief-record-day-2026-11-18');await openId('brief-phone-2026-11-18-1');
+  await openId('briefTimeline');await openId('brief-record-day-2026-11-18');await openId('brief-phone-2026-11-18-3');
   if(out)await page.screenshot({path:out+'/weekly-midnight.png',fullPage:true});
   await page.evaluate(()=>{briefData={...briefData,days:1,total:7200000,complete:true,quality:{comparisonEligible:true},previous:{available:true,total:3600000},comparison:{records:Array.from({length:5},(_,i)=>({date:'2026-11-'+(10+i),total:3600000}))}};renderBrief(briefData);});
   assert.match(await page.locator('#brief-comparison .brief-change').innerText(),/↑ 60분/);

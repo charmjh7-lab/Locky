@@ -77,11 +77,16 @@ final class ScreenHistory {
         if(cursor<end){out.spans.add(new Span(cursor,end,state));if(state==OFF)out.hasInactive=true;}return out;
     }
     static JSONArray filter(Context c,JSONArray rows,long start,long end) throws JSONException {
-        Evidence evidence=read(c,start,end,UNKNOWN,true);JSONArray out=new JSONArray();
+        return filter(c,rows,read(c,start,end,UNKNOWN,true));
+    }
+    static JSONObject copy(JSONObject row) throws JSONException {JSONObject out=new JSONObject();for(Iterator<String> keys=row.keys();keys.hasNext();){String key=keys.next();out.put(key,row.get(key));}return out;}
+    static JSONArray filter(Context c,JSONArray rows,Evidence evidence) throws JSONException {
+        JSONArray out=new JSONArray();int firstSpan=0;
         for(int n=0;n<rows.length();n++){
             JSONObject row=rows.getJSONObject(n);boolean first=c.getPackageName().equals(row.optString("pkg"))&&"첫 화면".equals(row.optString("label"));
-            for(Span span:evidence.spans){long a=Math.max(row.getLong("start"),span.start),b=Math.min(row.getLong("end"),span.end);if(b<=a||span.state==OFF||(first&&span.state==UNKNOWN))continue;
-                out.put(new JSONObject(row.toString()).put("start",a).put("end",b).put("screenEvidence",span.state==ON?"active":"unknown"));
+            while(firstSpan<evidence.spans.size()&&evidence.spans.get(firstSpan).end<=row.getLong("start"))firstSpan++;
+            for(int i=firstSpan;i<evidence.spans.size();i++){Span span=evidence.spans.get(i);if(span.start>=row.getLong("end"))break;long a=Math.max(row.getLong("start"),span.start),b=Math.min(row.getLong("end"),span.end);if(b<=a||span.state==OFF||(first&&span.state==UNKNOWN))continue;
+                out.put(copy(row).put("start",a).put("end",b).put("screenEvidence",span.state==ON?"active":"unknown"));
             }
         }return out;
     }

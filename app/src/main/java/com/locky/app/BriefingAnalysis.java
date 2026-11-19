@@ -15,12 +15,12 @@ final class BriefingAnalysis {
         // Fix all seven local-date ranges before fetching any comparisons (including DST days).
         List<LocalDate> dates=new ArrayList<>();List<long[]> ranges=new ArrayList<>();
         if(days==1)for(int d=1;d<=7;d++){LocalDate date=first.minusDays(d);dates.add(date);ranges.add(new long[]{date.atStartOfDay(z).toInstant().toEpochMilli(),date.plusDays(1).atStartOfDay(z).toInstant().toEpochMilli()});}
-        JSONObject previous=request.range(prior,start);result.put("previous",new JSONObject().put("available",previous.getJSONArray("timeline").length()>0).put("comparisonEligible",previous.getJSONObject("quality").optBoolean("comparisonEligible")).put("total",previous.getLong("total")).put("start",prior).put("end",start));
+        JSONObject previous=request.comparison(prior,start);result.put("previous",new JSONObject().put("available",previous.getLong("total")>0).put("comparisonEligible",previous.getJSONObject("quality").optBoolean("comparisonEligible")).put("total",previous.getLong("total")).put("start",prior).put("end",start));
         if(days!=1)return;
         JSONArray dayTotals=new JSONArray();Map<String,Long> sums=new HashMap<>();int comparable=0;long recentTotal=0,recentEvening=0;
         for(int d=0;d<ranges.size();d++){
             LocalDate date=dates.get(d);long[] range=ranges.get(d);
-            JSONObject p=request.range(range[0],range[1]);
+            JSONObject p=request.comparison(range[0],range[1]);
             // Full schedule history and positive observation on at least five days; no zero-filled missing days.
             if(!p.getJSONObject("quality").optBoolean("comparisonEligible"))continue;
             comparable++;recentTotal+=p.getLong("total");recentEvening+=p.optLong("eveningMillis");dayTotals.put(new JSONObject().put("date",date.toString()).put("total",p.getLong("total")));
@@ -38,6 +38,19 @@ final class BriefingAnalysis {
         if(recentTotal>0&&result.getLong("total")>0){double oldShare=(double)recentEvening/recentTotal,newShare=(double)result.optLong("eveningMillis")/result.getLong("total");
             if(Math.abs(newShare-oldShare)>=.20&&result.optLong("eveningMillis")>=30*60000L)highlights.put(new JSONObject().put("type","time-change").put("priority",4).put("start",start).put("end",end).put("ms",result.optLong("eveningMillis")).put("evidence","comparable-days:"+comparable).put("text","18시 이후 사용 비중이 최근 기록 "+comparable+"일보다 "+Math.round(Math.abs(newShare-oldShare)*100)+"%p "+(newShare>oldShare?"높았어요.":"낮았어요.")));}
         while(highlights.length()>3)highlights.remove(highlights.length()-1);
+    }
+    private static int choiceAfter(List<JSONObject> choices,long at){int low=0,high=choices.size();while(low<high){int mid=(low+high)>>>1;if(choices.get(mid).optLong("time")<=at)low=mid+1;else high=mid;}return low;}
+    /** Comparison days need observed totals, not eight complete timeline/flow trees. */
+    static JSONObject comparisonSummary(long start,long end,JSONArray usage,JSONObject focus) throws JSONException {
+        Map<String,JSONObject> apps=new LinkedHashMap<>();long total=0,evening=0;ZoneId zone=ZoneId.systemDefault();
+        List<long[]> evenings=new ArrayList<>();for(LocalDate d=Instant.ofEpochMilli(start).atZone(zone).toLocalDate();d.atStartOfDay(zone).toInstant().toEpochMilli()<end;d=d.plusDays(1))evenings.add(new long[]{d.atTime(18,0).atZone(zone).toInstant().toEpochMilli(),d.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()});
+        for(int i=0;i<usage.length();i++){JSONObject t=usage.getJSONObject(i);long a=Math.max(start,t.getLong("start")),b=Math.min(end,t.getLong("end"));if(b<=a)continue;total+=b-a;
+            String pkg=t.getString("pkg");JSONObject app=apps.get(pkg);if(app==null){app=new JSONObject().put("pkg",pkg).put("label",t.getString("label")).put("ms",0);apps.put(pkg,app);}app.put("ms",app.getLong("ms")+b-a);
+            for(long[] span:evenings)evening+=Math.max(0,Math.min(b,span[1])-Math.max(a,span[0]));
+        }
+        JSONArray observations=focus.optJSONArray("observations"),rows=new JSONArray();for(JSONObject app:apps.values())rows.put(app);
+        boolean eligible=focus.getLong("unknownMillis")==0&&total>=30*60000L&&observations!=null&&observations.length()>=3&&observations.getJSONObject(observations.length()-1).getLong("time")-observations.getJSONObject(0).getLong("time")>=6*3600000L;
+        return new JSONObject().put("total",total).put("eveningMillis",evening).put("apps",rows).put("quality",new JSONObject().put("comparisonEligible",eligible));
     }
     private static long duration(JSONObject o){return o.optLong("end")-o.optLong("start");}
     private static JSONObject parent(Store s,Map<Long,JSONObject> cache,long id) throws JSONException {
@@ -59,17 +72,20 @@ final class BriefingAnalysis {
         }
         JSONArray preceding=s.rows("SELECT * FROM events WHERE kind IN ('unlock','app') AND time<? ORDER BY time DESC,id DESC LIMIT 1",""+start);
         if(preceding.length()>0)selections.add(0,preceding.getJSONObject(0));
+        JSONArray priorPhone=s.rows("SELECT * FROM events WHERE kind='unlock' AND time<? ORDER BY time DESC,id DESC LIMIT 1",""+start);
+        if(priorPhone.length()>0){JSONObject phone=priorPhone.getJSONObject(0);contexts.put(phone.getLong("id"),phone);}
+        selections.sort(Comparator.comparingLong((JSONObject e)->e.optLong("time")).thenComparingLong(e->e.optLong("id")));
+        TreeSet<Long> boundaries=new TreeSet<>();for(JSONObject e:selections)boundaries.add(e.getLong("time"));
+        for(int i=0;i<periods.length();i++){JSONObject p=periods.getJSONObject(i);boundaries.add(p.getLong("start"));boundaries.add(p.getLong("end"));}
         for(int i=0;i<usage.length();i++)sorted.add(usage.getJSONObject(i));sorted.sort(Comparator.comparingLong(o->o.optLong("start")));
         for(JSONObject u:sorted){
             long a=u.getLong("start"),b=u.getLong("end");JSONObject context=parent(s,contexts,u.optLong("parent")),initial=context;Set<Long> seen=new HashSet<>();
             while(initial!=null&&initial.optLong("parent")>0&&seen.add(initial.optLong("id"))){JSONObject ancestor=parent(s,contexts,initial.optLong("parent"));if(ancestor==null)break;initial=ancestor;}
-            List<Long> cuts=new ArrayList<>(List.of(a,b));for(JSONObject e:selections)if(e.getLong("time")>a&&e.getLong("time")<b)cuts.add(e.getLong("time"));
-            for(int i=0;i<periods.length();i++){JSONObject p=periods.getJSONObject(i);for(String k:new String[]{"start","end"}){long t=p.getLong(k);if(t>a&&t<b)cuts.add(t);}}
-            cuts=new ArrayList<>(new TreeSet<>(cuts));
+            List<Long> cuts=new ArrayList<>();cuts.add(a);cuts.addAll(boundaries.subSet(a,false,b,false));cuts.add(b);
             for(int i=0;i+1<cuts.size();i++){
                 long from=cuts.get(i),to=cuts.get(i+1),ms=to-from;JSONObject active=context;
                 // New explicit choices terminate the prior intent. Adjacency alone never reassigns it.
-                if(active!=null)for(JSONObject e:selections)if((e.getLong("time")>active.getLong("time")||(e.getLong("time")==active.getLong("time")&&e.getLong("id")>active.getLong("id")))&&e.getLong("time")<=from){active=null;break;}
+                int latest=choiceAfter(selections,from)-1;if(active!=null&&latest>=0){JSONObject e=selections.get(latest);if(e.getLong("time")>active.getLong("time")||e.getLong("time")==active.getLong("time")&&e.getLong("id")>active.getLong("id"))active=null;}
                 String pkg=u.getString("pkg"),target=active==null?"":active.optString("target");if(target.isEmpty()&&active!=null&&active.optString("kind").equals("app"))target=active.optString("pkg");
                 boolean linked=active!=null&&!target.isEmpty(),direct=linked&&target.equals(pkg);String category=category(periods,from);
                 JSONObject t=new JSONObject().put("start",from).put("end",to).put("pkg",pkg).put("label",u.getString("label")).put("source",u.optString("source","legacy"))
@@ -82,7 +98,7 @@ final class BriefingAnalysis {
                 if(direct)directMs+=ms;else if(linked)otherMs+=ms;
                 JSONObject app=apps.get(pkg);if(app==null){app=new JSONObject().put("pkg",pkg).put("label",u.getString("label")).put("ms",0).put("focus",0).put("free",0).put("unknown",0);apps.put(pkg,app);}app.put("ms",app.getLong("ms")+ms).put(category,app.getLong(category)+ms);
                 if(active!=null){JSONObject row=purposeRows.get(active.optString("purpose"));if(row==null){row=new JSONObject().put("purpose",active.optString("purpose")).put("count",0).put("priorSelection",true).put("directMillis",0).put("otherMillis",0);purposeRows.put(active.optString("purpose"),row);}if(row!=null){String field=direct?"directMillis":linked?"otherMillis":"";if(!field.isEmpty())row.put(field,row.getLong(field)+ms);}
-                    long id=active.getLong("id");JSONObject flow=flowRows.get(id);if(flow==null){flow=new JSONObject().put("event",active).put("start",active.getLong("time")).put("end",to).put("directMillis",0).put("otherMillis",0).put("steps",new JSONArray());flowRows.put(id,flow);}flow.put("end",to);if(linked){String key=direct?"directMillis":"otherMillis";flow.put(key,flow.getLong(key)+ms);}flow.getJSONArray("steps").put(t);
+                    long id=active.getLong("id");JSONObject flow=flowRows.get(id);if(flow==null){flow=new JSONObject().put("event",active).put("start",active.getLong("time")).put("end",to).put("directMillis",0).put("otherMillis",0).put("steps",new JSONArray());flowRows.put(id,flow);}flow.put("end",to);if(linked){String key=direct?"directMillis":"otherMillis";flow.put(key,flow.getLong(key)+ms);}flow.getJSONArray("steps").put(ScreenHistory.copy(t));
                 }
             }
         }
@@ -90,7 +106,7 @@ final class BriefingAnalysis {
         int repeated=0;for(JSONObject p:purposeRows.values()){purposes.put(p);repeated+=Math.max(0,p.getInt("count")-1);}
         long cursor=start;for(JSONObject u:sorted){long a=u.getLong("start"),b=u.getLong("end");if(a>cursor)unobserved.put(new JSONObject().put("start",cursor).put("end",a).put("reason","외부 앱 사용 관측 없음 · 화면 꺼짐/내부 화면/누락 여부는 이 자료만으로 확정 불가"));cursor=Math.max(cursor,b);}if(cursor<end)unobserved.put(new JSONObject().put("start",cursor).put("end",end).put("reason","외부 앱 사용 관측 없음"));
         // Actual local-hour boundaries, including DST overlap/gaps and non-24-hour dates.
-        ZoneId zone=ZoneId.systemDefault();long hour=start;while(hour<end){ZonedDateTime local=Instant.ofEpochMilli(hour).atZone(zone);long next=Math.min(end,local.truncatedTo(java.time.temporal.ChronoUnit.HOURS).plusHours(1).toInstant().toEpochMilli());long ms=0;for(int i=0;i<timeline.length();i++){JSONObject t=timeline.getJSONObject(i);ms+=Math.max(0,Math.min(next,t.getLong("end"))-Math.max(hour,t.getLong("start")));}hours.put(new JSONObject().put("start",hour).put("end",next).put("ms",ms));if(local.getHour()>=18)eveningMs+=ms;hour=next;}
+        ZoneId zone=ZoneId.systemDefault();int hourCursor=0;long hour=start;while(hour<end){ZonedDateTime local=Instant.ofEpochMilli(hour).atZone(zone);long next=Math.min(end,local.truncatedTo(java.time.temporal.ChronoUnit.HOURS).plusHours(1).toInstant().toEpochMilli());long ms=0;while(hourCursor<timeline.length()&&timeline.getJSONObject(hourCursor).getLong("end")<=hour)hourCursor++;for(int i=hourCursor;i<timeline.length();i++){JSONObject t=timeline.getJSONObject(i);if(t.getLong("start")>=next)break;ms+=Math.max(0,Math.min(next,t.getLong("end"))-Math.max(hour,t.getLong("start")));}hours.put(new JSONObject().put("start",hour).put("end",next).put("ms",ms));if(local.getHour()>=18)eveningMs+=ms;hour=next;}
         if(focusMs>=30*60000L){JSONObject top=null;for(JSONObject app:ranked)if(top==null||app.optLong("focus")>top.optLong("focus"))top=app;
             if(top!=null&&top.getLong("focus")>=15*60000L&&top.getLong("focus")*2>=focusMs){long a=end,b=start;for(int i=0;i<timeline.length();i++){JSONObject t=timeline.getJSONObject(i);if(t.getString("pkg").equals(top.getString("pkg"))&&t.getString("focusState").equals("focus")){a=Math.min(a,t.getLong("start"));b=Math.max(b,t.getLong("end"));}}
                 highlights.put(new JSONObject().put("type","focus-app").put("priority",1).put("start",a).put("end",b).put("ms",top.getLong("focus")).put("pkg",top.getString("pkg")).put("evidence","focus-period-intersection").put("text","집중시간 중 "+top.getString("label")+" 사용이 "+Briefing.minutes(top.getLong("focus"))+"분 기록됐어요."));}
@@ -109,11 +125,11 @@ final class BriefingAnalysis {
         }
         for(JSONObject flow:flowRows.values()){
             JSONArray steps=flow.getJSONArray("steps"),gaps=new JSONArray(),choices=new JSONArray();long last=flow.getLong("start");for(int i=0;i<steps.length();i++){JSONObject t=steps.getJSONObject(i);if(t.getLong("start")>last)gaps.put(new JSONObject().put("start",last).put("end",t.getLong("start")));last=t.getLong("end");}
-            for(JSONObject e:selections)if(e.getLong("time")>flow.getLong("start")&&e.getLong("time")<flow.getLong("end"))choices.put(e);
+            for(int j=choiceAfter(selections,flow.getLong("start"));j<selections.size()&&selections.get(j).getLong("time")<flow.getLong("end");j++)choices.put(selections.get(j));
             flow.put("blocks",blocks(steps)).put("gaps",gaps).put("newChoices",choices);flows.put(flow);
             long other=flow.getLong("otherMillis"),direct=flow.getLong("directMillis");if(other>=15*60000L&&other*3>=other+direct){JSONObject e=flow.getJSONObject("event");highlights.put(new JSONObject().put("type","other-app").put("priority",2).put("start",flow.getLong("start")).put("end",flow.getLong("end")).put("ms",other).put("eventId",e.getLong("id")).put("target",e.optString("target")).put("evidence","usage.parent=events.id").put("text",clock(e.getLong("time"))+"에 ‘"+e.getString("purpose")+"’ 선택 후, 같은 선택에 연결된 다른 앱 사용이 "+Briefing.minutes(other)+"분 기록됐어요."));}
         }
-        for(int i=0;i<events.length();i++){JSONObject e=events.getJSONObject(i);if(!Set.of("dismiss","cancel").contains(e.getString("kind")))continue;long at=e.getLong("time"),next=Long.MAX_VALUE;for(JSONObject choice:selections)if(choice.getLong("time")>at)next=Math.min(next,choice.getLong("time"));long observed=0;for(JSONObject u:sorted)observed+=Math.max(0,Math.min(Math.min(end,at+5*60000L),u.getLong("end"))-Math.max(at,u.getLong("start")));
+        for(int i=0;i<events.length();i++){JSONObject e=events.getJSONObject(i);if(!Set.of("dismiss","cancel").contains(e.getString("kind")))continue;long at=e.getLong("time"),next=Long.MAX_VALUE;int nextChoice=choiceAfter(selections,at);if(nextChoice<selections.size())next=selections.get(nextChoice).getLong("time");long observed=0;for(JSONObject u:sorted)observed+=Math.max(0,Math.min(Math.min(end,at+5*60000L),u.getLong("end"))-Math.max(at,u.getLong("start")));
             if(next-at<=5*60000L||observed==0){String text=next-at<=5*60000L?clock(at)+"에 열지 않기를 선택한 뒤 "+Math.max(1,(next-at)/1000)+"초 후 다시 시작했어요.":clock(at)+"에 열지 않기를 선택한 뒤 "+Math.min(5,Math.max(0,(end-at)/60000))+"분 동안 외부 앱 사용 기록이 없어요.";
                 if(next==Long.MAX_VALUE&&end-at<60000L)continue;
                 highlights.put(new JSONObject().put("type","cancel").put("priority",3).put("start",at).put("end",Math.min(end,next==Long.MAX_VALUE?at+5*60000L:next)).put("ms",observed).put("eventId",e.getLong("id")).put("restartAfterMillis",next==Long.MAX_VALUE?JSONObject.NULL:next-at).put("evidence","cancel-event;observed-usage;explicit-next-choice").put("text",text));}
@@ -134,7 +150,7 @@ final class BriefingAnalysis {
             JSONObject t=spans.getJSONObject(i),last=out.length()==0?null:out.getJSONObject(out.length()-1);long ms=duration(t);
             if(last!=null&&t.optBoolean("technicalResume")&&t.getLong("start")>last.getLong("end")&&t.getLong("start")-last.getLong("end")<=1500&&same(last,t,"pkg","parent","eventId","focusState","source","ruleMode","relation")){
                 last.put("excludedTransitionMillis",last.optLong("excludedTransitionMillis")+t.getLong("start")-last.getLong("end")).put("end",t.getLong("end")).put("ms",last.getLong("ms")+ms);
-            }else out.put(new JSONObject(t.toString()).put("ms",ms).put("excludedTransitionMillis",0));
+            }else out.put(ScreenHistory.copy(t).put("ms",ms).put("excludedTransitionMillis",0));
         }return out;
     }
     private static boolean same(JSONObject a,JSONObject b,String... keys){for(String key:keys)if(!Objects.equals(a.opt(key),b.opt(key)))return false;return true;}

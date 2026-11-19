@@ -534,7 +534,7 @@ final class WebHost {
                 JSONArray seen=new JSONArray(store.settings.getString("rule-seen","[]"));boolean found=false;for(int j=0;j<seen.length();j++)if(seen.getString(j).equals(pkg))found=true;if(!found){seen.put(pkg);store.settings.edit().putString("rule-seen",seen.toString()).apply();}if(g!=null)g.policyChanged();break;
             case "brief":{
                 if(a.optString("kind").equals("focus"))out=Briefing.focusResult(context,a.getString("key"));
-                else {long offset=a.has("date")?java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.parse(a.getString("date")),java.time.LocalDate.now()):a.optLong("offset",0);out=Briefing.build(context,a.optInt("days",1)==7?7:1,Math.max(0,Math.min(179,offset)));}break;
+                else {long offset=a.has("date")?java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.parse(a.getString("date")),java.time.LocalDate.now()):a.optLong("offset",0);out=Briefing.build(context,a.optInt("days",1)==7?7:1,Math.max(0,Math.min(179,offset)));}out=Briefing.forDisplay((JSONObject)out);break;
             }
             case "purposeOrder":{String scope=a.optString("scope","phone");out=new JSONObject().put("date",java.time.LocalDate.now().toString()).put("scope",scope).put("purposes",store.purposes(scope));break;}
             case "copyDay":{

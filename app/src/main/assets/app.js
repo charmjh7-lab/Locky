@@ -45,7 +45,7 @@ function startPolling(){clearInterval(poll);poll=null;if(state?.role==='APP_GATE
 function remember(){if(!state)return;if(state.role==='PHONE_START'){safe(()=>api('remember',{screen,chat:chatId,note:noteId,chatReturn,chatsReturn,quickQuestion:$('#quickQuestion')?.value??quickQuestionDraft,word:$('#word')?.value??dictionaryWordDraft,chatDraft:$('#chatInput')?.value??state.phoneSession?.chatDraft??''}));return;}if(!state.overlay&&!gated.includes(screen)&&screen!=='unlock')safe(()=>api('remember',{screen,chat:chatId,note:noteId,chatReturn,chatsReturn,briefTarget:screen==='brief'?{...(briefTarget||{}),date:briefData?.kind!=='focus'?briefData?.date:undefined,days:briefDays}:undefined}));}
 let phoneDraftTimer=null;
 document.addEventListener('input',()=>{if(state?.role==='PHONE_START'){clearTimeout(phoneDraftTimer);phoneDraftTimer=setTimeout(remember,200);}});
-async function navigate(s,navigation=null,keepBrief=false){if(state?.role==='APP_GATE'&&!gated.includes(s)&&s!=='gateIdle'){const entry=gateSnapshot();await flushMemo();if(currentGate(entry))await api('open',{screen:s,...(s==='chat'?{chat:chatId}:{})});return;}if(state?.role==='PHONE_START'&&!['unlock','notes','chats','chat'].includes(s)){await api('open',{screen:s});return;}if(s==='brief'&&navigation===null&&!keepBrief&&screen!=='brief'){briefTarget=null;briefDays=1;briefOffset=0;}const local=navigation===null;if(local)navigation=nativeNavigation;if(['home','unlock','app'].includes(s))purposeEntry=null;if(s==='chats'&&starts.includes(screen))chatsReturn=screen;if(s==='chat'&&screen==='chats')chatReturn='chats';if(settingsTimer&&screen==='settings'){clearTimeout(settingsTimer);settingsTimer=null;await safe(saveReminders);}await flushMemo();if(navigation<nativeNavigation)return;const retainedNavigation=renderedRoute===s&&navigation!==nativeNavigation;nativeNavigation=navigation;if(local&&state?.overlay&&['chat','chats','unlock'].includes(s)&&s!==screen)presentScreen(s);closeSheet();screen=s;selected='';minutes=5;document.body.classList.toggle('start-screen',starts.includes(screen));window.scrollTo(0,0);const revision=domRevision;await refresh(true);if(retainedNavigation&&navigation===nativeNavigation&&renderedRoute===s&&revision===domRevision)signalRendered();startPolling();remember();if(state&&['notes','chat','chats'].includes(s))safe(()=>api('utility',{name:s==='notes'?'메모':'ChatGPT'}));}
+async function navigate(s,navigation=null,keepBrief=false){if(state?.role==='APP_GATE'&&!gated.includes(s)&&s!=='gateIdle'){const entry=gateSnapshot();await flushMemo();if(currentGate(entry))await api('open',{screen:s,...(s==='chat'?{chat:chatId}:{})});return;}if(state?.role==='PHONE_START'&&!['unlock','notes','chats','chat'].includes(s)){await api('open',{screen:s});return;}if(s==='brief'&&navigation===null&&!keepBrief&&screen!=='brief'){briefTarget=null;briefDays=1;briefOffset=0;}const local=navigation===null;if(local)navigation=nativeNavigation;if(['home','unlock','app'].includes(s))purposeEntry=null;if(s==='chats'&&starts.includes(screen))chatsReturn=screen;if(s==='chat'&&screen==='chats')chatReturn='chats';if(settingsTimer&&screen==='settings'){clearTimeout(settingsTimer);settingsTimer=null;await safe(saveReminders);}await flushMemo();if(navigation<nativeNavigation)return;const retainedNavigation=renderedRoute===s&&navigation!==nativeNavigation;nativeNavigation=navigation;if(local&&state?.overlay&&['chat','chats','unlock'].includes(s)&&s!==screen)presentScreen(s);closeSheet();const leavingBrief=screen==='brief'&&s!=='brief';if(leavingBrief)++briefSeq;screen=s;selected='';minutes=5;document.body.classList.toggle('start-screen',starts.includes(screen));window.scrollTo(0,0);if(leavingBrief&&state)render();const revision=domRevision;await refresh(true);if(retainedNavigation&&navigation===nativeNavigation&&renderedRoute===s&&revision===domRevision)signalRendered();startPolling();remember();if(state&&['notes','chat','chats'].includes(s))safe(()=>api('utility',{name:s==='notes'?'메모':'ChatGPT'}));}
 async function refresh(force=false){if(screen==='gateIdle')return;if(state?.role==='APP_GATE')return refreshGate(force);if(refreshing){if(force)refreshAgain=true;return;}refreshing=true;try{
  const entry=nativeNavigation,appEntry=state?.role==='APP_GATE',tick=!force&&state&&['chat','timer',...gated].includes(screen);
  const next=await api(tick?'tick':'state');if(appEntry&&entry!==nativeNavigation)return;
@@ -55,7 +55,7 @@ async function refresh(force=false){if(screen==='gateIdle')return;if(state?.role
  if(!restored){restored=true;if(state.role==='PHONE_START'){const saved=state.phoneSession||{};quickQuestionDraft=saved.quickQuestion||'';dictionaryWordDraft=saved.word||'';noteId=saved.note||noteId;chatReturn=saved.chatReturn||'unlock';chatsReturn=saved.chatsReturn||'unlock';}if(screen==='chat')chatReturn=state.chatReturn||'chats';if(screen==='chats')chatsReturn=state.chatsReturn||'home';if(screen==='brief'&&!briefTarget&&state.savedBrief){briefTarget=state.savedBrief;briefDays=state.savedBrief.days||1;}chatId=chatId||state.savedChat||'';noteId=noteId||state.savedNote||'';}
  if(['home','unlock'].includes(screen)&&renderedRoute===screen&&$('.start-page')){updateStart();return;}
  if(force&&state?.role==='APP_GATE'&&gated.includes(screen)&&renderedRoute===screen){presentGate(screen,state,nativeNavigation);return;}
- if(!force){if(screen==='chat'){await renderMessages(false);return;}if(screen==='timer'||gated.includes(screen)){updateTimers();return;}if(document.activeElement?.matches('input,textarea,select')||memoPending||memoSaving)return;if(screen==='brief'){await loadBrief();return;}if(screen==='chats'){const c=$('#connection');if(c){c.innerHTML=connectionHTML();bind(c);}return;}}
+ if(!force){if(screen==='chat'){await renderMessages(false);return;}if(screen==='timer'||gated.includes(screen)){updateTimers();return;}if(document.activeElement?.matches('input,textarea,select')||memoPending||memoSaving)return;if(screen==='brief'){loadBrief();return;}if(screen==='chats'){const c=$('#connection');if(c){c.innerHTML=connectionHTML();bind(c);}return;}}
  const oldScroll=window.scrollY;render();if(!force)window.scrollTo(0,oldScroll);if(screen==='brief')loadBrief();if(screen==='apps')loadApps();if(screen==='usageApps')loadUsageApps();if(screen==='chat')renderMessages(force);
  }catch(e){toast(e.message);}finally{refreshing=false;if(refreshAgain){refreshAgain=false;refresh(true);}}}
 async function openNoteById(id,navigation=null){await flushMemo();noteId=id;await navigate('notes',navigation);remember();}
@@ -586,7 +586,8 @@ async function openBriefRoute(route,navigation=null){
  else {briefDays=kind==='week'?7:1;briefTarget={date:value};const [y,m,d]=value.split('-').map(Number),today=new Date();briefOffset=Math.max(0,Math.round((Date.UTC(today.getFullYear(),today.getMonth(),today.getDate())-Date.UTC(y,m-1,d))/86400000));}
  await navigate('brief',navigation,true);
 }
-async function loadBrief(){const sequence=++briefSeq;await safe(async()=>{const b=await api('brief',{days:briefDays,offset:briefOffset,...(briefTarget||{})});if(!$('#briefContent')||sequence!==briefSeq)return;briefData=b;remember();if(b.kind==='focus'){const d=new Date(b.end-1),today=new Date();briefOffset=Math.max(0,Math.round((Date.UTC(today.getFullYear(),today.getMonth(),today.getDate())-Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()))/86400000));}$('#briefDate').textContent=b.kind==='focus'?`${new Date(b.start).toLocaleDateString('ko-KR',{timeZone:b.timeZone})} ${dateTime(b.start,b.timeZone)} – ${dateTime(b.end,b.timeZone)}`:b.days===7?`${new Date(b.start).toLocaleDateString('ko-KR',{timeZone:b.timeZone})} – ${b.date}`:b.date;renderBrief(b);});}
+const briefInFlight=new Map();
+async function loadBrief(){const sequence=++briefSeq,args={days:briefDays,offset:briefOffset,...(briefTarget||{})},key=JSON.stringify(args);await safe(async()=>{let pending=briefInFlight.get(key);if(!pending){pending=api('brief',args).finally(()=>briefInFlight.delete(key));briefInFlight.set(key,pending);}const b=await pending;if(screen!=='brief'||!$('#briefContent')||sequence!==briefSeq)return;briefData=b;remember();if(b.kind==='focus'){const d=new Date(b.end-1),today=new Date();briefOffset=Math.max(0,Math.round((Date.UTC(today.getFullYear(),today.getMonth(),today.getDate())-Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()))/86400000));}$('#briefDate').textContent=b.kind==='focus'?`${new Date(b.start).toLocaleDateString('ko-KR',{timeZone:b.timeZone})} ${dateTime(b.start,b.timeZone)} – ${dateTime(b.end,b.timeZone)}`:b.days===7?`${new Date(b.start).toLocaleDateString('ko-KR',{timeZone:b.timeZone})} – ${b.date}`:b.date;renderBrief(b);});}
 function briefSortButton(key){
  const desc=briefSort[key]==='desc',name=key==='apps'?'사용한 앱':key==='events'?'행동별 기록':'앱 사용 시간선';
  const order=key==='apps'?(desc?'많이 사용한 순':'적게 사용한 순'):(desc?'최근 기록부터':'오래된 기록부터');
@@ -672,20 +673,22 @@ function briefTimelineModel(b){
  const events=(b.events||[]).filter(e=>['unlock','app','utility','extend','dismiss','cancel'].includes(e.kind));
  const markers=[...usage.map((t,i)=>({...t,time:t.start,type:'usage',recordKey:'u'+t.start+'-'+encodeURIComponent(t.pkg||'')+'-'+(t.eventId||0)})),...events.map(e=>({...e,type:briefEventType(e),recordKey:'e'+e.id})),...briefBoundaryRecords(b)].sort((a,b)=>a.time-b.time||(a.type==='usage'?1:-1));
  const days=new Map(),locations=new Map(),pendingVisits=new Map();
+ const phones=[...model.events.values()].filter(e=>e.kind==='unlock').sort((a,b)=>a.time-b.time||a.id-b.id);let phoneIndex=-1;
  for(const h of b.hours||[]){const key=briefDateKey(h.start,b.timeZone);let day=days.get(key);if(!day){day={key,start:h.start,end:h.end,ms:0,markers:[],nodes:[],phoneGroups:new Map(),spans:[]};days.set(key,day);}day.end=h.end;}
  for(const t of markers){
   const dayKey=briefDateKey(t.time,b.timeZone);let day=days.get(dayKey);
   if(!day){day={key:dayKey,start:t.time,end:t.end||t.time+1,ms:0,markers:[],nodes:[],phoneGroups:new Map(),spans:[]};days.set(dayKey,day);}day.markers.push(t);
   if(t.type==='usage'){day.spans.push(t);day.ms+=briefMs(t);}
-  // Group by the recorded parent, even when a later phone choice made the current intent unknown.
-  // This is the original entry context, not a reassignment of usage intent.
-  const phone=t.kind==='unlock'?t:t.type==='usage'?(briefPhoneContext(t.parent,model)||briefPhoneContext(t.eventId,model)):briefPhoneContext(t.parent,model);
+  // The phone opening contains subsequent records by time, including recovered/unlinked spans.
+  // Explicit app intent remains separate and is never inferred from this containment.
+  while(phoneIndex+1<phones.length&&(phones[phoneIndex+1].time<t.time||phones[phoneIndex+1].time===t.time&&(t.type==='usage'||phones[phoneIndex+1].id<=(t.id||0))))phoneIndex++;
+  const phone=t.kind==='unlock'?t:phones[phoneIndex];
   let owner=day.nodes,parents=['brief-record-day-'+dayKey];
   if(phone){let group=day.phoneGroups.get(String(phone.id));if(!group){group={kind:'phone',event:phone,time:Math.max(phone.time,day.start),nodes:[],id:'brief-phone-'+dayKey+'-'+phone.id};day.phoneGroups.set(String(phone.id),group);day.nodes.push(group);}owner=group.nodes;parents.push(group.id);}
   if(t.kind==='unlock'){locations.set(t.recordKey,parents);continue;}
   if(t.type==='usage'||t.kind==='app'){
    const choice=t.kind==='app'?t:model.events.get(String(t.parent))?.kind==='app'?model.events.get(String(t.parent)):model.events.get(String(t.eventId));
-   const appChoice=choice?.kind==='app'&&(!choice.pkg||choice.pkg===t.pkg)?choice:null;
+   const appChoice=choice?.kind==='app'&&(!phone||choice.time>=phone.time)&&(!choice.pkg||choice.pkg===t.pkg)?choice:null;
    const pkg=t.pkg||t.target||'',label=t.label||b.apps?.find(a=>a.pkg===pkg)?.label||pkg;
    const visitKey=appChoice?dayKey+'|'+appChoice.id+'|'+pkg:null;
    const pending=visitKey?pendingVisits.get(visitKey):null;
@@ -837,7 +840,7 @@ function briefHighlightsView(b){
 function renderBrief(b){
  const area=$('#briefContent');if(!area)return;
  const opened=new Set([...area.querySelectorAll('details[open]')].map(d=>d.id)),position=window.scrollY;
- const signature=JSON.stringify([b.start,b.days,b.timeZone,b.timeline,b.intervals,b.events,b.purposeContexts,b.flows,b.purposes,b.hours,b.focus?.periods,b.focusResults]);
+ const signature=briefModel(b).signature??=JSON.stringify([b.start,b.days,b.timeZone,b.timeline,b.intervals,b.events,b.purposeContexts,b.flows,b.purposes,b.hours,b.focus?.periods,b.focusResults]);
  if(signature!==briefRecordSignature){briefRecordSignature=signature;briefViewRevision++;briefLazyViews.clear();}
  const focus=b.focus||{},hasFocus=Number(focus.knownMillis)>0,flows=briefModel(b).flows,highlights=briefHighlightsView(b);
  const active=(b.focusResults||[]).find(w=>!w.complete&&w.start<=Date.now()&&w.end>Date.now());
@@ -1064,9 +1067,9 @@ async function action(name,el){if(screen==='gateIdle')return;const gateEntry=gat
  case 'send':{const pending=quickTurns.get(chatId);if(pending&&!pending.accepted)return;const text=$('#chatInput').value.trim();if(!text)return;await api('send',{id:chatId,text});$('#chatInput').value='';await refresh();break;}
  case 'cancelResponse':await api('cancelResponse');break;
  case 'refreshBrief':await loadBrief();break;
- case 'todayBrief':briefTarget=null;briefDays=1;briefOffset=0;await refresh(true);break;
+ case 'todayBrief':briefTarget=null;briefDays=1;briefOffset=0;render();await loadBrief();break;
  case 'copyDay':await api('copyDay',{offset:briefOffset});toast('선택한 날짜의 원본 JSON을 복사했습니다.');break;case 'saveDay':await api('saveDay',{offset:briefOffset});toast('저장할 파일 위치를 선택해 주세요.');break;
-  case 'previousBrief':briefTarget=null;briefOffset=Math.min(179,briefOffset+(briefDays===7?7:1));await refresh(true);break;case 'nextBrief':briefTarget=null;briefOffset=Math.max(0,briefOffset-(briefDays===7?7:1));await refresh(true);break;
+  case 'previousBrief':briefTarget=null;briefOffset=Math.min(179,briefOffset+(briefDays===7?7:1));render();await loadBrief();break;case 'nextBrief':briefTarget=null;briefOffset=Math.max(0,briefOffset-(briefDays===7?7:1));render();await loadBrief();break;
  }}
 function bind(root=$('#app')){
  root.querySelectorAll('[data-act]').forEach(el=>el.onclick=()=>safe(()=>action(el.dataset.act,el)));
@@ -1103,7 +1106,7 @@ function bind(root=$('#app')){
  });
  root.querySelectorAll('[data-permission]').forEach(el=>el.onclick=()=>safe(()=>api('permission',{name:el.dataset.permission})));
  root.querySelectorAll('[data-account]').forEach(el=>el.onclick=()=>safe(async()=>{await api('account',{client:el.dataset.account});await api('models');closeSheet();await refresh(true);}));
- root.querySelectorAll('[data-days]').forEach(el=>el.onclick=()=>{briefTarget=null;briefDays=Number(el.dataset.days);briefOffset=briefDays===7?1:0;refresh(true);});
+ root.querySelectorAll('[data-days]').forEach(el=>el.onclick=()=>{briefTarget=null;briefDays=Number(el.dataset.days);briefOffset=briefDays===7?1:0;render();loadBrief();});
  root.querySelectorAll('#noteTitle,#noteBody,[data-checktext],[data-check]').forEach(el=>{
  el.oninput=e=>{if(el.matches('[data-checktext]')&&!e.isComposing&&el.value.includes('\n')){const at=el.value.indexOf('\n');splitCheckRow(el,at,at+1);}else scheduleMemo();};
  el.onfocus=()=>{safe(()=>api('utility',{name:'메모'}));viewportChanged();};

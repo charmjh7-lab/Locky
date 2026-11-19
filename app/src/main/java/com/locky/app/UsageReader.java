@@ -14,6 +14,9 @@ final class UsageReader {
     static String label(Context c,String pkg){return labels.computeIfAbsent(pkg,key->{try{return c.getPackageManager().getApplicationLabel(c.getPackageManager().getApplicationInfo(key,0)).toString();}catch(Exception ignored){return key;}});}
     static JSONArray intervals(Context c,long start,long end) throws JSONException {return intervals(c,start,end,"");}
     static JSONArray intervals(Context c,long start,long end,String seed) throws JSONException {
+        return intervals(c,start,end,seed,null);
+    }
+    static JSONArray intervals(Context c,long start,long end,String seed,ScreenHistory.Evidence sharedEvidence) throws JSONException {
         JSONArray out=new JSONArray();if(!allowed(c)||end<=start)return out;
         // Prime the state before the requested interval: a resumed activity may have
         // been on screen for hours before the service checkpoint.
@@ -27,8 +30,9 @@ final class UsageReader {
             }else if(t==UsageEvents.Event.ACTIVITY_PAUSED&&pkg.equals(next)){if(at>=start)add(out,pkg,since,Math.min(end,at));pkg="";}
         }
         if(visible)add(out,pkg,since,end);
-        JSONArray active=new JSONArray();ScreenHistory.Evidence evidence=ScreenHistory.read(c,start,end,ScreenHistory.UNKNOWN,true);
-        for(int n=0;n<out.length();n++){JSONObject row=out.getJSONObject(n);for(long[] span:evidence.active())add(active,row.getString("pkg"),Math.max(row.getLong("start"),span[0]),Math.min(row.getLong("end"),span[1]));}return active;
+        JSONArray active=new JSONArray();ScreenHistory.Evidence evidence=sharedEvidence==null?ScreenHistory.read(c,start,end,ScreenHistory.UNKNOWN,true):sharedEvidence;
+        List<long[]> spans=evidence.active();int first=0;
+        for(int n=0;n<out.length();n++){JSONObject row=out.getJSONObject(n);while(first<spans.size()&&spans.get(first)[1]<=row.getLong("start"))first++;for(int i=first;i<spans.size()&&spans.get(i)[0]<row.getLong("end");i++){long[] span=spans.get(i);add(active,row.getString("pkg"),Math.max(row.getLong("start"),span[0]),Math.min(row.getLong("end"),span[1]));}}return active;
     }
     static String home(Context c){ResolveInfo h=c.getPackageManager().resolveActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),PackageManager.MATCH_DEFAULT_ONLY);return h==null?"":h.activityInfo.packageName;}
     static boolean excluded(Context c,String pkg){
