@@ -1,4 +1,4 @@
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="@drawable/roki_icon_background"/>
-    <item android:drawable="@drawable/roki_icon_foreground"/>
+    <item android:drawable="@drawable/locky_icon_background"/>
+    <item android:drawable="@drawable/locky_icon_foreground"/>
 </layer-list>

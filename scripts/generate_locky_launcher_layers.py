@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reconstruct ROKI adaptive icon layers from the original user-supplied illustration.
+"""Reconstruct Locky adaptive icon layers from the original user-supplied illustration.
 The green gradient is the full, opaque background. The lime door and white L are the
 only foreground pixels. Avoid recycling intermediate artwork or colored masks.
 """
@@ -8,7 +8,7 @@ import numpy as np, cv2
 from PIL import Image, ImageDraw
 
 ROOT=Path(__file__).resolve().parents[1]
-IN=ROOT/'scripts/assets/roki_original_crop_lossless.webp'
+IN=ROOT/'scripts/assets/locky_original_crop_lossless.webp'
 OUT=ROOT/'app/src/main/res/drawable-nodpi'
 OUT.mkdir(exist_ok=True)
 src=np.array(Image.open(IN).convert('RGB').resize((340,340),Image.Resampling.LANCZOS))
@@ -74,7 +74,7 @@ bg_core=Image.fromarray(base,'RGB').resize((302,302),Image.Resampling.LANCZOS)
 bg_numpy=np.array(bg_core)
 bg_full=cv2.copyMakeBorder(bg_numpy,65,65,65,65,cv2.BORDER_REPLICATE)
 assert bg_full.shape==(432,432,3)
-Image.fromarray(bg_full,'RGB').save(OUT/'roki_icon_background.png',optimize=True)
+Image.fromarray(bg_full,'RGB').save(OUT/'locky_icon_background.png',optimize=True)
 # Foreground only: keep original source RGB, with a subtle feather at the old bottom cut.
 # Artwork lives well within the 72dp visible region (central 288px of 432px).
 fg_src=Image.fromarray(np.dstack([src,alpha]).astype('uint8'),'RGBA')
@@ -82,4 +82,4 @@ fg_size=234  # 54.2% of 108dp; leaves real margins after central 72dp crop
 fg_res=fg_src.resize((fg_size,fg_size),Image.Resampling.LANCZOS)
 fg_canvas=Image.new('RGBA',(432,432),(0,0,0,0))
 fg_canvas.alpha_composite(fg_res,((432-fg_size)//2,(432-fg_size)//2))
-fg_canvas.save(OUT/'roki_icon_foreground.png',optimize=True)
+fg_canvas.save(OUT/'locky_icon_foreground.png',optimize=True)
