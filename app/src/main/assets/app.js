@@ -1141,8 +1141,20 @@ async function action(name,el){if(screen==='gateIdle')return;const gateEntry=gat
  case 'cancelLogin':await api('cancelLogin');await refresh(true);break;case 'models':await api('models');await refresh(true);break;
  case 'manageUsage':await api('linkTest',{uri:'https://chatgpt.com/settings/usage'});break;case 'accountSheet':await accountSheet();break;
  case 'signout':{let r=await api('signout');closeSheet();toast(r.message);await refresh(true);break;}
- case 'newChat':{const c=await api('newChat');chatId=c.id;await navigate('chat');break;}
- case 'send':{const pending=quickTurns.get(chatId);if(pending&&!pending.accepted)return;const text=$('#chatInput').value.trim();if(!text)return;await api('send',{id:chatId,text});$('#chatInput').value='';await refresh();break;}
+ case 'newChat':{
+  const navigation=nativeNavigation,origin=screen,c=await api('newChat');
+  if(state?.role==='PHONE_START'&&(navigation!==nativeNavigation||origin!==screen))return;
+  chatId=c.id;await navigate('chat');break;
+ }
+ case 'send':{
+  const id=chatId,pending=quickTurns.get(id),input=$('#chatInput');
+  if(pending&&!pending.accepted)return;
+  const text=input.value.trim();if(!text)return;
+  await api('send',{id,text});
+  if(chatId!==id||$('#chatInput')!==input)return;
+  if(input.value.trim()===text)input.value='';
+  await refresh();break;
+ }
  case 'cancelResponse':await api('cancelResponse');break;
  case 'refreshBrief':await loadBrief();break;
  case 'todayBrief':briefTarget=null;briefDays=1;briefOffset=0;render();await loadBrief();break;
