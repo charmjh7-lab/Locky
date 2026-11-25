@@ -799,61 +799,111 @@ function briefFlowUnits(b){
  for(const event of b.events||[])if(['unlock','app'].includes(event.kind)&&!ids.has(String(event.id)))units.push({event,start:event.time,end:event.time,steps:[],gaps:[],directMillis:0,otherMillis:0});
  return units.sort((a,b)=>b.start-a.start);
 }
-// These rows are only built when a selection is opened. The report and raw export retain every span.
+// Classify transitions before making any summary that can span unobserved time.
+const briefSequenceBounds=new WeakMap();
+function briefSequenceBoundaries(b){
+ let times=briefSequenceBounds.get(b);if(times)return times;
+ const breaks=new Set(b.screenStops||[]);
+ for(const e of b.events||[])if(e.kind!=='extend')breaks.add(e.time);
+ for(const e of b.purposeContexts||[])if(e.kind==='unlock'||e.kind==='app')breaks.add(e.time);
+ const periods=b.focus?.periods||[];
+ for(let i=1;i<periods.length;i++){
+  const before=periods[i-1],after=periods[i];
+  if(before.known!==after.known||after.known&&before.focus!==after.focus)breaks.add(after.start);
+ }
+ times=[...breaks].sort((a,c)=>a-c);briefSequenceBounds.set(b,times);return times;
+}
 function briefSequenceRows(steps,b){
- const visits=[],boundaries=[...(b.events||[]),...briefBoundaryRecords(b)].map(e=>e.time).sort((a,c)=>a-c);
- let boundaryIndex=0,previousDate='';
- const sameContext=(a,c)=>a.parent===c.parent&&a.eventId===c.eventId&&a.focusState===c.focusState;
- const supplement=t=>t.source==='usage-access'&&!t.parent&&briefMs(t)<1000;
- for(const step of steps){
+ const visits=[],boundaries=briefSequenceBoundaries(b);let boundaryIndex=0,previousDate='';
+ const recovered=t=>t.source==='usage-access'&&!t.parent;
+ for(const [i,step] of steps.entries()){
   const previous=visits.at(-1),date=briefDateKey(step.start,b.timeZone);
-  let boundary=!!previous&&date!==previousDate;
+  let boundary=!!previous&&(date!==previousDate||previous.focusState!==step.focusState);
   while(boundaryIndex<boundaries.length&&boundaries[boundaryIndex]<=step.start){
-   if(previous&&boundaries[boundaryIndex]>previous.start)boundary=true;
+   if(previous&&boundaries[boundaryIndex]>steps[i-1].start)boundary=true;
    boundaryIndex++;
   }
   previousDate=date;
-  const gap=previous?step.start-previous.end:Infinity;
-  const canJoin=previous&&!boundary&&previous.pkg===step.pkg&&previous.focusState===step.focusState&&gap>=0;
-  const previousSupplement=canJoin&&gap===0&&supplement(previous)&&step.source==='accessibility';
-  const nextSupplement=canJoin&&gap===0&&supplement(step)&&previous.source==='accessibility';
-  const excluded=(previous?.excludedTransitionMillis||0)+(step.excludedTransitionMillis||0)+gap;
-  // Brief gaps between consecutive visits do not become app usage. Cap the sum
-  // as well so intermittent checks cannot keep one row open throughout the day.
-  const sameVisit=canJoin&&gap<=45000&&excluded<=90000&&sameContext(previous,step)
-   &&previous.ruleMode===step.ruleMode&&previous.relation===step.relation;
-  if(previousSupplement||nextSupplement||sameVisit){
-   const primary=previous.source==='usage-access'&&step.source!=='usage-access'?step:previous;
-   visits[visits.length-1]={...primary,start:previous.start,end:step.end,ms:briefMs(previous)+briefMs(step),
-    sourceStart:undefined,sourceEnd:undefined,boundary:previous.boundary,excludedTransitionMillis:excluded,
-    supplemented:previous.supplemented||step.supplemented||previous.source==='usage-access'||step.source==='usage-access'};
-  }else visits.push({...step,boundary});
+  // A change in recording source does not split an uninterrupted observation of one app.
+  if(previous&&!boundary&&previous.pkg===step.pkg&&previous.end===step.start){
+   previous.end=step.end;previous.ms+=briefMs(step);previous.last=i;previous.recoveredOnly&&=recovered(step);
+   previous.excludedTransitionMillis+=(step.excludedTransitionMillis||0);
+  }else visits.push({...step,ms:briefMs(step),excludedTransitionMillis:step.excludedTransitionMillis||0,first:i,last:i,boundary,recoveredOnly:recovered(step)});
  }
- // Require an actual return to the same app. Only brief visits can be inside a group.
- const quick=t=>t.end-t.start<=12000;
- const follows=(a,c)=>!c.boundary&&sameContext(a,c)&&c.start>=a.end&&c.start-a.end<=3000;
+ const gap=(a,c)=>c.start-a.end;
+ const follows=(a,c,limit)=>!c.boundary&&gap(a,c)>=0&&gap(a,c)<=limit;
+ const weak=t=>t.ms<1000&&t.recoveredOnly;
+ const briefVisit=t=>t.ms>=1000&&t.end-t.start<=12000;
+ const transitionAt=i=>{
+  const a=visits[i],other=visits[i+1],back=visits[i+2];
+  if(!other||a.pkg===other.pkg||!follows(a,other,3000)||a.excludedTransitionMillis||other.excludedTransitionMillis)return '';
+  const returns=back?.pkg===a.pkg&&follows(other,back,3000)&&!back.excludedTransitionMillis;
+  if(returns&&briefVisit(other)&&!weak(a)&&!weak(back))return 'detour';
+  // Keep ambiguous subsecond switches available without naming them as app visits.
+  if(other.ms<1000&&gap(a,other)<=1000){
+   if(returns&&gap(other,back)<=1000&&(weak(a)||weak(other)||weak(back)))return 'fragment-return';
+   if(a.ms<1000&&(weak(a)||weak(other)))return 'fragments';
+  }
+  return '';
+ };
  const rows=[];
  for(let i=0;i<visits.length;){
-  const a=visits[i],other=visits[i+1],returnVisit=visits[i+2];
-  if(!returnVisit||a.pkg===other.pkg||a.pkg!==returnVisit.pkg||!quick(other)||!follows(a,other)||!follows(other,returnVisit)){
-   rows.push(a);i++;continue;
+  const first=i;let group=transitionAt(i);
+  if(group){
+   i+=group==='fragments'?2:3;
+   if(group==='detour')while(i<visits.length){
+    const previous=visits[i-1],next=visits[i];
+    if(next.pkg!==visits[i-2].pkg||!briefVisit(previous)||weak(next)
+      ||next.excludedTransitionMillis||!follows(previous,next,3000))break;
+    group='alternating';i++;
+   }
+  }else{
+   const pkg=visits[i].pkg;let excluded=visits[i++].excludedTransitionMillis;
+   // Time limits cap the size of the summary. Each enclosed gap remains an explicit interval.
+   while(i<visits.length&&visits[i].pkg===pkg&&follows(visits[i-1],visits[i],45000)&&!transitionAt(i)){
+    const next=excluded+gap(visits[i-1],visits[i])+visits[i].excludedTransitionMillis;
+    if(next>90000)break;
+    excluded=next;i++;
+   }
+   if(i>first+1)group='repeated';
   }
-  const apps=[{label:a.label,ms:0},{label:other.label,ms:0}];
-  let end=a.start,ms=0,gaps=0,supplemented=false;
-  const add=t=>{
-   const observed=briefMs(t);apps[t.pkg===a.pkg?0:1].ms+=observed;
-   ms+=observed;gaps+=t.start-end+(t.excludedTransitionMillis||0);end=t.end;
-   supplemented||=t.supplemented||t.source==='usage-access';
-  };
-  add(a);add(other);add(returnVisit);i+=3;
-  while(i<visits.length){
-   const previous=visits[i-1],next=visits[i],expected=previous.pkg===a.pkg?other.pkg:a.pkg;
-   if(next.pkg!==expected||!quick(previous)||!follows(previous,next))break;
-   add(next);i++;
-  }
-  rows.push({start:a.start,end,ms,apps,focusState:a.focusState,excludedTransitionMillis:gaps,supplemented});
+  const from=visits[first].first,to=visits[i-1].last;
+  if(from===to){rows.push(steps[from]);continue;}
+  const original=steps.slice(from,to+1),a=original[0],end=original.at(-1).end;
+  const apps=group&&group!=='repeated'?[...new Set(original.map(t=>t.pkg))].map(pkg=>{
+   const spans=original.filter(t=>t.pkg===pkg);return {label:spans[0].label,ms:spans.reduce((n,t)=>n+briefMs(t),0)};
+  }):null;
+  const ms=original.reduce((n,t)=>n+briefMs(t),0);
+  const source=original.every(t=>t.source===a.source)?a.source:undefined;
+  const relation=original.every(t=>t.relation===a.relation)?a.relation:'';
+  rows.push({start:a.start,end,ms,apps,group,focusState:a.focusState,label:a.label,relation,source,from,to,
+   supplemented:original.some(t=>t.source==='usage-access'),excludedTransitionMillis:Math.max(0,end-a.start-ms)});
  }
  return rows;
+}
+function briefSequenceGap(start,end,b){
+ return `<div class="brief-sequence-gap"><time>${briefExactTime(start,b)}–${briefExactTime(end,b)}</time><span>앱 사용 기록 공백 · ${briefPrecise(end-start)}</span></div>`;
+}
+function briefSequenceStep(t,b,detail=''){
+ const relation=t.group==='alternating'?'번갈아 사용':t.group==='fragment-return'?'짧은 전환 기록':t.group==='fragments'||t.group==='detour'?'':t.relation==='direct'?'대상 앱':t.relation==='other-app'?'다른 앱':'';
+ const title=t.group==='detour'?`${esc(t.apps[1].label)} ${briefPrecise(t.apps[1].ms)} 사용 후 ${esc(t.apps[0].label)} 복귀`
+  :t.group==='alternating'?t.apps.map(a=>esc(a.label)).join(' ↔ '):t.group==='fragments'?'짧은 전환 기록':esc(t.label);
+ const appTimes=t.apps?`<small>${t.apps.map(a=>esc(a.label)+' '+briefPrecise(a.ms)).join(' · ')}</small>`:'';
+ const phase=t.focusState==='focus'?'집중시간':t.focusState==='free'?'자유시간':'시간대 이력 없음';
+ return `<div class="brief-sequence-step"><time>${b.days===7?briefDateLabel(t.start,b.timeZone)+'<br>':''}${briefExactTime(t.start,b)}<small>–${briefDateKey(t.start,b.timeZone)!==briefDateKey(t.end,b.timeZone)?briefDateLabel(t.end,b.timeZone)+' ':''}${briefExactTime(t.end,b)}</small></time><div><strong>${title}</strong><span>${[relation,phase].filter(Boolean).join(' · ')}</span>${appTimes}${t.source==='usage-access'?'<small>Android 사용 정보로 보완</small>':t.supplemented&&!t.group?'<small>Android 사용 정보 일부 보완</small>':''}${t.sourceStart!==undefined&&(t.sourceStart!==t.start||t.sourceEnd!==t.end)?`<small>원본 구간 ${briefRange(t.sourceStart,t.sourceEnd,b)}</small>`:''}${t.excludedTransitionMillis?`<small>기록 공백 ${briefPrecise(t.excludedTransitionMillis)}</small>`:''}</div><b>${briefPrecise(briefMs(t))}</b>${detail}</div>`;
+}
+function briefSequenceDetail(steps,row,b){
+ const entries=steps.slice(row.from,row.to+1).map(t=>({time:t.start,html:briefSequenceStep(t,b)}));
+ let last=row.start;
+ for(let i=row.from;i<=row.to;i++){
+  const step=steps[i];
+  if(step.start>last)entries.push({time:last,html:briefSequenceGap(last,step.start,b)});
+  last=step.end;
+ }
+ for(const e of b.events||[])if(e.kind==='extend'&&e.time>=row.start&&e.time<=row.end){
+  entries.push({time:e.time,html:`<div class="brief-sequence-note"><time>${briefExactTime(e.time,b)}</time> · 앱 사용시간 연장</div>`});
+ }
+ return entries.sort((a,c)=>a.time-c.time).map(e=>e.html).join('');
 }
 function briefFlowView(f,b){
  const event=f.event||{},steps=f.steps||[],total=f.total??steps.reduce((n,t)=>n+briefMs(t),0),apps=f.apps||briefAppTotals(steps),key=event.id??f.start;
@@ -861,11 +911,9 @@ function briefFlowView(f,b){
  return briefLazyDetails('brief-flow-'+key,summary,()=>{
   const focused=steps.filter(t=>t.focusState==='focus').reduce((n,t)=>n+briefMs(t),0),free=steps.filter(t=>t.focusState==='free').reduce((n,t)=>n+briefMs(t),0),unknown=Math.max(0,total-focused-free);let last=Math.max(b.start,f.start);
   const sequence=briefSequenceRows(steps,b).map(t=>{
-   const gap=t.start>last?`<div class="brief-sequence-gap"><time>${briefClock(last,b.timeZone)}–${briefClock(t.start,b.timeZone)}</time><span>선택 기록 사이 간격 · ${briefPrecise(t.start-last)}</span></div>`:'';last=Math.max(last,t.end);
-   const relation=t.apps?'번갈아 사용':t.relation==='direct'?'대상 앱':t.relation==='other-app'?'다른 앱':'';
-   const title=t.apps?t.apps.map(a=>esc(a.label)).join(' ↔ '):esc(t.label);
-   const appTimes=t.apps?`<small>${t.apps.map(a=>esc(a.label)+' '+briefPrecise(a.ms)).join(' · ')}</small>`:'';
-   return gap+`<div class="brief-sequence-step"><time>${b.days===7?briefDateLabel(t.start,b.timeZone)+'<br>':''}${briefExactTime(t.start,b)}<small>–${briefDateKey(t.start,b.timeZone)!==briefDateKey(t.end,b.timeZone)?briefDateLabel(t.end,b.timeZone)+' ':''}${briefExactTime(t.end,b)}</small></time><div><strong>${title}</strong><span>${[relation,t.focusState==='focus'?'집중시간':t.focusState==='free'?'자유시간':'시간대 이력 없음'].filter(Boolean).join(' · ')}</span>${appTimes}${t.source==='usage-access'?'<small>Android 사용 정보로 보완</small>':t.supplemented?'<small>Android 사용 정보 일부 보완</small>':''}${t.sourceStart!==undefined&&(t.sourceStart!==t.start||t.sourceEnd!==t.end)?`<small>원본 구간 ${briefRange(t.sourceStart,t.sourceEnd,b)}</small>`:''}${t.excludedTransitionMillis?`<small>기록 사이 간격 ${briefPrecise(t.excludedTransitionMillis)} 제외</small>`:''}</div><b>${briefPrecise(briefMs(t))}</b></div>`;
+   const gap=t.start>last?briefSequenceGap(last,t.start,b):'';last=Math.max(last,t.end);
+   const detail=t.group?briefLazyDetails('brief-sequence-'+key+'-'+t.start,'기록 자세히 보기',()=>briefSequenceDetail(steps,t,b),'brief-sequence-detail'):'';
+   return gap+briefSequenceStep(t,b,detail);
   }).join('');
   return `<div class="brief-flow-body">${total?briefParts([{label:'집중시간',ms:focused},{label:'자유시간',ms:free,tone:'free'},...(unknown?[{label:'시간대 이력 없음',ms:unknown,tone:'unknown'}]:[])],'선택 기록에 속한 사용'):''}${apps.length?`<div class="brief-app-totals">${apps.map(a=>`<div><span>${esc(a.label)}</span><b>${briefPrecise(a.ms)}</b></div>`).join('')}</div>`:''}<h3>실제 사용 순서</h3>${sequence||'<p class="small muted">이 선택에 연결된 외부 앱 사용은 관측되지 않았습니다.</p>'}${(f.newChoices||[]).length?`<p class="small muted">구간 안 새 목적 선택 ${f.newChoices.length}회 · 시간선에서 확인</p>`:''}<button class="textbtn" data-brief-jump="${f.start}">해당 시간선 보기 ${icon('arrow')}</button></div>`;
  },'brief-flow-unit');
@@ -922,7 +970,7 @@ function briefHighlightsView(b){
 function renderBrief(b){
  const area=$('#briefContent');if(!area)return;
  const opened=new Set([...area.querySelectorAll('details[open]')].map(d=>d.id)),position=window.scrollY;
- const signature=briefModel(b).signature??=JSON.stringify([b.start,b.days,b.timeZone,b.timeline,b.intervals,b.events,b.purposeContexts,b.flows,b.purposes,b.hours,b.focus?.periods,b.focusResults]);
+ const signature=briefModel(b).signature??=JSON.stringify([b.start,b.days,b.timeZone,b.timeline,b.intervals,b.events,b.purposeContexts,b.flows,b.purposes,b.hours,b.focus?.periods,b.focusResults,b.screenStops]);
  if(signature!==briefRecordSignature){briefRecordSignature=signature;briefViewRevision++;briefLazyViews.clear();}
  const focus=b.focus||{},hasFocus=Number(focus.knownMillis)>0,flows=briefModel(b).flows,highlights=briefHighlightsView(b);
  const active=(b.focusResults||[]).find(w=>!w.complete&&w.start<=Date.now()&&w.end>Date.now());

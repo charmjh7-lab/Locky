@@ -44,10 +44,16 @@ final class Briefing {
     static final class Source {
         final Context c;final Store s;final JSONArray usage,events;final List<JSONObject> cleaned=new ArrayList<>();
         final Map<String,Boolean> recordable=new HashMap<>();
+        final List<Long> screenStops=new ArrayList<>();
         Source(Context c,long start,long end) throws Exception {
             this.c=c;s=Store.get(c);s.syncFocusZone();
             GuardService guard=GuardService.live;if(guard!=null&&end>Rules.dayStart(System.currentTimeMillis(),ZoneId.systemDefault()))guard.flushOnMain();
             ScreenHistory.Evidence evidence=ScreenHistory.read(c,start,end,ScreenHistory.UNKNOWN,true);
+            boolean inactive=false;
+            for(ScreenHistory.Span span:evidence.spans){
+                if(span.state==ScreenHistory.OFF&&!inactive)screenStops.add(span.start);
+                inactive=span.state==ScreenHistory.OFF;
+            }
             usage=ScreenHistory.filter(c,s.rows("SELECT * FROM usage WHERE end>? AND start<? ORDER BY start,id",""+start,""+end),evidence);
             events=s.rows("SELECT * FROM events WHERE time>=? AND time<? ORDER BY time,id",""+start,""+end);
             List<long[]> reserved=new ArrayList<>();for(int i=0;i<usage.length();i++){JSONObject u=usage.getJSONObject(i);reserved.add(new long[]{u.getLong("start"),u.getLong("end")});}
@@ -81,8 +87,10 @@ final class Briefing {
             JSONObject focus=FocusPeriods.data(s,start,end);
             if(!detailed)return BriefingAnalysis.comparisonSummary(start,end,spans,focus);
             for(int i=0;i<events.length();i++){JSONObject e=events.getJSONObject(i);if(e.getLong("time")>=end)break;if(e.getLong("time")>=start)choices.put(e);}
+            JSONArray stops=new JSONArray();
+            for(long at:screenStops){if(at>=end)break;if(at>=start)stops.put(at);}
             JSONObject result=BriefingAnalysis.analyze(s,start,end,spans,choices,focus);
-            return result.put("timeZone",ZoneId.systemDefault().getId()).put("toolMillis",tools).put("internalMillis",internal).put("recovered",recovered).put("usageAccess",UsageReader.allowed(c));
+            return result.put("screenStops",stops).put("timeZone",ZoneId.systemDefault().getId()).put("toolMillis",tools).put("internalMillis",internal).put("recovered",recovered).put("usageAccess",UsageReader.allowed(c));
         }
     }
     private static JSONObject recovered(Context c,String pkg,long start,long end) throws JSONException {return new JSONObject().put("start",start).put("end",end).put("pkg",pkg).put("label",UsageReader.label(c,pkg)).put("parent",0).put("source","usage-access").put("rule_mode","unknown");}
