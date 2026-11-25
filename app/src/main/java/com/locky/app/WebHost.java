@@ -416,7 +416,17 @@ final class WebHost {
         // hide the WebView or show the native loading surface. rendered(revision) owns validation.
         navigationGeneration=navigation;pendingScreen=screen;pendingChat="chat".equals(screen)?chat:"";
         cancelInitialWatch();
-
+        if(role==Role.PHONE_START&&!((PhoneStartActivity)context).resumed)leavePhoneChat();
+    }
+    private static boolean phoneChatScreen(String screen){return "chat".equals(screen)||"chats".equals(screen);}
+    void leavePhoneChat(){
+        if(!phoneChatScreen(pendingScreen))return;
+        JSONObject session=phoneSession();
+        try{session.put("screen","unlock").put("chatReturn","unlock").put("chatsReturn","unlock");}
+        catch(JSONException error){throw new IllegalStateException(error);}
+        store.settings.edit().putString("phone-start-session",session.toString()).apply();
+        pendingScreen="unlock";pendingChat="";
+        evaluate("returnPhoneChat("+(++navigationGeneration)+")");
     }
     private void dispatchScreen(){
         WebView candidate=view;long navigation=navigationGeneration;String name=pendingScreen,chat=pendingChat;JSONObject gateData=pendingGate;
@@ -478,7 +488,7 @@ final class WebHost {
             if("editorFocus".equals(action)){main.post(()->{try{GuardService g=GuardService.live;validateGateAction(new JSONObject(raw),g);if(isOverlay&&g!=null)g.requestEditorInput();}catch(Exception ignored){}});return;}
             if("rendered".equals(action)){main.post(()->{try{JSONObject frame=new JSONObject(raw);rendered(source,frame.optString("screen"),frame.optLong("navigation",-1),frame.optLong("revision",-1));}catch(JSONException ignored){}});return;}
             if("present".equals(action)){main.post(()->{try{JSONObject frame=new JSONObject(raw);presented(source,frame.optString("screen"),frame.optLong("previous",-1),frame.optLong("navigation",-1),frame.optString("chat"));}catch(JSONException ignored){}});return;}
-            if((isOverlay&&Set.of("purpose","removePurpose").contains(action))||Set.of("choose","finishPurposeEditing","grant","extend","stop","utility","open","permission","dictionary","linkTest","signin","cancelLogin","exit","dismiss").contains(action))main.post(()->handle(source,id,action,raw));
+            if((role==Role.PHONE_START&&"remember".equals(action))||(isOverlay&&Set.of("purpose","removePurpose").contains(action))||Set.of("choose","finishPurposeEditing","grant","extend","stop","utility","open","permission","dictionary","linkTest","signin","cancelLogin","exit","dismiss").contains(action))main.post(()->handle(source,id,action,raw));
             else if(Set.of("brief","copyDay","saveDay").contains(action))LockyApp.app.backgroundWork.execute(()->handle(source,id,action,raw));
             else LockyApp.app.work.execute(()->handle(source,id,action,raw));
         }
@@ -511,7 +521,8 @@ final class WebHost {
             case "utility":if(g!=null)g.useUtility(a.getString("name"));else store.event("utility",a.getString("name"),context.getPackageName(),"",0);break;
             case "open":if(role==Role.PHONE_START&&!Set.of("unlock","notes","chats","chat").contains(a.optString("screen"))){openMain(a.getString("screen"));}else if(isOverlay&&g!=null)g.openMain(a.getString("screen"),a.optString("chat"));else if(a.optString("screen").equals("chat")&&!a.optString("chat").isEmpty())openChat(a.getString("chat"));else screen(a.getString("screen"));break;
             case "dismiss":if(role==Role.PHONE_START)((PhoneStartActivity)context).dismiss();else if(isOverlay&&g!=null)g.stopApp();else if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);break;
-            case "remember":if(!a.optString("note").isEmpty())store.settings.edit().putString("recent-note",a.optString("note")).apply();if(role==Role.PHONE_START){if(!((PhoneStartActivity)context).chosen)store.settings.edit().putString("phone-start-session",a.toString()).apply();pendingScreen=a.optString("screen","unlock");pendingChat="chat".equals(pendingScreen)?a.optString("chat"):"";}else if(!isOverlay){if(a.has("briefTarget"))store.settings.edit().putString("last-brief",a.getJSONObject("briefTarget").toString()).apply();pendingScreen=a.optString("screen","home");store.settings.edit().putString("chat-return",a.optString("chatReturn","chats")).putString("chats-return",a.optString("chatsReturn","home")).putString("last-screen",a.optString("screen","home")).putString("last-chat",a.optString("chat")).putString("last-note",a.optString("note")).apply();}break;
+            case "remember":if(role==Role.PHONE_START&&(a.optLong("navigation",-1)!=navigationGeneration||((PhoneStartActivity)context).chosen))break;
+                if(!a.optString("note").isEmpty())store.settings.edit().putString("recent-note",a.optString("note")).apply();if(role==Role.PHONE_START){store.settings.edit().putString("phone-start-session",a.toString()).apply();pendingScreen=a.optString("screen","unlock");pendingChat="chat".equals(pendingScreen)?a.optString("chat"):"";}else if(!isOverlay){if(a.has("briefTarget"))store.settings.edit().putString("last-brief",a.getJSONObject("briefTarget").toString()).apply();pendingScreen=a.optString("screen","home");store.settings.edit().putString("chat-return",a.optString("chatReturn","chats")).putString("chats-return",a.optString("chatsReturn","home")).putString("last-screen",a.optString("screen","home")).putString("last-chat",a.optString("chat")).putString("last-note",a.optString("note")).apply();}break;
             case "dictionaries":out=Links.dictionaries(context);break;
             case "dictionaryChoice":store.settings.edit().putString("dictionary",a.getString("id")).apply();break;
             case "exit":if(role==Role.PHONE_START)((PhoneStartActivity)context).moveTaskToBack(true);else if(context instanceof MainActivity)((MainActivity)context).moveTaskToBack(true);break;

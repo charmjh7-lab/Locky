@@ -49,7 +49,7 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   await page.locator('[data-act=retryQuick]').evaluate(el=>{el.click();el.click();});
   assert.equal(await page.evaluate(()=>pending.length),1);assert.equal(await page.evaluate(()=>pending[0].args.request),failed);
   // An acknowledgment after screen-off navigation must not pull the user back into chat.
-  await page.evaluate(async()=>{await navigate('unlock',nativeNavigation+1);const q=pending.shift();rows[failedId]=[{id:21,role:'user',body:'실패 후 재시도',status:'complete'},{id:22,role:'assistant',body:'',status:'streaming',quickRequest:failedId}];receive(q.id,{id:failedId,user:21,reply:22,busy:true,messages:rows[failedId]},null);});
+  await page.evaluate(()=>{returnPhoneChat(nativeNavigation+1);const q=pending.shift();rows[failedId]=[{id:21,role:'user',body:'실패 후 재시도',status:'complete'},{id:22,role:'assistant',body:'',status:'streaming',quickRequest:failedId}];receive(q.id,{id:failedId,user:21,reply:22,busy:true,messages:rows[failedId]},null);});
   await page.waitForFunction(()=>!quickTurns.get(failedId).inFlight);assert.equal(await page.evaluate(()=>screen),'unlock');
   await page.evaluate(async()=>{await navigate('chats');await openChatById(failedId);});
   assert.equal(await page.locator('.message.user').textContent(),'실패 후 재시도');

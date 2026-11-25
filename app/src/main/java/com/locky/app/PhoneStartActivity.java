@@ -32,14 +32,11 @@ public final class PhoneStartActivity extends Activity {
         navigation=new PhoneNavigation(Store.get(this).settings);navigation.begin(cycle);
         chosen=saved!=null&&saved.getLong("cycle")==cycle&&saved.getBoolean("chosen");
         host=new WebHost(this,WebHost.Role.PHONE_START);setContentView(host.root);
-        JSONObject session=host.phoneSession();
-        String screen=session.optString("screen","unlock");
-        if(!Set.of("unlock","notes","chats","chat").contains(screen))screen="unlock";
-        if("chat".equals(screen)&&!session.optString("chat").isEmpty())host.openChat(session.optString("chat"));else host.screen(screen);
+        host.screen("notes".equals(host.phoneSession().optString("screen"))?"notes":"unlock");
         if(Build.VERSION.SDK_INT>=33){backCallback=this::handleBack;getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,backCallback);}
         trace("onCreate webview=new restored="+(saved!=null));
     }
-    void acceptCycle(long next){if(next<=cycle)return;cycle=next;chosen=false;navigation.begin(cycle);clearExternalReturn();if(host!=null)host.ensurePurposeDay();}
+    void acceptCycle(long next){if(next<=cycle)return;cycle=next;chosen=false;navigation.begin(cycle);clearExternalReturn();if(host!=null){host.leavePhoneChat();host.ensurePurposeDay();}}
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);acceptCycle(intent.getLongExtra("cycle",cycle));trace("onNewIntent webview=reused");}
     @Override protected void onStart(){super.onStart();trace("onStart");}
     @Override protected void onResume(){
@@ -50,7 +47,8 @@ public final class PhoneStartActivity extends Activity {
         // No navigation/full refresh here. The retained document updates its own data.
     }
     @Override protected void onPause(){resumed=false;trace("onPause");host.evaluate("flushMemo();remember()");host.pause();super.onPause();}
-    @Override protected void onStop(){trace("onStop");super.onStop();}
+    @Override protected void onUserLeaveHint(){host.leavePhoneChat();super.onUserLeaveHint();}
+    @Override protected void onStop(){host.leavePhoneChat();trace("onStop");super.onStop();}
     @Override protected void onSaveInstanceState(Bundle state){state.putLong("cycle",cycle);state.putBoolean("chosen",chosen);host.evaluate("flushMemo();remember()");super.onSaveInstanceState(state);}
     @Override public void onConfigurationChanged(android.content.res.Configuration config){super.onConfigurationChanged(config);host.applyTheme();}
     private void handleBack(){

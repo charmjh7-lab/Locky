@@ -64,10 +64,29 @@ public class PhoneStartActivityTest {
     @Test public void savedNavigationAndDraftMetadataDoNotChangeMainNavigationOrUserRecords() throws Exception {
         store.note(new JSONObject().put("id","kept").put("title","메모").put("body","기존 내용").put("mode","text").put("checks",new JSONArray()));
         store.settings.edit().putString("last-screen","brief").putString("phone-start-session",new JSONObject().put("screen","chat").put("chat","actual-chat").put("quickQuestion","초안").put("chatReturn","unlock").toString()).commit();
-        PhoneStartActivity phone=open(1);assertEquals("actual-chat",phone.host.pendingChat);assertEquals("chat",phone.host.pendingScreen);
-        phone.host.handle("test","remember",new JSONObject().put("screen","chat").put("chat","other-saved-chat").put("chatReturn","chats").put("chatsReturn","unlock").put("quickQuestion","초안").toString());
-        assertEquals("other-saved-chat",phone.host.pendingChat);
-        assertEquals("brief",store.settings.getString("last-screen",""));assertEquals("초안",phone.host.phoneSession().getString("quickQuestion"));assertEquals("기존 내용",store.rows("SELECT * FROM notes WHERE id='kept'").getJSONObject(0).getString("body"));
+        PhoneStartActivity phone=open(1);WebHost host=phone.host;assertEquals("unlock",host.pendingScreen);
+        host.openChat("other-saved-chat");
+        JSONObject chat=new JSONObject().put("navigation",host.navigationGeneration).put("screen","chat")
+            .put("chat","other-saved-chat").put("chatDraft","다음 질문").put("quickQuestion","초안");
+        host.handle("test","remember",chat.toString());
+        assertEquals("other-saved-chat",host.pendingChat);
+        var view=host.view;
+        phone.onUserLeaveHint();
+        assertEquals("unlock",host.pendingScreen);
+        host.handle("late","remember",chat.toString());
+        assertEquals("unlock",host.phoneSession().getString("screen"));
+        assertEquals("다음 질문",host.phoneSession().getString("chatDraft"));
+        assertEquals("초안",host.phoneSession().getString("quickQuestion"));
+        assertEquals("brief",store.settings.getString("last-screen",""));
+        assertEquals("기존 내용",store.rows("SELECT * FROM notes WHERE id='kept'").getJSONObject(0).getString("body"));
+
+        host.screen("chats");
+        activity.pause().stop().start().resume();
+        assertEquals("unlock",host.pendingScreen);
+        host.openChat("other-saved-chat");
+        phone.acceptCycle(2);
+        assertEquals("unlock",host.pendingScreen);
+        assertSame(view,host.view);
     }
     @Test public void navigationReleaseSurvivesResumeAndRecreationButResetsOnlyOnNewCycle(){
         PhoneStartActivity phone=open(1);assertTrue(phone.purposePending());Object web=phone.host.view;

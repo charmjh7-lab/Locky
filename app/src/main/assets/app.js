@@ -42,10 +42,21 @@ function header(back=false,title='Locky',showStatus=true){return `<div class="to
 function compactHost(){return state?.role==='PHONE_START'||state?.overlay;}
 function nav(){if(compactHost()||['chat',...gated,'unlock'].includes(screen))return '';return `<div class="bottom"><nav class="nav" aria-label="주 메뉴">${[['home','home','시작'],['chats','chat','대화'],['brief','chart','브리핑'],['settings','settings','설정']].map(([s,i,l])=>`<button data-nav="${s}" class="${screen===s?'active':''}">${icon(i)}<span>${l}</span></button>`).join('')}</nav></div>`;}
 function startPolling(){clearInterval(poll);poll=null;if(state?.role==='APP_GATE'&&(gateExposure!=='INTERACTIVE'||!gateAlive))return;if(['chat','chats','brief','timer',...gated].includes(screen)&&document.visibilityState!=='hidden')poll=setInterval(()=>refresh(),screen==='brief'?30000:1000);}
-function remember(){if(!state)return;if(state.role==='PHONE_START'){safe(()=>api('remember',{screen,chat:chatId,note:noteId,chatReturn,chatsReturn,quickQuestion:$('#quickQuestion')?.value??quickQuestionDraft,word:$('#word')?.value??dictionaryWordDraft,chatDraft:$('#chatInput')?.value??state.phoneSession?.chatDraft??''}));return;}if(!state.overlay&&!gated.includes(screen)&&screen!=='unlock')safe(()=>api('remember',{screen,chat:chatId,note:noteId,chatReturn,chatsReturn,briefTarget:screen==='brief'?{...(briefTarget||{}),date:briefData?.kind!=='focus'?briefData?.date:undefined,days:briefDays}:undefined}));}
+function remember(){if(!state)return;if(state.role==='PHONE_START'){safe(()=>api('remember',{navigation:nativeNavigation,screen,chat:chatId,note:noteId,chatReturn,chatsReturn,quickQuestion:$('#quickQuestion')?.value??quickQuestionDraft,word:$('#word')?.value??dictionaryWordDraft,chatDraft:$('#chatInput')?.value??state.phoneSession?.chatDraft??''}));return;}if(!state.overlay&&!gated.includes(screen)&&screen!=='unlock')safe(()=>api('remember',{screen,chat:chatId,note:noteId,chatReturn,chatsReturn,briefTarget:screen==='brief'?{...(briefTarget||{}),date:briefData?.kind!=='focus'?briefData?.date:undefined,days:briefDays}:undefined}));}
 let phoneDraftTimer=null;
 document.addEventListener('input',()=>{if(state?.role==='PHONE_START'){clearTimeout(phoneDraftTimer);phoneDraftTimer=setTimeout(remember,200);}});
-async function navigate(s,navigation=null,keepBrief=false){if(state?.role==='APP_GATE'&&!gated.includes(s)&&s!=='gateIdle'){const entry=gateSnapshot();await flushMemo();if(currentGate(entry))await api('open',{screen:s,...(s==='chat'?{chat:chatId}:{})});return;}if(state?.role==='PHONE_START'&&!['unlock','notes','chats','chat'].includes(s)){await api('open',{screen:s});return;}if(s==='brief'&&navigation===null&&!keepBrief&&screen!=='brief'){briefTarget=null;briefDays=1;briefOffset=0;}const local=navigation===null;if(local)navigation=nativeNavigation;if(['home','unlock','app'].includes(s))purposeEntry=null;if(s==='chats'&&starts.includes(screen))chatsReturn=screen;if(s==='chat'&&screen==='chats')chatReturn='chats';if(settingsTimer&&screen==='settings'){clearTimeout(settingsTimer);settingsTimer=null;await safe(saveReminders);}await flushMemo();if(navigation<nativeNavigation)return;const retainedNavigation=renderedRoute===s&&navigation!==nativeNavigation;nativeNavigation=navigation;if(local&&state?.overlay&&['chat','chats','unlock'].includes(s)&&s!==screen)presentScreen(s);closeSheet();const leavingBrief=screen==='brief'&&s!=='brief';if(leavingBrief)++briefSeq;screen=s;selected='';minutes=5;document.body.classList.toggle('start-screen',starts.includes(screen));window.scrollTo(0,0);if(leavingBrief&&state)render();const revision=domRevision;await refresh(true);if(retainedNavigation&&navigation===nativeNavigation&&renderedRoute===s&&revision===domRevision)signalRendered();startPolling();remember();if(state&&['notes','chat','chats'].includes(s))safe(()=>api('utility',{name:s==='notes'?'메모':'ChatGPT'}));}
+async function navigate(s,navigation=null,keepBrief=false){if(state?.role==='APP_GATE'&&!gated.includes(s)&&s!=='gateIdle'){const entry=gateSnapshot();await flushMemo();if(currentGate(entry))await api('open',{screen:s,...(s==='chat'?{chat:chatId}:{})});return;}if(state?.role==='PHONE_START'&&!['unlock','notes','chats','chat'].includes(s)){await api('open',{screen:s});return;}if(s==='brief'&&navigation===null&&!keepBrief&&screen!=='brief'){briefTarget=null;briefDays=1;briefOffset=0;}const local=navigation===null;if(local)navigation=nativeNavigation;if(['home','unlock','app'].includes(s))purposeEntry=null;if(s==='chats'&&starts.includes(screen))chatsReturn=screen;if(s==='chat'&&screen==='chats')chatReturn='chats';if(settingsTimer&&screen==='settings'){clearTimeout(settingsTimer);settingsTimer=null;await safe(saveReminders);}await flushMemo();if(navigation<nativeNavigation)return;const retainedNavigation=renderedRoute===s&&navigation!==nativeNavigation;nativeNavigation=navigation;if(local&&['chat','chats','unlock'].includes(s)&&s!==screen&&(state?.overlay||state?.role==='PHONE_START'))presentScreen(s);closeSheet();const leavingBrief=screen==='brief'&&s!=='brief';if(leavingBrief)++briefSeq;screen=s;selected='';minutes=5;document.body.classList.toggle('start-screen',starts.includes(screen));window.scrollTo(0,0);if(leavingBrief&&state)render();const revision=domRevision;await refresh(true);if(retainedNavigation&&navigation===nativeNavigation&&renderedRoute===s&&revision===domRevision)signalRendered();startPolling();remember();if(state&&screen===s&&['notes','chat','chats'].includes(s))safe(()=>api('utility',{name:s==='notes'?'메모':'ChatGPT'}));}
+function returnPhoneChat(navigation){
+ if(navigation<nativeNavigation)return;
+ if(state?.role!=='PHONE_START')return navigate('unlock',navigation);
+ nativeNavigation=navigation;
+ const draft=$('#chatInput')?.value;
+ if(draft!==undefined)state.phoneSession={...state.phoneSession,chatDraft:draft};
+ clearTimeout(phoneDraftTimer);closeSheet();screen=chatReturn=chatsReturn='unlock';
+ selected='';minutes=5;purposeEntry=null;window.scrollTo(0,0);
+ if(renderedRoute==='unlock')signalRendered();else render();
+ startPolling();remember();
+}
 async function refresh(force=false){if(screen==='gateIdle')return;if(state?.role==='APP_GATE')return refreshGate(force);if(refreshing){if(force)refreshAgain=true;return;}refreshing=true;try{
  const entry=nativeNavigation,appEntry=state?.role==='APP_GATE',tick=!force&&state&&['chat','timer',...gated].includes(screen);
  const next=await api(tick?'tick':'state');if(appEntry&&entry!==nativeNavigation)return;
@@ -788,15 +799,69 @@ function briefFlowUnits(b){
  for(const event of b.events||[])if(['unlock','app'].includes(event.kind)&&!ids.has(String(event.id)))units.push({event,start:event.time,end:event.time,steps:[],gaps:[],directMillis:0,otherMillis:0});
  return units.sort((a,b)=>b.start-a.start);
 }
+// These rows are only built when a selection is opened. The report and raw export retain every span.
+function briefSequenceRows(steps,b){
+ const visits=[],events=b.events||[];let eventIndex=0,previousDate='';
+ const sameContext=(a,c)=>a.parent===c.parent&&a.eventId===c.eventId&&a.focusState===c.focusState;
+ const supplement=t=>t.source==='usage-access'&&!t.parent&&briefMs(t)<1000;
+ for(const step of steps){
+  const previous=visits.at(-1),date=briefDateKey(step.start,b.timeZone);
+  let boundary=!!previous&&date!==previousDate;
+  while(eventIndex<events.length&&events[eventIndex].time<=step.start){
+   if(previous&&events[eventIndex].time>previous.start)boundary=true;
+   eventIndex++;
+  }
+  previousDate=date;
+  const gap=previous?step.start-previous.end:Infinity;
+  const canJoin=previous&&!boundary&&previous.pkg===step.pkg&&previous.focusState===step.focusState&&gap>=0;
+  const previousSupplement=canJoin&&gap===0&&supplement(previous)&&step.source==='accessibility';
+  const nextSupplement=canJoin&&gap===0&&supplement(step)&&previous.source==='accessibility';
+  const sameVisit=canJoin&&gap<=1500&&sameContext(previous,step)&&previous.source===step.source&&previous.ruleMode===step.ruleMode&&previous.relation===step.relation;
+  if(previousSupplement||nextSupplement||sameVisit){
+   const primary=previousSupplement?step:previous;
+   visits[visits.length-1]={...primary,start:previous.start,end:step.end,ms:briefMs(previous)+briefMs(step),
+    sourceStart:undefined,sourceEnd:undefined,boundary:previous.boundary,
+    excludedTransitionMillis:(previous.excludedTransitionMillis||0)+(step.excludedTransitionMillis||0)+gap,
+    supplemented:previousSupplement||nextSupplement||previous.supplemented};
+  }else visits.push({...step,boundary});
+ }
+ // Require an actual return to the same app. Only brief visits can be inside a group.
+ const quick=t=>t.end-t.start<=12000;
+ const follows=(a,c)=>!c.boundary&&sameContext(a,c)&&c.start>=a.end&&c.start-a.end<=3000;
+ const rows=[];
+ for(let i=0;i<visits.length;){
+  const a=visits[i],other=visits[i+1],returnVisit=visits[i+2];
+  if(!returnVisit||a.pkg===other.pkg||a.pkg!==returnVisit.pkg||!quick(other)||!follows(a,other)||!follows(other,returnVisit)){
+   rows.push(a);i++;continue;
+  }
+  const apps=[{label:a.label,ms:0},{label:other.label,ms:0}];
+  let end=a.start,ms=0,gaps=0,supplemented=false;
+  const add=t=>{
+   const observed=briefMs(t);apps[t.pkg===a.pkg?0:1].ms+=observed;
+   ms+=observed;gaps+=t.start-end+(t.excludedTransitionMillis||0);end=t.end;
+   supplemented||=t.supplemented||t.source==='usage-access';
+  };
+  add(a);add(other);add(returnVisit);i+=3;
+  while(i<visits.length){
+   const previous=visits[i-1],next=visits[i],expected=previous.pkg===a.pkg?other.pkg:a.pkg;
+   if(next.pkg!==expected||!quick(previous)||!follows(previous,next))break;
+   add(next);i++;
+  }
+  rows.push({start:a.start,end,ms,apps,focusState:a.focusState,excludedTransitionMillis:gaps,supplemented});
+ }
+ return rows;
+}
 function briefFlowView(f,b){
  const event=f.event||{},steps=f.steps||[],total=f.total??steps.reduce((n,t)=>n+briefMs(t),0),apps=f.apps||briefAppTotals(steps),key=event.id??f.start;
  const summary=`<span class="brief-flow-heading"><time>${briefWhen(f.start,b)}${f.start<b.start?' · 기간 이전 선택':''}</time><strong>${esc(briefKnownPurpose(event.purpose))}</strong><small>${apps.length?apps.slice(0,3).map(a=>esc(a.label)).join(' · ')+(apps.length>3?` 외 ${apps.length-3}개`:''):'연결된 앱 사용 기록 없음'}</small></span><span class="brief-flow-total">${total?briefNumber(total):'<span class="brief-no-observation">사용 관측 없음</span>'}<small>${apps.length}개 앱 · ${steps.length}개 구간</small></span>`;
  return briefLazyDetails('brief-flow-'+key,summary,()=>{
   const focused=steps.filter(t=>t.focusState==='focus').reduce((n,t)=>n+briefMs(t),0),free=steps.filter(t=>t.focusState==='free').reduce((n,t)=>n+briefMs(t),0),unknown=Math.max(0,total-focused-free);let last=Math.max(b.start,f.start);
-  const sequence=steps.map(t=>{
+  const sequence=briefSequenceRows(steps,b).map(t=>{
    const gap=t.start>last?`<div class="brief-sequence-gap"><time>${briefClock(last,b.timeZone)}–${briefClock(t.start,b.timeZone)}</time><span>선택 기록 사이 간격 · ${briefPrecise(t.start-last)}</span></div>`:'';last=Math.max(last,t.end);
-   const relation=t.relation==='direct'?'대상 앱':t.relation==='other-app'?'다른 앱':'';
-   return gap+`<div class="brief-sequence-step"><time>${b.days===7?briefDateLabel(t.start,b.timeZone)+'<br>':''}${briefExactTime(t.start,b)}<small>–${briefDateKey(t.start,b.timeZone)!==briefDateKey(t.end,b.timeZone)?briefDateLabel(t.end,b.timeZone)+' ':''}${briefExactTime(t.end,b)}</small></time><div><strong>${esc(t.label)}</strong><span>${[relation,t.focusState==='focus'?'집중시간':t.focusState==='free'?'자유시간':'시간대 이력 없음'].filter(Boolean).join(' · ')}</span>${t.source==='usage-access'?'<small>Android 사용 정보로 보완</small>':''}${t.sourceStart!==undefined&&(t.sourceStart!==t.start||t.sourceEnd!==t.end)?`<small>원본 구간 ${briefRange(t.sourceStart,t.sourceEnd,b)}</small>`:''}${t.excludedTransitionMillis?`<small>전환 ${briefPrecise(t.excludedTransitionMillis)} 제외</small>`:''}</div><b>${briefPrecise(briefMs(t))}</b></div>`;
+   const relation=t.apps?'번갈아 사용':t.relation==='direct'?'대상 앱':t.relation==='other-app'?'다른 앱':'';
+   const title=t.apps?t.apps.map(a=>esc(a.label)).join(' ↔ '):esc(t.label);
+   const appTimes=t.apps?`<small>${t.apps.map(a=>esc(a.label)+' '+briefPrecise(a.ms)).join(' · ')}</small>`:'';
+   return gap+`<div class="brief-sequence-step"><time>${b.days===7?briefDateLabel(t.start,b.timeZone)+'<br>':''}${briefExactTime(t.start,b)}<small>–${briefDateKey(t.start,b.timeZone)!==briefDateKey(t.end,b.timeZone)?briefDateLabel(t.end,b.timeZone)+' ':''}${briefExactTime(t.end,b)}</small></time><div><strong>${title}</strong><span>${[relation,t.focusState==='focus'?'집중시간':t.focusState==='free'?'자유시간':'시간대 이력 없음'].filter(Boolean).join(' · ')}</span>${appTimes}${t.source==='usage-access'?'<small>Android 사용 정보로 보완</small>':t.supplemented?'<small>Android 사용 정보 일부 보완</small>':''}${t.sourceStart!==undefined&&(t.sourceStart!==t.start||t.sourceEnd!==t.end)?`<small>원본 구간 ${briefRange(t.sourceStart,t.sourceEnd,b)}</small>`:''}${t.excludedTransitionMillis?`<small>기록 사이 간격 ${briefPrecise(t.excludedTransitionMillis)} 제외</small>`:''}</div><b>${briefPrecise(briefMs(t))}</b></div>`;
   }).join('');
   return `<div class="brief-flow-body">${total?briefParts([{label:'집중시간',ms:focused},{label:'자유시간',ms:free,tone:'free'},...(unknown?[{label:'시간대 이력 없음',ms:unknown,tone:'unknown'}]:[])],'선택 기록에 속한 사용'):''}${apps.length?`<div class="brief-app-totals">${apps.map(a=>`<div><span>${esc(a.label)}</span><b>${briefPrecise(a.ms)}</b></div>`).join('')}</div>`:''}<h3>실제 사용 순서</h3>${sequence||'<p class="small muted">이 선택에 연결된 외부 앱 사용은 관측되지 않았습니다.</p>'}${(f.newChoices||[]).length?`<p class="small muted">구간 안 새 목적 선택 ${f.newChoices.length}회 · 시간선에서 확인</p>`:''}<button class="textbtn" data-brief-jump="${f.start}">해당 시간선 보기 ${icon('arrow')}</button></div>`;
  },'brief-flow-unit');
