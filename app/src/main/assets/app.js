@@ -801,28 +801,32 @@ function briefFlowUnits(b){
 }
 // These rows are only built when a selection is opened. The report and raw export retain every span.
 function briefSequenceRows(steps,b){
- const visits=[],events=b.events||[];let eventIndex=0,previousDate='';
+ const visits=[],boundaries=[...(b.events||[]),...briefBoundaryRecords(b)].map(e=>e.time).sort((a,c)=>a-c);
+ let boundaryIndex=0,previousDate='';
  const sameContext=(a,c)=>a.parent===c.parent&&a.eventId===c.eventId&&a.focusState===c.focusState;
  const supplement=t=>t.source==='usage-access'&&!t.parent&&briefMs(t)<1000;
  for(const step of steps){
   const previous=visits.at(-1),date=briefDateKey(step.start,b.timeZone);
   let boundary=!!previous&&date!==previousDate;
-  while(eventIndex<events.length&&events[eventIndex].time<=step.start){
-   if(previous&&events[eventIndex].time>previous.start)boundary=true;
-   eventIndex++;
+  while(boundaryIndex<boundaries.length&&boundaries[boundaryIndex]<=step.start){
+   if(previous&&boundaries[boundaryIndex]>previous.start)boundary=true;
+   boundaryIndex++;
   }
   previousDate=date;
   const gap=previous?step.start-previous.end:Infinity;
   const canJoin=previous&&!boundary&&previous.pkg===step.pkg&&previous.focusState===step.focusState&&gap>=0;
   const previousSupplement=canJoin&&gap===0&&supplement(previous)&&step.source==='accessibility';
   const nextSupplement=canJoin&&gap===0&&supplement(step)&&previous.source==='accessibility';
-  const sameVisit=canJoin&&gap<=1500&&sameContext(previous,step)&&previous.source===step.source&&previous.ruleMode===step.ruleMode&&previous.relation===step.relation;
+  const excluded=(previous?.excludedTransitionMillis||0)+(step.excludedTransitionMillis||0)+gap;
+  // Brief gaps between consecutive visits do not become app usage. Cap the sum
+  // as well so intermittent checks cannot keep one row open throughout the day.
+  const sameVisit=canJoin&&gap<=45000&&excluded<=90000&&sameContext(previous,step)
+   &&previous.ruleMode===step.ruleMode&&previous.relation===step.relation;
   if(previousSupplement||nextSupplement||sameVisit){
-   const primary=previousSupplement?step:previous;
+   const primary=previous.source==='usage-access'&&step.source!=='usage-access'?step:previous;
    visits[visits.length-1]={...primary,start:previous.start,end:step.end,ms:briefMs(previous)+briefMs(step),
-    sourceStart:undefined,sourceEnd:undefined,boundary:previous.boundary,
-    excludedTransitionMillis:(previous.excludedTransitionMillis||0)+(step.excludedTransitionMillis||0)+gap,
-    supplemented:previousSupplement||nextSupplement||previous.supplemented};
+    sourceStart:undefined,sourceEnd:undefined,boundary:previous.boundary,excludedTransitionMillis:excluded,
+    supplemented:previous.supplemented||step.supplemented||previous.source==='usage-access'||step.source==='usage-access'};
   }else visits.push({...step,boundary});
  }
  // Require an actual return to the same app. Only brief visits can be inside a group.
